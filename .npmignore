@@ -43,3 +43,5 @@ __tests__
 /SECURITY.md
 /ios/Package.swift
 /ios/Tests/
+/ios/.build/
+**/.swiftpm/
