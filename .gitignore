@@ -75,3 +75,4 @@ example/.yarn/
 .venv/
 __pycache__/
 .pytest_cache/
+e2e/android-netsim/artifacts/

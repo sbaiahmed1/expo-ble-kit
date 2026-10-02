@@ -1,6 +1,6 @@
 # Expo BLE (`expo-ble-kit`) — Architecture & Implementation Plan
 
-> **Status:** Draft v0.6 · **Date:** 2026-10-02 · **Scope:** proposition #3, an Expo-first Bluetooth Low Energy module · **Changes:** Appendix D
+> **Status:** Draft v0.7 · **Date:** 2026-10-02 · **Scope:** proposition #3, an Expo-first Bluetooth Low Energy module · **Changes:** Appendix D
 >
 > **Package name:** `expo-ble-kit` (D0a, decided 2026-10-02) · native module `ExpoBleKit` · Android package `expo.modules.blekit`.
 >
@@ -956,10 +956,15 @@ Parallelism: P0-06/P0-07 can run alongside P0-03/P0-04. With two people, P4 can 
 - [ ] **P0-06 Android emulator BLE spike** — deps: P0-03, P0-07.
   Start the emulator with netsim enabled (emulator 37.1 starts `netsimd` by itself and writes `$TMPDIR/netsim.ini`, so no extra flag was needed in P0-07 ⚠️ VERIFY on CI runners), attach the Bumble virtual peripheral over the `android-netsim` transport, and run a test that scans, connects and reads. Add a CI job marked allowed-to-fail.
   **Accept:** green locally; the CI job runs and uploads logcat, `dumpsys bluetooth_manager` and the Bumble log.
+  **Status 2026-10-02 — green locally, CI pending the first push:**
+  - `e2e/android-netsim/run.sh` starts the Bumble peripheral on the emulator's netsim radio, runs the library's instrumented tests (`:expo-ble-kit:connectedDebugAndroidTest`) and collects logcat, `dumpsys bluetooth_manager`, the Bumble log and the JUnit reports.
+  - `android/src/androidTest/.../l3/NetsimPeripheralTest.kt` scans by the TEST service UUID (checks name and manufacturer data), connects, requests the MTU, discovers, and reads `STATIC_READ` and the 512-byte `LONG_READ`. It uses raw Android APIs (no library core yet) and reads UUIDs and expected values from `profile.json`, which the build copies into the test APK.
+  - Passed on the Android 15 (API 35) emulator image, emulator 37.1. Requesting MTU 247 still produced an ATT Exchange MTU request of 517 on the wire (see Q3).
+  - `.github/workflows/nightly.yml` runs the same script on an API 35 emulator via `reactivecircus/android-emulator-runner`, `continue-on-error: true`, and uploads the artifacts. Not run yet: the GitHub repo doesn't exist.
 - [x] **P0-07 Test peripheral profile** — deps: none.
   Define `test-peripherals/profile.json` (§8.3) and implement it with Bumble. The Zephyr firmware for nRF52840 can follow during P1.
   **Accept:** the Bumble peripheral is discoverable from a real phone (Bumble over a USB Bluetooth dongle) or from the emulator.
-  **Done 2026-10-02:** `test-peripherals/profile.json` (UUID base `0c6c0000-b347-4cfa-9827-1c5a13658519`) and `test-peripherals/bumble/` (Bumble 0.0.219, run with `uv run blekit-peripheral`). Discovered as `BleKit-Test` from the Android emulator (API 34, emulator 37.1) over netsim. 26 hardware-free pytest tests (in-memory radio) cover every characteristic and command, and run in CI. Bumble's GATT server lacks prepared writes and service removal, so the peripheral adds both itself (see `test-peripherals/README.md`).
+  **Done 2026-10-02:** `test-peripherals/profile.json` (UUID base `0c6c0000-b347-4cfa-9827-1c5a13658519`) and `test-peripherals/bumble/` (Bumble 0.0.219, run with `uv run blekit-peripheral`). Discovered as `BleKit-Test` from the Android emulator (Android 15 / API 35 image, emulator 37.1) over netsim. 26 hardware-free pytest tests (in-memory radio) cover every characteristic and command, and run in CI. Bumble's GATT server lacks prepared writes and service removal, so the peripheral adds both itself (see `test-peripherals/README.md`).
 - [ ] **P0-08 License and governance** `[GATE D2]` — deps: none.
   License, CODEOWNERS, CONTRIBUTING, SECURITY, issue templates (with a field for `getDiagnostics()` output). D2 decided 2026-10-02: MIT, personal ownership, no CLA (ADR-009). The scaffold's `LICENSE` and `"license": "MIT"` stand.
   **Accept:** files merged.
@@ -1236,7 +1241,7 @@ The standard Heart Rate service (`0x180D` / `0x2A37`) is also exposed for demos.
 | D3 | Web Bluetooth support in 1.0 or later | Before P6 |
 | Q1 | Persist the background event buffer to disk? Size cap and privacy implications | P3 |
 | Q2 | Native batching on by default for high-rate characteristics? | After P2-04 data |
-| Q3 | Default Android MTU request after connect: 517, 247, or none. ⚠️ VERIFY first: Android 14+ reportedly always asks for 517 on the first `requestMtu` of a link, whatever value is passed, in which case the option only matters below API 34 | Validate on the matrix in P2 (data from P1-09) |
+| Q3 | Default Android MTU request after connect: 517, 247, or none. Measured 2026-10-02 (P0-06, Android 15 / API 35 emulator): `requestMtu(247)` sent an ATT Exchange MTU request with `client_rx_mtu = 517`, so the value is ignored on API 35. ⚠️ VERIFY on API 34 and below 34 before deciding; if it holds from 34 up, the option only matters below API 34 | Validate on the matrix in P2 (data from P1-09) |
 | Q4 | Peripheral ids change on iOS after reinstall: document only, or offer an app-level re-identification helper? | P1 |
 | Q5 | ~~Android `minSdk`: 26, or the Expo default (24) with fallbacks~~ **Decided 2026-10-02: 26.** See ADR-002 | Done |
 
@@ -1339,3 +1344,4 @@ Connection state changes (`onConnectionStateChange` status, HCI disconnect reaso
 | v0.4 | 2026-10-02 | Gates D0a (`expo-ble-kit`) and D2 (MIT, personal, no CLA) decided. ADR-011: `main` tracks the latest stable Expo SDK (57); SDK 58 beta only on spike branches, so P0-03 scaffolds on SDK 57 and P0-04 runs on an SDK 58 beta branch. P0-03 records the template and Yarn age-gate findings. Plan moved to `docs/` |
 | v0.5 | 2026-10-02 | iOS 27 launch crash on SDK 57 resolved in the example with `expo-build-properties` `ios.enableSceneSupport` (example only); §10 risk updated; P0-05 and P1-16 implications noted |
 | v0.6 | 2026-10-02 | P0-07 done: `test-peripherals/profile.json` and the Bumble peripheral, discovered from the emulator over netsim. §8.3 notes the `SEND_INDICATIONS` command and the `SECONDARY` service; P0-06 notes that emulator 37.1 starts netsim by itself |
+| v0.7 | 2026-10-02 | P0-06 green locally: instrumented scan/connect/read test against the Bumble peripheral over netsim, `e2e/android-netsim/run.sh`, nightly CI job (not yet run). Q3 gets its first measurement (API 35 ignores the requested MTU). P0-07 note corrected to API 35 |

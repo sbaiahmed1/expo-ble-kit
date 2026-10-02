@@ -23,6 +23,7 @@ cd example && npx expo run:ios            # or run:android
 
 cd test-peripherals/bumble && uv run pytest              # test peripheral tests (no hardware)
 cd test-peripherals/bumble && uv run blekit-peripheral   # advertise on a running Android emulator
+e2e/android-netsim/run.sh    # L3: peripheral + instrumented tests on a running emulator (needs ANDROID_HOME and example/android)
 ```
 
 `test-peripherals/profile.json` is the single source of truth for the test GATT profile; change it before any implementation.

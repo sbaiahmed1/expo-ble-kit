@@ -1,0 +1,55 @@
+# Nightly jobs (docs/ARCHITECTURE_AND_PLAN.md §8.6).
+name: Nightly
+
+on:
+  schedule:
+    - cron: "0 3 * * *"
+  workflow_dispatch:
+
+jobs:
+  l3-android-netsim:
+    name: L3 Android emulator + netsim + Bumble
+    runs-on: ubuntu-latest
+    # Plan §8.1: L3 is allowed to fail until it is stable on hosted runners. L4 is the source of truth.
+    continue-on-error: true
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: .nvmrc
+      - uses: actions/setup-java@v6
+        with:
+          distribution: zulu
+          java-version: 17
+      - uses: gradle/actions/setup-gradle@v6
+      - uses: astral-sh/setup-uv@v10
+      - run: yarn install --immutable
+      - run: yarn prepare
+      - run: yarn install --immutable
+        working-directory: example
+      - run: npx expo prebuild --platform android --clean
+        working-directory: example
+      - name: Enable KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+      - name: Run L3 on the emulator
+        uses: reactivecircus/android-emulator-runner@v2
+        env:
+          L3_ARTIFACTS_DIR: ${{ github.workspace }}/l3-artifacts
+        with:
+          api-level: 35
+          target: google_apis
+          arch: x86_64
+          disable-animations: true
+          emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim
+          script: e2e/android-netsim/run.sh -PreactNativeArchitectures=x86_64
+      - name: Upload logcat, dumpsys bluetooth_manager, Bumble log and test reports
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: l3-android-netsim
+          path: l3-artifacts/
+          if-no-files-found: warn

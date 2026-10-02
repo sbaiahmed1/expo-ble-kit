@@ -10,6 +10,13 @@ def packageJson = new JsonSlurper().parse(file("../package.json"))
 group = 'expo.modules.blekit'
 version = packageJson.version
 
+// Instrumented tests (L3, plan §8.1) read the test GATT profile from their assets.
+def testProfileAssetsDir = layout.buildDirectory.dir("generated/testProfileAssets")
+def copyTestProfile = tasks.register("copyTestProfile", Copy) {
+  from("../test-peripherals/profile.json")
+  into(testProfileAssetsDir)
+}
+
 android {
   namespace "expo.modules.blekit"
   defaultConfig {
@@ -18,8 +25,22 @@ android {
     minSdkVersion 26
     versionCode 1
     versionName packageJson.version
+    testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
+  }
+  sourceSets {
+    androidTest.assets.srcDirs += testProfileAssetsDir.get().asFile
   }
   lintOptions {
     abortOnError false
   }
+}
+
+tasks.matching { it.name.contains("AndroidTestAssets") }.configureEach {
+  dependsOn(copyTestProfile)
+}
+
+dependencies {
+  androidTestImplementation "androidx.test:runner:1.7.0"
+  androidTestImplementation "androidx.test:rules:1.7.0"
+  androidTestImplementation "androidx.test.ext:junit:1.3.0"
 }
