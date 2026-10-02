@@ -26,6 +26,18 @@ jobs:
       - run: yarn typecheck
       - run: yarn test
 
+  test-peripheral:
+    name: Test peripheral (Bumble)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: test-peripherals/bumble
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v10
+      - run: uv sync --locked
+      - run: uv run pytest
+
   native-lint:
     name: SwiftLint and ktlint
     runs-on: macos-latest

@@ -32,3 +32,9 @@ __tests__
 /android/src/test/**
 /android/build/**
 /example/
+
+# Repo-only material (plan, agent notes, test peripherals, lint config)
+/docs/
+/AGENTS.md
+/test-peripherals/
+/eslint.config.cjs

@@ -1,0 +1,316 @@
+{
+  "$comment": "Single source of truth for every expo-ble-kit test peripheral (Bumble, Zephyr, fake adapter). See docs/ARCHITECTURE_AND_PLAN.md §8.3 and test-peripherals/README.md.",
+  "version": 1,
+  "uuidBase": "0c6c0000-b347-4cfa-9827-1c5a13658519",
+  "uuidRule": "Custom UUIDs replace the 0000 at characters 4-8 of uuidBase with a 16-bit id. All UUIDs are lowercase 128-bit (§4.12).",
+  "patterns": "A value {\"pattern\": {length, multiplier, offset, modulus}} is the bytes b[i] = (i * multiplier + offset) % modulus for i in 0..length-1.",
+  "advertising": {
+    "localName": "BleKit-Test",
+    "advertisingData": {
+      "flags": [
+        "leGeneralDiscoverable",
+        "brEdrNotSupported"
+      ],
+      "completeServiceUuids128": [
+        "0c6c1000-b347-4cfa-9827-1c5a13658519"
+      ],
+      "serviceData": {
+        "0000180d-0000-1000-8000-00805f9b34fb": "0102"
+      },
+      "txPowerLevel": 0
+    },
+    "scanResponseData": {
+      "completeLocalName": "BleKit-Test",
+      "manufacturerData": {
+        "companyId": 65535,
+        "data": "424b0001"
+      }
+    },
+    "connectable": true,
+    "intervalMs": 100
+  },
+  "services": [
+    {
+      "key": "TEST",
+      "uuid": "0c6c1000-b347-4cfa-9827-1c5a13658519",
+      "primary": true,
+      "presence": "always",
+      "characteristics": [
+        {
+          "key": "STATIC_READ",
+          "uuid": "0c6c1001-b347-4cfa-9827-1c5a13658519",
+          "properties": [
+            "read"
+          ],
+          "permissions": [
+            "readable"
+          ],
+          "behavior": "Fixed 20-byte value.",
+          "value": {
+            "pattern": {
+              "length": 20,
+              "multiplier": 1,
+              "offset": 0,
+              "modulus": 256
+            }
+          }
+        },
+        {
+          "key": "LONG_READ",
+          "uuid": "0c6c1002-b347-4cfa-9827-1c5a13658519",
+          "properties": [
+            "read"
+          ],
+          "permissions": [
+            "readable"
+          ],
+          "behavior": "512-byte deterministic value, longer than any single ATT packet.",
+          "value": {
+            "pattern": {
+              "length": 512,
+              "multiplier": 31,
+              "offset": 7,
+              "modulus": 251
+            }
+          }
+        },
+        {
+          "key": "ECHO_WRITE",
+          "uuid": "0c6c1003-b347-4cfa-9827-1c5a13658519",
+          "properties": [
+            "write"
+          ],
+          "permissions": [
+            "writeable"
+          ],
+          "behavior": "Stores the written value (0..512 bytes)."
+        },
+        {
+          "key": "ECHO_READ",
+          "uuid": "0c6c1004-b347-4cfa-9827-1c5a13658519",
+          "properties": [
+            "read"
+          ],
+          "permissions": [
+            "readable"
+          ],
+          "behavior": "Returns the last value written to ECHO_WRITE. Empty until the first write.",
+          "value": {
+            "hex": ""
+          }
+        },
+        {
+          "key": "SINK_NO_RSP",
+          "uuid": "0c6c1005-b347-4cfa-9827-1c5a13658519",
+          "properties": [
+            "writeWithoutResponse"
+          ],
+          "permissions": [
+            "writeable"
+          ],
+          "behavior": "Discards written bytes and adds their count to SINK_COUNTER."
+        },
+        {
+          "key": "SINK_COUNTER",
+          "uuid": "0c6c1006-b347-4cfa-9827-1c5a13658519",
+          "properties": [
+            "read",
+            "notify"
+          ],
+          "permissions": [
+            "readable"
+          ],
+          "behavior": "Total bytes received by SINK_NO_RSP since the last RESET_COUNTERS, uint32 LE. While subscribed, notifies the new total at most every notifyIntervalMs when it changed.",
+          "format": "uint32le",
+          "notifyIntervalMs": 100
+        },
+        {
+          "key": "STREAM",
+          "uuid": "0c6c1007-b347-4cfa-9827-1c5a13658519",
+          "properties": [
+            "notify"
+          ],
+          "permissions": [],
+          "behavior": "Notifies frames at the rate and size set by CONTROL SET_STREAM. See stream.frame.",
+          "descriptors": [
+            {
+              "uuid": "00002901-0000-1000-8000-00805f9b34fb",
+              "value": {
+                "utf8": "Stream"
+              }
+            }
+          ]
+        },
+        {
+          "key": "INDICATE",
+          "uuid": "0c6c1008-b347-4cfa-9827-1c5a13658519",
+          "properties": [
+            "indicate"
+          ],
+          "permissions": [],
+          "behavior": "On CONTROL SEND_INDICATIONS(count), sends count indications one after another (each waits for its confirmation). Value: sequence number, uint32 LE, continuing across commands until RESET_COUNTERS.",
+          "format": "uint32le"
+        },
+        {
+          "key": "SECURE",
+          "uuid": "0c6c1009-b347-4cfa-9827-1c5a13658519",
+          "properties": [
+            "read"
+          ],
+          "permissions": [
+            "readEncryptionRequired"
+          ],
+          "behavior": "Readable only over an encrypted link, so reading it triggers pairing (LE Secure Connections, Just Works, bonding).",
+          "value": {
+            "utf8": "SECURE01"
+          }
+        },
+        {
+          "key": "L2CAP_PSM",
+          "uuid": "0c6c100a-b347-4cfa-9827-1c5a13658519",
+          "properties": [
+            "read"
+          ],
+          "permissions": [
+            "readable"
+          ],
+          "behavior": "PSM of the L2CAP LE credit-based echo server (l2cap.echo), uint16 LE.",
+          "format": "uint16le"
+        },
+        {
+          "key": "CONTROL",
+          "uuid": "0c6c100b-b347-4cfa-9827-1c5a13658519",
+          "properties": [
+            "write"
+          ],
+          "permissions": [
+            "writeable"
+          ],
+          "behavior": "Commands from control.commands: 1-byte opcode followed by little-endian parameters. Invalid commands fail with control.errors."
+        }
+      ]
+    },
+    {
+      "key": "SECONDARY",
+      "uuid": "0c6c2000-b347-4cfa-9827-1c5a13658519",
+      "primary": true,
+      "presence": "toggled",
+      "behavior": "Absent at start. CONTROL TOGGLE_SECONDARY_SERVICE adds or removes it (always the last service in the database, so other handles never move) and sends a Service Changed indication for its handle range.",
+      "characteristics": [
+        {
+          "key": "SECONDARY_VALUE",
+          "uuid": "0c6c2001-b347-4cfa-9827-1c5a13658519",
+          "properties": [
+            "read"
+          ],
+          "permissions": [
+            "readable"
+          ],
+          "behavior": "Fixed value.",
+          "value": {
+            "utf8": "SECONDARY"
+          }
+        }
+      ]
+    },
+    {
+      "key": "HEART_RATE",
+      "uuid": "0000180d-0000-1000-8000-00805f9b34fb",
+      "primary": true,
+      "presence": "always",
+      "behavior": "Standard Heart Rate service for demos.",
+      "characteristics": [
+        {
+          "key": "HEART_RATE_MEASUREMENT",
+          "uuid": "00002a37-0000-1000-8000-00805f9b34fb",
+          "properties": [
+            "notify"
+          ],
+          "permissions": [],
+          "behavior": "While subscribed, notifies [flags=0x00, bpm uint8] every intervalMs. bpm counts up from minBpm to maxBpm and wraps.",
+          "intervalMs": 1000,
+          "minBpm": 60,
+          "maxBpm": 100
+        }
+      ]
+    }
+  ],
+  "stream": {
+    "frame": "uint32 LE sequence number, then payload bytes p[j] = (seq + j) % 256 for j in 0..frameSize-5. The sequence starts at 0 and continues until RESET_COUNTERS.",
+    "defaultFrameSize": 20,
+    "minFrameSize": 4,
+    "maxFrameSize": 512,
+    "mtuRule": "A frame larger than ATT_MTU - 3 for a subscriber is truncated to ATT_MTU - 3 for that subscriber (the sequence number is always intact)."
+  },
+  "control": {
+    "characteristic": "CONTROL",
+    "commands": [
+      {
+        "opcode": 1,
+        "name": "SET_STREAM",
+        "params": [
+          {
+            "name": "rateHz",
+            "type": "uint16le"
+          },
+          {
+            "name": "frameSize",
+            "type": "uint16le"
+          }
+        ],
+        "behavior": "Starts STREAM at rateHz (1..1000) with frameSize bytes per frame. rateHz 0 stops it. frameSize must be within stream.minFrameSize..maxFrameSize."
+      },
+      {
+        "opcode": 2,
+        "name": "DISCONNECT_AFTER",
+        "params": [
+          {
+            "name": "delayMs",
+            "type": "uint32le"
+          }
+        ],
+        "behavior": "Terminates the connection that wrote the command after delayMs (HCI reason 0x13, remote user terminated)."
+      },
+      {
+        "opcode": 3,
+        "name": "TOGGLE_SECONDARY_SERVICE",
+        "params": [],
+        "behavior": "Adds or removes the SECONDARY service and indicates Service Changed (see services.SECONDARY)."
+      },
+      {
+        "opcode": 4,
+        "name": "RESET_COUNTERS",
+        "params": [],
+        "behavior": "Resets SINK_COUNTER, the STREAM sequence and the INDICATE sequence to 0."
+      },
+      {
+        "opcode": 5,
+        "name": "SEND_INDICATIONS",
+        "params": [
+          {
+            "name": "count",
+            "type": "uint16le"
+          }
+        ],
+        "behavior": "Sends count INDICATE indications to the connection that wrote the command (if it subscribed)."
+      }
+    ],
+    "errors": {
+      "unknownOpcode": {
+        "attError": 128,
+        "meaning": "Opcode not in control.commands, or empty write"
+      },
+      "invalidParameters": {
+        "attError": 129,
+        "meaning": "Wrong parameter length or out-of-range value"
+      }
+    }
+  },
+  "l2cap": {
+    "echo": {
+      "psm": 129,
+      "mtu": 2048,
+      "behavior": "LE credit-based channel server that sends every received SDU back unchanged."
+    }
+  }
+}

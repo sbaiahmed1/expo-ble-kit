@@ -70,3 +70,8 @@ example/.yarn/
 
 # TypeScript incremental build info
 *.tsbuildinfo
+
+# Python (test peripherals)
+.venv/
+__pycache__/
+.pytest_cache/

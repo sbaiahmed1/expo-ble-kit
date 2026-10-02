@@ -20,7 +20,12 @@ yarn changeset               # add a changeset for any user-facing change
 cd example && yarn install   # example app dependencies (separate lockfile)
 cd example && npx expo prebuild --clean   # regenerate example/ios and example/android (gitignored)
 cd example && npx expo run:ios            # or run:android
+
+cd test-peripherals/bumble && uv run pytest              # test peripheral tests (no hardware)
+cd test-peripherals/bumble && uv run blekit-peripheral   # advertise on a running Android emulator
 ```
+
+`test-peripherals/profile.json` is the single source of truth for the test GATT profile; change it before any implementation.
 
 ## Conventions
 

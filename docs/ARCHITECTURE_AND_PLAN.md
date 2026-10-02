@@ -1,6 +1,6 @@
 # Expo BLE (`expo-ble-kit`) — Architecture & Implementation Plan
 
-> **Status:** Draft v0.5 · **Date:** 2026-10-02 · **Scope:** proposition #3, an Expo-first Bluetooth Low Energy module · **Changes:** Appendix D
+> **Status:** Draft v0.6 · **Date:** 2026-10-02 · **Scope:** proposition #3, an Expo-first Bluetooth Low Energy module · **Changes:** Appendix D
 >
 > **Package name:** `expo-ble-kit` (D0a, decided 2026-10-02) · native module `ExpoBleKit` · Android package `expo.modules.blekit`.
 >
@@ -954,11 +954,12 @@ Parallelism: P0-06/P0-07 can run alongside P0-03/P0-04. With two people, P4 can 
   Minimal restoration prototype (`restoreIdentifier`, `bluetooth-central` mode) against a physical peripheral (nRF52840 or a second phone acting as peripheral). Simulate system termination (not a user force-quit) ⚠️ VERIFY Apple's recommended method. Answer: does the app-delegate subscriber run under SDK 58's scene life cycle? Does the JS runtime start without a scene? Can a TaskManager consumer deliver events headlessly?
   **Accept:** `docs/spikes/P0-05-ios-background.md` with findings and the chosen delivery strategy; ADR-008 updated.
 - [ ] **P0-06 Android emulator BLE spike** — deps: P0-03, P0-07.
-  Start the emulator with netsim enabled (`-packet-streamer-endpoint default` ⚠️ VERIFY flags for the current emulator), attach the Bumble virtual peripheral over the `android-netsim` transport, and run a test that scans, connects and reads. Add a CI job marked allowed-to-fail.
+  Start the emulator with netsim enabled (emulator 37.1 starts `netsimd` by itself and writes `$TMPDIR/netsim.ini`, so no extra flag was needed in P0-07 ⚠️ VERIFY on CI runners), attach the Bumble virtual peripheral over the `android-netsim` transport, and run a test that scans, connects and reads. Add a CI job marked allowed-to-fail.
   **Accept:** green locally; the CI job runs and uploads logcat, `dumpsys bluetooth_manager` and the Bumble log.
-- [ ] **P0-07 Test peripheral profile** — deps: none.
+- [x] **P0-07 Test peripheral profile** — deps: none.
   Define `test-peripherals/profile.json` (§8.3) and implement it with Bumble. The Zephyr firmware for nRF52840 can follow during P1.
   **Accept:** the Bumble peripheral is discoverable from a real phone (Bumble over a USB Bluetooth dongle) or from the emulator.
+  **Done 2026-10-02:** `test-peripherals/profile.json` (UUID base `0c6c0000-b347-4cfa-9827-1c5a13658519`) and `test-peripherals/bumble/` (Bumble 0.0.219, run with `uv run blekit-peripheral`). Discovered as `BleKit-Test` from the Android emulator (API 34, emulator 37.1) over netsim. 26 hardware-free pytest tests (in-memory radio) cover every characteristic and command, and run in CI. Bumble's GATT server lacks prepared writes and service removal, so the peripheral adds both itself (see `test-peripherals/README.md`).
 - [ ] **P0-08 License and governance** `[GATE D2]` — deps: none.
   License, CODEOWNERS, CONTRIBUTING, SECURITY, issue templates (with a field for `getDiagnostics()` output). D2 decided 2026-10-02: MIT, personal ownership, no CLA (ADR-009). The scaffold's `LICENSE` and `"license": "MIT"` stand.
   **Accept:** files merged.
@@ -1157,12 +1158,14 @@ All custom UUIDs derive from one random 128-bit base generated in P0-07. Every s
 | `SINK_NO_RSP` | writeWithoutResponse | Counts received bytes |
 | `SINK_COUNTER` | read, notify | Total bytes received by `SINK_NO_RSP` (uint32 LE) |
 | `STREAM` | notify | Sequence number + payload at the rate/size set through `CONTROL`. Has a 0x2901 user-description descriptor |
-| `INDICATE` | indicate | Sends sequence numbers on command |
+| `INDICATE` | indicate | Sends sequence numbers on `CONTROL` `SEND_INDICATIONS` |
 | `SECURE` | read (encryption required) | Triggers pairing |
 | `L2CAP_PSM` | read | PSM of an L2CAP echo server (P5) |
-| `CONTROL` | write | Commands: set stream rate/size, disconnect after N ms, toggle a secondary service (service-changed tests), reset counters |
+| `CONTROL` | write | Commands: set stream rate/size, disconnect after N ms, toggle a secondary service (service-changed tests), reset counters, send N indications |
 
-The standard Heart Rate service (`0x180D` / `0x2A37`) is also exposed for demos.
+The standard Heart Rate service (`0x180D` / `0x2A37`) is also exposed for demos. A `SECONDARY` service appears and disappears on `CONTROL` toggles.
+
+`test-peripherals/profile.json` holds the exact UUIDs, values, advertising data, command opcodes and error codes; `test-peripherals/README.md` summarizes them.
 
 ### 8.4 Background scenarios
 
@@ -1335,3 +1338,4 @@ Connection state changes (`onConnectionStateChange` status, HCI disconnect reaso
 | v0.3 | 2026-10-02 | Q5 decided: Android `minSdk` 26 (ADR-002 rationale added). The config plugin raises `android.minSdkVersion` in `gradle.properties` (never lowers it), the library declares `minSdkVersion 26` as a backstop, and the plugin has `expo-build-properties` ordering tests. P0-03, P1-14 and P1-16 updated; the §8.2 Android floor is now API 26–27 |
 | v0.4 | 2026-10-02 | Gates D0a (`expo-ble-kit`) and D2 (MIT, personal, no CLA) decided. ADR-011: `main` tracks the latest stable Expo SDK (57); SDK 58 beta only on spike branches, so P0-03 scaffolds on SDK 57 and P0-04 runs on an SDK 58 beta branch. P0-03 records the template and Yarn age-gate findings. Plan moved to `docs/` |
 | v0.5 | 2026-10-02 | iOS 27 launch crash on SDK 57 resolved in the example with `expo-build-properties` `ios.enableSceneSupport` (example only); §10 risk updated; P0-05 and P1-16 implications noted |
+| v0.6 | 2026-10-02 | P0-07 done: `test-peripherals/profile.json` and the Bumble peripheral, discovered from the emulator over netsim. §8.3 notes the `SEND_INDICATIONS` command and the `SECONDARY` service; P0-06 notes that emulator 37.1 starts netsim by itself |

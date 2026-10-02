@@ -1,0 +1,23 @@
+[project]
+name = "blekit-test-peripheral"
+version = "0.1.0"
+description = "Bumble implementation of the expo-ble-kit test GATT profile (../profile.json)"
+requires-python = ">=3.10"
+dependencies = ["bumble==0.0.219"]
+
+[project.scripts]
+blekit-peripheral = "blekit_peripheral.__main__:main"
+
+[dependency-groups]
+dev = ["pytest>=8.3", "pytest-asyncio>=0.24"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["blekit_peripheral"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
