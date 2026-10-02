@@ -23,6 +23,16 @@
     "web": {
       "favicon": "./assets/favicon.png"
     },
-    "plugins": ["../app.plugin.js"]
+    "plugins": [
+      "../app.plugin.js",
+      [
+        "expo-build-properties",
+        {
+          "ios": {
+            "enableSceneSupport": true
+          }
+        }
+      ]
+    ]
   }
 }
