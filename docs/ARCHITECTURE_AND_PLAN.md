@@ -1,12 +1,12 @@
 # Expo BLE (`expo-ble-kit`) — Architecture & Implementation Plan
 
-> **Status:** Draft v0.8 · **Date:** 2026-10-02 · **Scope:** proposition #3, an Expo-first Bluetooth Low Energy module · **Changes:** Appendix D
+> **Status:** Draft v0.9 · **Date:** 2026-10-02 · **Scope:** proposition #3, an Expo-first Bluetooth Low Energy module · **Changes:** Appendix D
 >
 > **Package name:** `expo-ble-kit` (D0a, decided 2026-10-02) · native module `ExpoBleKit` · Android package `expo.modules.blekit`.
 >
 > **Platform baseline:** Expo SDK 57 stable (RN 0.86) · SDK 58 in beta (RN 0.88 RC, Expo Modules 2.0 beta, iOS 27 scene life cycle).
 >
-> **Repo state (2026-10-02):** P0-03 scaffold on Expo SDK 57 stable (ADR-011). `main` tracks the latest stable SDK; SDK 58 beta is used only on spike branches until it ships.
+> **Repo state (2026-10-02):** P0-03 scaffold on Expo SDK 57 stable. Stable releases only, on every branch (ADR-011); the repo moves to SDK 58 once it is released as stable.
 
 ---
 
@@ -101,11 +101,11 @@
 | ADR-008 | Background events go through an `expo-task-manager` consumer, backed by a native event buffer | Proposed → spike P0-05 |
 | ADR-009 | License: MIT, personal ownership (github.com/sbaiahmed1), no CLA | Accepted 2026-10-02 (D2) |
 | ADR-010 | Four-layer test pyramid, including a public fake adapter and a Bumble virtual peripheral | Accepted |
-| ADR-011 | `main` builds against the latest **stable** Expo SDK (57 today). Beta SDKs are only used on throwaway spike branches (e.g. P0-04 on SDK 58 beta). `main` moves to SDK 58 when it is stable | Accepted 2026-10-02 |
+| ADR-011 | **Stable releases only.** Every branch, spikes included, builds against the latest stable Expo SDK (57 today) and stable packages. No beta, alpha, RC, canary or `next`-tagged versions, and no experimental or undocumented features of a stable SDK, unless the maintainer explicitly asks. The repo moves to SDK 58 when it is stable | Accepted 2026-10-02, tightened the same day |
 
 **ADR-001 rationale.** Expo Modules give us everything in one package: app-lifecycle subscribers (needed to create `CBCentralManager` at launch for state restoration), config plugins, SharedObjects with events, and TaskManager interop. Performance is no longer a reason to look elsewhere: on iOS, Expo Modules 2.0 synchronous calls are 2.5–5.6× faster than the 1.0 API, and Expo's Android microbenchmarks show 2.0 faster than a TurboModule in all twelve cases. Nitro was considered and rejected for v1 because we would have to rebuild the lifecycle and plugin integration ourselves. Re-evaluate only if P2 benchmarks show the JS boundary, not the radio, is the bottleneck.
 
-**ADR-002 / [GATE D1] rationale.** Expo Modules 2.0 (annotated Swift/Kotlin classes: `@ExpoModule`, `@JS`, `@Record`, `@SharedObject`, `@Event`) is beta on both platforms in SDK 58. In SDK 57 it is iOS-only and experimental. The MVP lands after SDK 58 is stable, and 1.0 will ship around SDK 59–60. So the default plan is: target SDK 58+, write the binding with 2.0, and fall back to the 1.0 DSL member by member where 2.0 lacks something (both APIs can coexist in one module ⚠️ VERIFY on Android). Spike P0-04 confirms or reverses this. If reversed: use the 1.0 DSL with SDK 57+ support and migrate later with Expo's `expo-migrate-module` agent skill.
+**ADR-002 / [GATE D1] rationale.** Expo Modules 2.0 (annotated Swift/Kotlin classes: `@ExpoModule`, `@JS`, `@Record`, `@SharedObject`, `@Event`) is beta on both platforms in SDK 58. In SDK 57 it is iOS-only and experimental. The MVP lands after SDK 58 is stable, and 1.0 will ship around SDK 59–60. So the default plan is: target SDK 58+, write the binding with 2.0, and fall back to the 1.0 DSL member by member where 2.0 lacks something (both APIs can coexist in one module ⚠️ VERIFY on Android). Under ADR-011 the 2.0 path can't be evaluated until SDK 58 is stable, so P0-04 measures only the stable 1.0 DSL on SDK 57. D1 then chooses between starting on the 1.0 DSL with SDK 57+ support (and migrating later with Expo's `expo-migrate-module` agent skill) or waiting for SDK 58 stable to start on 2.0.
 
 **ADR-002 Android `minSdk` 26 rationale (decided 2026-10-02).** The Android core is built on API 26+ calls: `connectGatt(…, Handler)`, PendingIntent scans, `AdvertisingSet` and `ScanResult.isConnectable()`. Supporting 24–25 would mean fallback paths and a test device for a negligible share of devices. Expo's default is 24, so the config plugin raises the app's `minSdkVersion` to 26 (§4.15), and the library declares `minSdkVersion 26` as a backstop: an app below 26 fails at manifest merge with a clear error instead of crashing at runtime.
 
@@ -948,7 +948,7 @@ Parallelism: P0-06/P0-07 can run alongside P0-03/P0-04. With two people, P4 can 
   - Add the `exports` map and `app.plugin.js` (§4.2, §4.6). The example uses CNG (§4.2).
   **Accept:** CI green on the empty module; example app launches on both platforms; `npx expo install --check` is clean in `example/`; root and example resolve the same `react-native` version.
 - [ ] **P0-04 Binding spike** `[GATE D1]` — deps: P0-03.
-  Run on a throwaway SDK 58 beta branch (ADR-011), since Expo Modules 2.0 on Android needs SDK 58. Implement an async `readValue` returning bytes, a `notification` event with a `Uint8Array` payload, and a `PeripheralObject` SharedObject — once with Expo Modules 2.0 and once with the 1.0 DSL, on both platforms. Measure 10k async calls, a 10k events/s burst, and binary round-trip correctness (no base64).
+  Stable only (ADR-011): SDK 57 and the 1.0 DSL, on both platforms. Expo Modules 2.0 is beta on SDK 58 and experimental on SDK 57, so it is out of scope until SDK 58 is stable. Implement an async `readValue` returning bytes, a `notification` event with a `Uint8Array` payload, and a `PeripheralObject` SharedObject. Measure 10k async calls, a 10k events/s burst, and binary round-trip correctness (no base64).
   **Accept:** `docs/spikes/P0-04-binding.md` with numbers and a recommendation; a human decides D1.
 - [ ] **P0-05 iOS background relaunch spike** — deps: P0-03.
   Minimal restoration prototype (`restoreIdentifier`, `bluetooth-central` mode) against a physical peripheral (nRF52840 or a second phone acting as peripheral). Simulate system termination (not a user force-quit) ⚠️ VERIFY Apple's recommended method. Answer: does the app-delegate subscriber run under SDK 58's scene life cycle? Does the JS runtime start without a scene? Can a TaskManager consumer deliver events headlessly?
@@ -1026,7 +1026,7 @@ Parallelism: P0-06/P0-07 can run alongside P0-03/P0-04. With two people, P4 can 
   Explorer: scan list → device → services → read / write / subscribe, with hex and UTF-8 views. Heart Rate: scan for `0x180D`, connect with a reconnect policy, live BPM.
   **Accept:** both work against Bumble (emulator) and the nRF52840 on iOS and Android devices; Maestro flows `explorer-basic.yaml` and `heart-rate.yaml` pass; example screens have Jest tests using the fake adapter.
 - [ ] **P1-16 Docs v1** — deps: P1-12.
-  Getting started (requirements: Expo SDK 58+, iOS 16.4+, Android 8.0 / API 26+), permissions, bare setup, API reference (TypeDoc), troubleshooting (Android 133, location services on API ≤ 30, reconnecting by id on Android (§4.12), no Bluetooth in the iOS Simulator).
+  Getting started (requirements: Expo SDK per D1, iOS 16.4+, Android 8.0 / API 26+), permissions, bare setup, API reference (TypeDoc), troubleshooting (Android 133, location services on API ≤ 30, reconnecting by id on Android (§4.12), no Bluetooth in the iOS Simulator).
   **Accept:** docs build; every public symbol is documented. Publish `0.1.0` on `next`.
 
 ### 7.4 P2 — Robustness
@@ -1347,3 +1347,4 @@ Connection state changes (`onConnectionStateChange` status, HCI disconnect reaso
 | v0.6 | 2026-10-02 | P0-07 done: `test-peripherals/profile.json` and the Bumble peripheral, discovered from the emulator over netsim. §8.3 notes the `SEND_INDICATIONS` command and the `SECONDARY` service; P0-06 notes that emulator 37.1 starts netsim by itself |
 | v0.7 | 2026-10-02 | P0-06 green locally: instrumented scan/connect/read test against the Bumble peripheral over netsim, `e2e/android-netsim/run.sh`, nightly CI job (not yet run). Q3 gets its first measurement (API 35 ignores the requested MTU). P0-07 note corrected to API 35 |
 | v0.8 | 2026-10-02 | P0-08 done: governance files, issue and PR templates, README; LICENSE copyright corrected from the template's Expo line to Ahmed Sbai |
+| v0.9 | 2026-10-02 | ADR-011 tightened: stable releases only on every branch, spikes included. P0-04 rescoped to the stable 1.0 DSL on SDK 57; the D1 options now include waiting for SDK 58 stable to start on 2.0 |
