@@ -1,0 +1,104 @@
+{
+  "$comment": "GATT queue contract (plan §4.9, P1-02, P1-13). Swift, Kotlin and TypeScript tests all run these cases against their queue, so the fake adapter orders and fails operations like the native cores. Operations are named; 'complete' is the radio answering one. After every step the harness runs everything that is due. Results: 'ok', a BleErrorCode, or null while pending.",
+  "cases": [
+    {
+      "name": "one operation at a time, in submission order",
+      "steps": [
+        { "enqueue": "a" },
+        { "enqueue": "b" },
+        { "enqueue": "c" },
+        { "expect": { "started": ["a"], "results": { "a": null, "b": null, "c": null }, "depth": 3 } },
+        { "complete": "a" },
+        { "expect": { "started": ["a", "b"], "results": { "a": "ok", "b": null } } },
+        { "complete": "b" },
+        { "complete": "c" },
+        { "expect": { "started": ["a", "b", "c"], "results": { "b": "ok", "c": "ok" }, "depth": 0 } }
+      ]
+    },
+    {
+      "name": "radio errors reach the caller and the next operation starts",
+      "steps": [
+        { "enqueue": "a" },
+        { "enqueue": "b" },
+        { "complete": "a", "error": "GATT_ERROR" },
+        { "expect": { "started": ["a", "b"], "results": { "a": "GATT_ERROR", "b": null } } }
+      ]
+    },
+    {
+      "name": "a timeout answers OPERATION_TIMEOUT and the next operation starts",
+      "steps": [
+        { "enqueue": "a", "timeoutMs": 100 },
+        { "enqueue": "b" },
+        { "advance": 99 },
+        { "expect": { "started": ["a"], "results": { "a": null } } },
+        { "advance": 1 },
+        { "expect": { "started": ["a", "b"], "results": { "a": "OPERATION_TIMEOUT", "b": null } } }
+      ]
+    },
+    {
+      "name": "the default timeout is 10 s",
+      "steps": [
+        { "enqueue": "a" },
+        { "advance": 9999 },
+        { "expect": { "results": { "a": null } } },
+        { "advance": 1 },
+        { "expect": { "results": { "a": "OPERATION_TIMEOUT" } } }
+      ]
+    },
+    {
+      "name": "a result that arrives after the timeout is ignored",
+      "steps": [
+        { "enqueue": "a", "timeoutMs": 100 },
+        { "enqueue": "b" },
+        { "advance": 100 },
+        { "complete": "a" },
+        { "expect": { "started": ["a", "b"], "results": { "a": "OPERATION_TIMEOUT", "b": null }, "depth": 1 } }
+      ]
+    },
+    {
+      "name": "cancelling a queued operation removes it without starting it",
+      "steps": [
+        { "enqueue": "a" },
+        { "enqueue": "b" },
+        { "enqueue": "c" },
+        { "cancel": "b" },
+        { "expect": { "results": { "b": "OPERATION_CANCELLED" }, "depth": 2 } },
+        { "complete": "a" },
+        { "expect": { "started": ["a", "c"] } }
+      ]
+    },
+    {
+      "name": "cancelling the running operation answers at once, but the queue waits for the radio",
+      "steps": [
+        { "enqueue": "a" },
+        { "enqueue": "b" },
+        { "cancel": "a" },
+        { "expect": { "started": ["a"], "results": { "a": "OPERATION_CANCELLED", "b": null } } },
+        { "complete": "a" },
+        { "expect": { "started": ["a", "b"], "results": { "a": "OPERATION_CANCELLED" } } }
+      ]
+    },
+    {
+      "name": "failAll rejects the running and the queued operations",
+      "steps": [
+        { "enqueue": "a" },
+        { "enqueue": "b" },
+        { "failAll": "DISCONNECTED" },
+        { "expect": { "started": ["a"], "results": { "a": "DISCONNECTED", "b": "DISCONNECTED" }, "depth": 0 } },
+        { "complete": "a" },
+        { "expect": { "results": { "a": "DISCONNECTED" } } }
+      ]
+    },
+    {
+      "name": "the queue takes new operations after failAll",
+      "steps": [
+        { "enqueue": "a" },
+        { "failAll": "DISCONNECTED" },
+        { "enqueue": "b" },
+        { "expect": { "started": ["a", "b"], "results": { "b": null } } },
+        { "complete": "b" },
+        { "expect": { "results": { "b": "ok" } } }
+      ]
+    }
+  ]
+}

@@ -32,6 +32,8 @@ e2e/android-netsim/run.sh    # L3: peripheral + instrumented tests on a running 
 
 `test-peripherals/profile.json` is the single source of truth for the test GATT profile; change it before any implementation.
 
+`test-contracts/` holds behavior cases shared by the native cores and the TypeScript fake (for now the GATT queue). Swift, Kotlin and Jest tests all run them; a change of queue behavior starts there.
+
 ## Conventions
 
 - Commit messages: plain subject and body. No `Co-Authored-By` or session trailers.

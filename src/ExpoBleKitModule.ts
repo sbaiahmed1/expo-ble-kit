@@ -1,29 +1,28 @@
-import { NativeModule, requireNativeModule, SharedObject } from 'expo';
+import { NativeModule, requireOptionalNativeModule, SharedObject } from 'expo';
 
 import type { ExpoBleKitModuleEvents, PeripheralObjectEvents } from './ExpoBleKit.types';
 import type { NativeAttributeRequest } from './internal/attributeRequest';
 import type { NativeConnectOptions } from './internal/connectOptions';
+import type { NativeBleKitPort, NativeDiagnostics, NativePeripheralPort } from './internal/port';
 import type { NativeScanOptions } from './internal/scanOptions';
 import type {
   BlePermissionRequest,
   BlePermissions,
   BleState,
   ConnectionState,
-  Diagnostics,
   Service,
 } from './types';
 
 /** One peripheral's native handle (plan §4.5): the same object for the same id. */
-export declare class NativePeripheral extends SharedObject<PeripheralObjectEvents> {
+export declare class NativePeripheral
+  extends SharedObject<PeripheralObjectEvents>
+  implements NativePeripheralPort
+{
   readonly id: string;
   readonly state: ConnectionState;
-  /** The discovery cache; empty before discovery and after a disconnect. */
   readonly services: Service[];
-  /** Resolves when the connection is ready; the `connected` event comes first. */
   connect(options: NativeConnectOptions): Promise<void>;
-  /** During a connect, cancels it: the connect rejects with OPERATION_CANCELLED. */
   disconnect(): Promise<void>;
-  /** `services` null discovers everything. UUIDs must be normalized; the timeout is required. */
   discover(services: string[] | null, timeoutMs: number): Promise<Service[]>;
   read(request: NativeAttributeRequest): Promise<Uint8Array>;
   write(request: NativeAttributeRequest, value: Uint8Array): Promise<void>;
@@ -31,19 +30,21 @@ export declare class NativePeripheral extends SharedObject<PeripheralObjectEvent
   writeDescriptor(request: NativeAttributeRequest, value: Uint8Array): Promise<void>;
 }
 
-// The raw native module. Its rejections carry a BleErrorCode `code`; convert them with
-// `BleError.fromNative`. The public BleManager (P1-12) wraps this.
-declare class ExpoBleKitModule extends NativeModule<ExpoBleKitModuleEvents> {
+/** The native module: the real `NativeBleKitPort` (plan §4.6). */
+export declare class ExpoBleKitModule
+  extends NativeModule<ExpoBleKitModuleEvents>
+  implements NativeBleKitPort
+{
   getState(): BleState;
   getPermissionsAsync(): Promise<BlePermissions>;
   requestPermissionsAsync(request?: BlePermissionRequest): Promise<BlePermissions>;
-  /** Results and the session's end arrive as `scanResults` and `scanError` events. */
   startScan(sessionId: number, options: NativeScanOptions): Promise<void>;
   stopScan(sessionId: number): Promise<void>;
-  /** No I/O; never creates a manager (plan §5.2). */
   getPeripheral(id: string): NativePeripheral;
-  /** So far: state, sessions and, on Android, open GATT clients. The rest lands with P2-07. */
-  getDiagnosticsAsync(): Promise<Pick<Diagnostics, 'state' | 'sessions' | 'android'>>;
+  getDiagnosticsAsync(): Promise<NativeDiagnostics>;
 }
 
-export default requireNativeModule<ExpoBleKitModule>('ExpoBleKit');
+/** Null where the module isn't linked: Jest, or an app that wasn't rebuilt (plan §4.6). */
+export function loadNativeModule(): NativeBleKitPort | null {
+  return requireOptionalNativeModule<ExpoBleKitModule>('ExpoBleKit');
+}

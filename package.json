@@ -9,8 +9,19 @@
       "types": "./build/index.d.ts",
       "default": "./build/index.js"
     },
+    "./testing": {
+      "types": "./build/testing/index.d.ts",
+      "default": "./build/testing/index.js"
+    },
     "./app.plugin.js": "./app.plugin.js",
     "./package.json": "./package.json"
+  },
+  "typesVersions": {
+    "*": {
+      "testing": [
+        "build/testing/index.d.ts"
+      ]
+    }
   },
   "scripts": {
     "build": "node internal/module_scripts/build.js",

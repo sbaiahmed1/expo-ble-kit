@@ -3,6 +3,7 @@ import { registerWebModule, NativeModule } from 'expo';
 import type { ExpoBleKitModuleEvents } from './ExpoBleKit.types';
 import type { NativePeripheral } from './ExpoBleKitModule';
 import { BleError, BleErrorCode } from './errors';
+import type { NativeBleKitPort } from './internal/port';
 import type { BlePermissions, BleState, Diagnostics } from './types';
 
 class WebPeripheral {
@@ -75,4 +76,8 @@ function notSupported(): BleError {
   return new BleError(BleErrorCode.NOT_SUPPORTED, 'Bluetooth LE is not supported on web.');
 }
 
-export default registerWebModule(ExpoBleKitModule, 'ExpoBleKitModule');
+const webModule = registerWebModule(ExpoBleKitModule, 'ExpoBleKitModule');
+
+export function loadNativeModule(): NativeBleKitPort {
+  return webModule as unknown as NativeBleKitPort;
+}

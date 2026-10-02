@@ -37,6 +37,7 @@ __tests__
 /docs/
 /AGENTS.md
 /test-peripherals/
+/test-contracts/
 /e2e/
 /eslint.config.cjs
 /CONTRIBUTING.md

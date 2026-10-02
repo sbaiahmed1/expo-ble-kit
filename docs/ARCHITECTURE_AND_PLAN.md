@@ -1,6 +1,6 @@
 # Expo BLE (`expo-ble-kit`) — Architecture & Implementation Plan
 
-> **Status:** Draft v0.22 · **Date:** 2026-10-02 · **Scope:** proposition #3, an Expo-first Bluetooth Low Energy module · **Changes:** Appendix D
+> **Status:** Draft v0.23 · **Date:** 2026-10-02 · **Scope:** proposition #3, an Expo-first Bluetooth Low Energy module · **Changes:** Appendix D
 >
 > **Package name:** `expo-ble-kit` (D0a, decided 2026-10-02) · native module `ExpoBleKit` · Android package `expo.modules.blekit`.
 >
@@ -253,7 +253,8 @@ iOS platform rules:
 
 - The public surface is exactly §5, exported from `src/index.ts`. Everything else is internal.
 - An internal port interface, `NativeBleKitPort`, is implemented by the real native module and by `FakeBleAdapter`. Tests inject the fake through the public `expo-ble-kit/testing` entry.
-- `src/internal/native.ts` resolves the native module lazily, on first use, with `requireOptionalNativeModule`. It also exposes an internal setter that `installFakeBle` uses. So importing `expo-ble-kit` in Jest, where no native module exists, doesn't throw.
+- `src/internal/native.ts` resolves the native module lazily, on first use, with `requireOptionalNativeModule`. It also exposes an internal setter that `installFakeBle` uses. So importing `expo-ble-kit` in Jest, where no native module exists, doesn't throw; a call without a native module or a fake rejects with `NOT_SUPPORTED`, saying the app needs a rebuild. Until P1-12, the package's default export is this lazy module (a proxy), which the example uses.
+- The port (`src/internal/port.ts`) covers what the native bindings implement; P1-08 and P1-09 extend it. `FakeBleAdapter` runs its operations through a TypeScript twin of the native `GattQueue`, and one set of contract cases, `test-contracts/gatt-queue.json`, runs against all three queues (Jest, XCTest, JUnit), so the fake orders, times out, cancels and fails operations exactly like the native cores.
 - `package.json` declares an `exports` map (`.`, `./testing`, `./app.plugin.js`, `./package.json`) so that `expo-ble-kit/testing` resolves in Metro, Jest and TypeScript.
 - Web: until D3 is decided, the web build exports the same API with `state === 'unsupported'`, and every call rejects with `NOT_SUPPORTED`.
 - The TS layer owns UUID normalization, option defaults, the `BleError` class, hooks (built on `useSyncExternalStore`) and `AbortSignal` wiring. Input validation failures reject with `INVALID_ARGUMENT`.
@@ -883,14 +884,18 @@ export interface VirtualPeripheralConfig {
   rssi?: number; // default -60
   services: Array<{
     uuid: UUID;
-    characteristics: Array<{ uuid: UUID; properties: CharacteristicProperty[]; value?: Uint8Array }>;
+    characteristics: Array<{
+      uuid: UUID; properties: CharacteristicProperty[]; value?: Uint8Array;
+      /** Notify and indicate characteristics also get a CCCD (0x2902). */
+      descriptors?: Array<{ uuid: UUID; value?: Uint8Array }>;
+    }>;
   }>;
 }
 
 export interface FakeBle {
   addPeripheral(config: VirtualPeripheralConfig): VirtualPeripheral;
   setState(state: BleState): void;
-  /** Make the next matching op fail with this code. */
+  /** Make the next matching op fail with this code. Ops: requestPermissions, startScan, connect, discover, read, write, readDescriptor, writeDescriptor. */
   injectError(match: { op: string; peripheralId?: string; characteristic?: UUID }, code: BleErrorCode): void;
   reset(): void;
 }
@@ -904,6 +909,8 @@ export interface VirtualPeripheral {
   readonly writes: ReadonlyArray<{ characteristic: UUID; value: Uint8Array; withResponse: boolean }>;
 }
 ```
+
+Fake rules (P1-13): Bluetooth is on and every permission granted unless `installFakeBle` says otherwise; a peripheral advertises from `addPeripheral` until `advertise(false)`; a connect to a peripheral that isn't advertising waits (times out, or completes when it advertises), like a real absent device; writes store the value, so a later read returns it; writes without response take at most 20 bytes (one packet at the default MTU); results and operation answers arrive on later timer ticks, so tests advance timers (Jest fake timers work). `notify()` throws until P1-08 adds notification delivery.
 
 ### 5.9 Usage examples
 
@@ -1103,9 +1110,13 @@ Parallelism: P0-06/P0-07 can run alongside P0-03/P0-04. With two people, P4 can 
 - [x] **P1-11 UUID utilities and constants** — deps: none.
   **Accept:** normalization tests for 16/32/128-bit inputs, numbers and mixed casing.
   **Done 2026-10-02:** `src/uuid.ts` (`normalizeUUID`, `uuid16`, `UUID`) and `src/constants.ts` (`GattServices`, `GattCharacteristics`), 37 Jest tests. Accepted inputs: 16- and 32-bit hex with an optional `0x` prefix, numbers up to 0xFFFFFFFF, dashed or compact 128-bit; any case. Everything else (wrong length, whitespace, braces, non-integers) throws `INVALID_ARGUMENT`.
-- [ ] **P1-13 Port and fake adapter** — deps: P1-10, P1-11.
+- [x] **P1-13 Port and fake adapter** — deps: P1-10, P1-11.
   Define `NativeBleKitPort` (`src/internal/port.ts`) from §5; the native binding tasks implement it as they land. Add the lazy native-module resolution (§4.6), `FakeBleAdapter`, and the public `expo-ble-kit/testing` entry as specified in §5.8. Done before P1-12 so the TS API and hooks are built test-first against the fake.
   **Accept:** the `testing` entry resolves through the `exports` map in Jest and TypeScript; importing `expo-ble-kit` in Jest without a native module doesn't throw; the fake follows the same ordering and error semantics as the native core (shared contract test cases with P1-02).
+  **Done 2026-10-02:** `src/internal/port.ts` (`NativeBleKitPort`, `NativePeripheralPort`), lazy resolution and the fake override in `src/internal/native.ts`, `FakeBleAdapter` and `installFakeBle` in `src/testing/`, the `./testing` entry in `exports` (plus `typesVersions` for the older `node` resolution), and the shared queue contract `test-contracts/gatt-queue.json` (9 cases) run by `gattQueueContract.test.ts`, `GattQueueContractTests.swift` and `GattQueueContractTest.kt` against the TypeScript, Swift and Kotlin queues.
+  - Accept: a Jest test resolves `expo-ble-kit/testing` from a consumer that links the package, through the exports map, and TypeScript resolves its types with both `bundler` and `node10` resolution; importing the package in Jest doesn't throw; the contract cases pass on all three queues, and breaking one expectation on purpose fails all three. 16 Jest tests cover the fake (scanning, connecting, operations, errors, ordering).
+  - Found on the way: Gradle reused an up-to-date result after the contract file changed, because the file wasn't a task input; it is now (`android/build.gradle`). The npm package check now also fails when a file named by `main`, `types`, `exports` or `typesVersions` is missing.
+  - The example (now on the lazy default export) still works on the Galaxy A52.
 - [ ] **P1-12 TS API and hooks** — deps: P1-03 … P1-10, P1-13.
   `BleManager`, `Peripheral`, `useBleState`, `useBlePermissions`, `useScan`, `usePeripheral`, `useCharacteristicValue`.
   **Accept:** exported types match §5 exactly; hooks tested with the fake adapter.
@@ -1497,3 +1508,4 @@ Submit results (`BluetoothStatusCodes`, API 33+): 1 not enabled → `BLUETOOTH_P
 | v0.20 | 2026-10-02 | P1-05 in progress: connect and disconnect on both platforms, verified on the Galaxy A52 without a peripheral (absent-device timeout, cancellable no-timeout connect, 100 cycles without GATT client leaks). Connection rules in §5.4, binding identity in §4.5, `android.openGattClients` in §5.7 `Diagnostics` |
 | v0.21 | 2026-10-02 | P1-06 in progress: discovery, `autoDiscover` and the cache on both platforms; two-timeout reset on Android. Discovery rules in §5.4, the discovery timeout in §4.9 |
 | v0.22 | 2026-10-02 | P1-07 in progress: reads, writes and descriptors on both platforms. Attribute rules in §5.4 (checks, lengths, the CCCD guard, basic write-without-response pacing) |
+| v0.23 | 2026-10-02 | P1-13 done: native port, lazy module, fake adapter, `expo-ble-kit/testing`, and the GATT queue contract shared by the three queues. §4.6 and §5.8 updated (fake rules, `descriptors` in `VirtualPeripheralConfig`, `injectError` op names) |

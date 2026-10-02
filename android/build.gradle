@@ -39,8 +39,18 @@ tasks.matching { it.name.contains("AndroidTestAssets") }.configureEach {
   dependsOn(copyTestProfile)
 }
 
+// The shared test contracts (test-contracts/) that the Swift and TypeScript tests also run.
+tasks.withType(Test).configureEach {
+  def contracts = file("../test-contracts")
+  // An input, so editing a contract reruns the tests instead of reusing an up-to-date result.
+  inputs.dir(contracts)
+  systemProperty "blekit.contracts", contracts.absolutePath
+}
+
 dependencies {
   testImplementation "junit:junit:4.13.2"
+  // A real JSON parser for the contract files; android.jar only has stubs.
+  testImplementation "org.json:json:20250517"
 
   androidTestImplementation "androidx.test:runner:1.7.0"
   androidTestImplementation "androidx.test:rules:1.7.0"

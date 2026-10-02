@@ -1,6 +1,6 @@
-// Reexport the native module. On web, it will be resolved to ExpoBleKitModule.web.ts
-// and on native platforms to ExpoBleKitModule.ts
-export { default } from './ExpoBleKitModule';
+// The raw native module, resolved on first use (plan §4.6). Temporary: the public API of P1-12
+// (BleManager, Peripheral, hooks) replaces this default export.
+export { lazyNativeModule as default } from './internal/native';
 export * from './ExpoBleKit.types';
 export type {
   BlePermissionRequest,
