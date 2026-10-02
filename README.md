@@ -2,19 +2,41 @@
 
 Bluetooth Low Energy for Expo and React Native apps.
 
-> **Status: pre-alpha. Not usable yet.** The design and roadmap live in [docs/ARCHITECTURE_AND_PLAN.md](docs/ARCHITECTURE_AND_PLAN.md). The first preview, `0.1.0` on the `next` dist-tag, ships at the end of phase P1 (central role).
+> **Status: preview.** The central role works: scanning, connecting, reading, writing and notifications on iOS and Android. Reconnection policies, background operation and the peripheral role come in later versions. The design and roadmap live in [docs/ARCHITECTURE_AND_PLAN.md](docs/ARCHITECTURE_AND_PLAN.md).
 
-## Goals
+```ts
+import { BleManager, GattCharacteristics, GattServices } from 'expo-ble-kit';
+
+await BleManager.requestPermissionsAsync();
+
+const found = await BleManager.scanFor({ services: [GattServices.HeartRate], timeoutMs: 10_000 });
+if (found) {
+  const monitor = BleManager.getPeripheral(found.id);
+  await monitor.connect();
+  await monitor.subscribe(GattServices.HeartRate, GattCharacteristics.HeartRateMeasurement, (value) => {
+    const bpm = value[0] & 0x01 ? value[1] | (value[2] << 8) : value[1];
+    console.log(bpm, 'bpm');
+  });
+}
+```
+
+## Documentation
+
+- [Getting started](docs/getting-started.md): requirements, install, scanning, connecting, hooks, errors, testing.
+- [Permissions](docs/guides/permissions.md): what each platform asks for.
+- [Bare React Native setup](docs/guides/bare-setup.md): for apps without prebuild.
+- [Troubleshooting](docs/troubleshooting.md): Android status 133, reconnecting by id, location services, the iOS Simulator.
+- API reference: `yarn docs` builds it into `docs/api/`.
+
+## Why expo-ble-kit
 
 - **Expo-first:** an Expo module with a config plugin. Works in development builds and in bare React Native apps with `expo` installed (not in Expo Go).
-- **Complete central role:** scan, connect, discover, read, write, notify/indicate, descriptors, MTU, RSSI, several devices at once.
-- **Peripheral role:** advertising and a GATT server.
-- **Reliable by design:** one queued GATT operation at a time per connection, timeouts everywhere, typed errors, reconnection policies.
+- **Reliable by design:** one GATT operation at a time per connection, a timeout on every operation, typed errors, `AbortSignal` support.
 - **Binary-first:** `Uint8Array` end to end, no base64.
-- **Background support:** iOS state restoration, Android foreground service and background scans, delivered through `expo-task-manager`.
-- **Testable:** a public fake adapter for app tests, plus emulator and hardware test suites.
+- **React hooks:** `useBleState`, `useBlePermissions`, `useScan`, `usePeripheral`, `useCharacteristicValue`.
+- **Testable:** `expo-ble-kit/testing` gives app tests virtual peripherals that behave like real ones.
 
-## Requirements (planned)
+## Requirements
 
 Expo SDK 57+ (Expo Modules 1.0 API), iOS 16.4+, Android 8.0 (API 26)+, New Architecture.
 

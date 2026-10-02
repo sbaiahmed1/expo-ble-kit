@@ -25,7 +25,12 @@ export function useCharacteristicValue(
   service: UUID,
   characteristic: UUID,
   options: { mode?: 'subscribe' | 'read'; batchMs?: number } = {}
-): { value: Uint8Array | null; error: BleError | null } {
+): {
+  /** The latest value; null until the first one. */
+  value: Uint8Array | null;
+  /** Why subscribing or reading failed. */
+  error: BleError | null;
+} {
   const { mode = 'subscribe', batchMs = 0 } = options;
   const connected = useConnectionState(peripheral) === 'connected';
   const target = useMemo((): Target => {

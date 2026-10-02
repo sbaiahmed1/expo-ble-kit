@@ -1,3 +1,9 @@
+/**
+ * A fake Bluetooth stack for Jest: `installFakeBle()` replaces the native module with virtual
+ * peripherals that behave like the real ones (same ordering, timeouts and errors).
+ *
+ * @module expo-ble-kit/testing
+ */
 import { BleErrorCode } from '../errors';
 import { setNativeModuleOverride } from '../internal/native';
 import type { BlePermissions, BleState } from '../types';

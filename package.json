@@ -32,6 +32,7 @@
     "format:check": "prettier --check \"src/**/*.{ts,tsx}\" \"plugin/src/**/*.ts\"",
     "typecheck": "tsc --noEmit && tsc --noEmit -p plugin",
     "check:package": "node internal/check-package-contents.js",
+    "docs": "typedoc",
     "test": "node internal/module_scripts/test.js",
     "prepare": "node internal/module_scripts/prepare.js",
     "changeset": "changeset",
@@ -72,6 +73,7 @@
     "react": "19.2.3",
     "react-native": "0.86.3",
     "test-renderer": "~1.2.0",
+    "typedoc": "^0.28.20",
     "typescript": "~6.0.3"
   },
   "jest": {

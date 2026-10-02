@@ -5,111 +5,244 @@ import type { UUID } from './uuid';
 // together (Appendix B, rule 8). Members owned by later tasks (writeStream, batching, logging, the
 // peripheral role, background, onboarding, Android-only peripheral calls) land with those tasks.
 
+/**
+ * The state of the Bluetooth adapter, as the app sees it.
+ *
+ * - `unknown`: not known yet. On iOS, until the app is allowed to use Bluetooth and the system
+ *   reports a state.
+ * - `resetting`: turning on or off, or the stack is restarting.
+ * - `unsupported`: the device has no Bluetooth LE.
+ * - `unauthorized`: the app isn't allowed to use Bluetooth (iOS), or `BLUETOOTH_CONNECT` isn't
+ *   granted (Android 12+).
+ * - `poweredOff`: Bluetooth is off.
+ * - `poweredOn`: ready to scan and connect.
+ */
 export type BleState =
   'unknown' | 'resetting' | 'unsupported' | 'unauthorized' | 'poweredOff' | 'poweredOn';
 
+/**
+ * Whether a permission is granted. `undetermined` means the user hasn't been asked yet.
+ */
 export type PermissionStatus = 'granted' | 'denied' | 'undetermined';
-/** See §4.8 for how native states map onto these. `connected` means ready for GATT ops. */
+
+/**
+ * The state of a connection. `connected` means ready for GATT operations: the link is up and the
+ * setup after connecting (service discovery, the Android MTU request) is done.
+ * `reconnecting` is reserved for reconnection policies, which a later version adds.
+ */
 export type ConnectionState =
   'disconnected' | 'connecting' | 'connected' | 'disconnecting' | 'reconnecting';
+
+/** A Bluetooth LE physical layer: 1M, 2M or Coded (long range). */
 export type Phy = 'le1m' | 'le2m' | 'leCoded';
 
-/** Removes a JS listener. Synchronous, no I/O, never fails. */
+/** Returned by every `add…Listener` function. */
 export interface Subscription {
+  /** Removes the listener. Synchronous, no I/O, never fails. */
   remove(): void;
 }
 
+/** Options every GATT operation takes. */
 export interface OpOptions {
+  /**
+   * How long the operation may take, in milliseconds. It then rejects with `OPERATION_TIMEOUT`.
+   * @defaultValue 10000 (30000 for `discover`)
+   */
   timeoutMs?: number;
+  /**
+   * Cancels the operation: a queued one never reaches the radio, a running one rejects at once
+   * with `OPERATION_CANCELLED` (the radio finishes it, and the result is dropped).
+   */
   signal?: AbortSignal;
 }
 
+/** The app's Bluetooth permissions. */
 export interface BlePermissions {
+  /** Scanning. On Android 12+ `BLUETOOTH_SCAN` (and location when it isn't `neverForLocation`). */
   scan: PermissionStatus;
+  /** Connecting and GATT. On Android 12+ `BLUETOOTH_CONNECT`. */
   connect: PermissionStatus;
+  /** Advertising (the peripheral role, a later version). `denied` until declared. */
   advertise: PermissionStatus;
   /** Android 10–11: ACCESS_BACKGROUND_LOCATION. Elsewhere mirrors `scan`. */
   backgroundScan: PermissionStatus;
+  /** False once the system won't show a prompt again: the user has to change it in Settings. */
   canAskAgain: boolean;
 }
 
 /** No flag set means `{ scan: true, connect: true }`. iOS ignores the flags: one prompt covers all. */
 export interface BlePermissionRequest {
+  /** Ask for the scan permissions. */
   scan?: boolean;
+  /** Ask for the connect permission. */
   connect?: boolean;
+  /** Ask for the advertise permission (needs the config plugin's advertise option). */
   advertise?: boolean;
+  /** Android 10–11: also ask for background location, after the others are granted. */
   backgroundScan?: boolean;
 }
 
+/** What to scan for. Every given criterion must match; within a list, any entry may. */
 export interface ScanOptions {
   /** Strongly recommended. Required for background scanning on iOS. */
   services?: UUID[];
-  allowDuplicates?: boolean; // default false
+  /**
+   * Report a device every time it advertises, instead of once per scan.
+   * @defaultValue false
+   */
+  allowDuplicates?: boolean;
   /** Batch window for onResults in ms. 0 = deliver immediately (default). */
   reportIntervalMs?: number;
+  /** Only devices whose name starts with this. */
   namePrefix?: string;
-  manufacturerData?: { companyId: number; data?: Uint8Array; mask?: Uint8Array }[];
+  /** Only devices with manufacturer data from one of these companies. */
+  manufacturerData?: {
+    /** The Bluetooth SIG company identifier, for example 0x004C for Apple. */
+    companyId: number;
+    /** The data must start with these bytes (where `mask` has bits set). */
+    data?: Uint8Array;
+    /** Which bits of `data` to compare. Same length as `data`. */
+    mask?: Uint8Array;
+  }[];
+  /** Android-only settings. */
   android?: {
-    scanMode?: 'opportunistic' | 'lowPower' | 'balanced' | 'lowLatency'; // default 'balanced'
+    /**
+     * Trades battery for speed.
+     * @defaultValue 'balanced'
+     */
+    scanMode?: 'opportunistic' | 'lowPower' | 'balanced' | 'lowLatency';
+    /** Which advertisements the system reports. */
     callbackType?: 'allMatches' | 'firstMatch' | 'matchLost';
+    /** How many advertisements a match needs. */
     matchMode?: 'aggressive' | 'sticky';
-    legacy?: boolean; // default true
+    /**
+     * Only legacy advertisements; false also reports extended advertising (Android 8+).
+     * @defaultValue true
+     */
+    legacy?: boolean;
+    /** The physical layer to scan on (with `legacy: false`). */
     phy?: 'le1m' | 'leCoded' | 'all';
-    reportDelayMs?: number; // hardware batching
+    /** Hardware batching: the controller holds results for this long. */
+    reportDelayMs?: number;
   };
-  ios?: { solicitedServices?: UUID[] };
+  /** iOS-only settings. */
+  ios?: {
+    /** Also report devices that solicit these services. */
+    solicitedServices?: UUID[];
+  };
 }
 
+/** One advertisement, as a scan reports it. */
 export interface ScanResult {
+  /** The peripheral id: a MAC address on Android, a per-app UUID on iOS. Not portable. */
   id: string;
+  /** The advertised name, or the name the system knows; null when there is none. */
   name: string | null;
+  /** Signal strength in dBm. */
   rssi: number;
+  /** The advertised transmit power in dBm, when the device sends it. */
   txPowerLevel: number | null;
+  /** Whether the device accepts connections; null when the platform can't tell. */
   isConnectable: boolean | null;
+  /** The advertised service UUIDs. */
   serviceUUIDs: UUID[];
+  /** Service data, by service UUID. */
   serviceData: Record<UUID, Uint8Array>;
-  manufacturerData: Record<number, Uint8Array>; // key = Bluetooth SIG company id
+  /** Manufacturer data, by Bluetooth SIG company id. */
+  manufacturerData: Record<number, Uint8Array>;
   /** Raw advertising + scan response bytes. Android only; null on iOS. */
   rawAdvertisement: Uint8Array | null;
+  /** When it was received, in milliseconds since the Unix epoch (comparable with `Date.now()`). */
   timestamp: number;
 }
 
+/** A running scan, from `BleManager.startScan`. */
 export interface ScanSession {
+  /** False once stopped, or once it ended with an error. */
   readonly active: boolean;
+  /** Stops this session; other sessions keep scanning. Calling it again does nothing. */
   stop(): void;
 }
 
+/** Options of `Peripheral.connect`. */
 export interface ConnectOptions extends Omit<OpOptions, 'timeoutMs'> {
   /**
    * Default 15000. `null` = no timeout: the connect stays pending until the device appears
    * ("connect when in range": iOS pending connect, Android autoConnect). It is still cancelled by
-   * disconnect() or `signal`. This is the only exception to Appendix B rule 4.
+   * disconnect() or `signal`.
    */
   timeoutMs?: number | null;
-  autoDiscover?: boolean; // default true
-  reconnect?: ReconnectPolicy | false; // default false
-  restoreSubscriptionsOnReconnect?: boolean; // default true when reconnect is set
-  keepAliveInBackground?: boolean; // Android: foreground service (P3). iOS: needs the background mode
-  android?: { autoConnect?: boolean; requestMtu?: number | false; phy?: Phy[] }; // requestMtu default 517 (see Q3)
-  ios?: { enableAutoReconnect?: boolean; notifyOnDisconnection?: boolean };
+  /**
+   * Discover every service before the connection counts as connected.
+   * @defaultValue true
+   */
+  autoDiscover?: boolean;
+  /** Reconnection policy. Not supported yet: anything but `false` rejects with `NOT_SUPPORTED`. */
+  reconnect?: ReconnectPolicy | false;
+  /** Resubscribe after a reconnect (with `reconnect`). Has no effect yet. */
+  restoreSubscriptionsOnReconnect?: boolean;
+  /** Keep the connection while the app is in the background. Not supported yet: `true` rejects. */
+  keepAliveInBackground?: boolean;
+  /** Android-only options; ignored on iOS. */
+  android?: {
+    /** Android's background connect. Defaults to true exactly when `timeoutMs` is null. */
+    autoConnect?: boolean;
+    /**
+     * The ATT MTU to ask for after connecting (23–517), or `false` for none.
+     * @defaultValue 517
+     */
+    requestMtu?: number | false;
+    /** Preferred physical layers. Not supported yet: a non-empty list rejects. */
+    phy?: Phy[];
+  };
+  /** iOS-only options; ignored on Android. */
+  ios?: {
+    /** iOS 17 system reconnection. Not supported yet: `true` rejects. */
+    enableAutoReconnect?: boolean;
+    /** Show a system alert when the peripheral disconnects while the app is suspended. */
+    notifyOnDisconnection?: boolean;
+  };
 }
 
+/** How to reconnect after a link loss (a later version). */
 export interface ReconnectPolicy {
-  maxAttempts?: number; // default Infinity
-  initialDelayMs?: number; // default 1000
-  maxDelayMs?: number; // default 30000
+  /** @defaultValue Infinity */
+  maxAttempts?: number;
+  /** @defaultValue 1000 */
+  initialDelayMs?: number;
+  /** @defaultValue 30000 */
+  maxDelayMs?: number;
+  /** How the delay grows between attempts. */
   backoff?: 'exponential' | 'fixed';
 }
 
+/** A snapshot for bug reports, from `BleManager.getDiagnostics()`. */
 export interface Diagnostics {
+  /** The adapter state. */
   state: BleState;
+  /** The permissions (all `undetermined` when they can't be read). */
   permissions: BlePermissions;
-  sessions: { id: string; state: ConnectionState; queueDepth: number; subscriptions: number }[];
-  recentErrors: BleError[]; // ring buffer, last 100
-  /** Android: GATT clients opened and not yet closed. Stable across connect cycles when nothing leaks. */
-  android?: { openGattClients: number };
+  /** One entry per peripheral the app has used. */
+  sessions: {
+    /** The peripheral id. */
+    id: string;
+    /** Its connection state. */
+    state: ConnectionState;
+    /** Operations queued or running on it. */
+    queueDepth: number;
+    /** Active subscriptions (not counted yet: 0). */
+    subscriptions: number;
+  }[];
+  /** The last 100 errors the API returned, oldest first. */
+  recentErrors: BleError[];
+  /** Android-only data. */
+  android?: {
+    /** GATT clients opened and not yet closed. Stable across connect cycles when nothing leaks. */
+    openGattClients: number;
+  };
 }
 
+/** What a characteristic allows. */
 export type CharacteristicProperty =
   | 'broadcast'
   | 'read'
@@ -120,72 +253,112 @@ export type CharacteristicProperty =
   | 'authenticatedSignedWrites'
   | 'extendedProperties';
 
+/** A discovered GATT service. */
 export interface Service {
+  /** Lowercase 128-bit UUID. */
   uuid: UUID;
+  /** False for a secondary service. */
   isPrimary: boolean;
+  /** Its characteristics, with their descriptors. */
   characteristics: Characteristic[];
 }
+
+/** A discovered characteristic. */
 export interface Characteristic {
+  /** Lowercase 128-bit UUID. */
   uuid: UUID;
+  /** The UUID of its service. */
   serviceUUID: UUID;
+  /** What it allows. */
   properties: CharacteristicProperty[];
+  /** Its descriptors. */
   descriptors: Descriptor[];
 }
+
+/** A discovered descriptor. */
 export interface Descriptor {
+  /** Lowercase 128-bit UUID. */
   uuid: UUID;
+  /** The UUID of its characteristic. */
   characteristicUUID: UUID;
 }
 
+/** Options of `Peripheral.write`. */
 export interface WriteOptions extends OpOptions {
-  withResponse?: boolean; // default true
+  /**
+   * Wait for the peripheral to acknowledge (up to 512 bytes). Without response, the value must
+   * fit one packet: MTU − 3 bytes.
+   * @defaultValue true
+   */
+  withResponse?: boolean;
 }
 
+/** Options of `Peripheral.subscribe`. */
 export interface SubscribeOptions extends OpOptions {
-  mode?: 'auto' | 'notify' | 'indicate'; // default 'auto'
+  /**
+   * `auto` takes notifications when the characteristic offers both. iOS can't choose indications
+   * on a characteristic that also notifies.
+   * @defaultValue 'auto'
+   */
+  mode?: 'auto' | 'notify' | 'indicate';
 }
 
 /**
- * A GATT subscription. Several subscriptions to the same characteristic share one CCCD:
+ * A GATT subscription. Several subscriptions to the same characteristic share one CCCD (the
+ * descriptor that turns notifications on):
  * - the first enables it, removing the last disables it;
- * - batched and unbatched subscribers can share a characteristic (batching is per subscriber);
  * - a later subscriber that asks for an explicit `mode` different from the active one rejects
  *   with INVALID_ARGUMENT.
  */
 export interface CharacteristicSubscription extends Subscription {
+  /** False once unsubscribed, or once the connection ended. */
   readonly active: boolean;
   /** Stops delivery immediately. If this was the last subscriber, disables the CCCD and rejects with a coded error if that write fails. */
   unsubscribe(options?: OpOptions): Promise<void>;
-  /** Fire-and-forget unsubscribe(). CCCD failures go to the `warning` event and the log. */
+  /** Fire-and-forget unsubscribe(). A failed CCCD write is kept in `getDiagnostics().recentErrors`. */
   remove(): void;
 }
 
+/** A remote device, from `BleManager.getPeripheral(id)`. One object per id. */
 export interface Peripheral {
+  /** The id: a MAC address on Android, a per-app UUID on iOS. Not portable between platforms. */
   readonly id: string;
   /** The latest advertised name, or the name the device reports once connected; null if unseen. */
   readonly name: string | null;
+  /** The connection state, read synchronously. */
   readonly state: ConnectionState;
   /** ATT MTU. On iOS derived from maximumWriteValueLength(.withoutResponse) + 3. */
   readonly mtu: number;
   /** Discovery cache; empty before discovery. */
   readonly services: Service[];
 
+  /**
+   * Connects. Resolves once the connection is ready (after discovery, with `autoDiscover`);
+   * listeners hear `connected` first. Never shows a permission prompt.
+   */
   connect(options?: ConnectOptions): Promise<void>;
+  /** Disconnects, or cancels a pending connect (which then rejects with `OPERATION_CANCELLED`). */
   disconnect(): Promise<void>;
+  /** Discovers `services` (all when omitted), with their characteristics and descriptors. */
   discover(services?: UUID[], options?: OpOptions): Promise<Service[]>;
 
+  /** Reads a characteristic. Long values are read in full. */
   read(service: UUID, characteristic: UUID, options?: OpOptions): Promise<Uint8Array>;
+  /** Writes a characteristic: up to 512 bytes with response, one packet without. */
   write(
     service: UUID,
     characteristic: UUID,
     value: Uint8Array,
     options?: WriteOptions
   ): Promise<void>;
+  /** Reads a descriptor. */
   readDescriptor(
     service: UUID,
     characteristic: UUID,
     descriptor: UUID,
     options?: OpOptions
   ): Promise<Uint8Array>;
+  /** Writes a descriptor. The CCCD (0x2902) belongs to `subscribe()`: writing it rejects. */
   writeDescriptor(
     service: UUID,
     characteristic: UUID,
@@ -194,6 +367,10 @@ export interface Peripheral {
     options?: OpOptions
   ): Promise<void>;
 
+  /**
+   * Calls `onValue` with every notification or indication of a characteristic, with its arrival
+   * time in epoch milliseconds. Resolves once the peripheral has notifications on.
+   */
   subscribe(
     service: UUID,
     characteristic: UUID,
@@ -201,23 +378,30 @@ export interface Peripheral {
     options?: SubscribeOptions
   ): Promise<CharacteristicSubscription>;
 
+  /** Reads the signal strength of the connection, in dBm. */
   readRssi(options?: OpOptions): Promise<number>;
   /** Android: negotiates. iOS: resolves the current MTU (not negotiable). */
   requestMtu(mtu: number, options?: OpOptions): Promise<number>;
 
+  /** Calls `listener` on every change; `error` says why a connection ended or failed. */
   addConnectionStateListener(
     listener: (state: ConnectionState, error?: BleError) => void
   ): Subscription;
 }
 
+/** The type of {@link BleManager}. */
 export interface BleManagerApi {
+  /** The adapter state, read synchronously. */
   readonly state: BleState;
+  /** Calls `listener` on every adapter state change. */
   addStateListener(listener: (state: BleState) => void): Subscription;
 
+  /** Reads the permissions. Never shows a prompt. */
   getPermissionsAsync(): Promise<BlePermissions>;
+  /** Asks for permissions. On iOS, the first call shows the Bluetooth prompt. */
   requestPermissionsAsync(request?: BlePermissionRequest): Promise<BlePermissions>;
 
-  /** Sessions may overlap; the core multiplexes them (§5.3). */
+  /** Sessions may overlap; each gets only its own matches, and stopping one leaves the others. */
   startScan(
     options: ScanOptions,
     onResults: (results: ScanResult[]) => void,
@@ -239,10 +423,11 @@ export interface BleManagerApi {
    * when iOS can't retrieve the id.
    */
   getPeripheral(id: string): Peripheral;
-  /** iOS: retrievePeripherals(withIdentifiers:), drops unknown ids. Android: getRemoteDevice(address), never drops ids (§4.12). */
+  /** iOS: retrievePeripherals(withIdentifiers:), drops unknown ids. Android: getRemoteDevice(address), never drops ids. */
   getKnownPeripherals(ids: string[]): Promise<Peripheral[]>;
-  /** Peripherals connected at the OS level, possibly by another app. */
+  /** Peripherals connected at the OS level, possibly by another app. Android doesn't filter by `services`. */
   getSystemConnectedPeripherals(services: UUID[]): Promise<Peripheral[]>;
 
+  /** A snapshot for bug reports: state, permissions, connections and recent errors. */
   getDiagnostics(): Promise<Diagnostics>;
 }

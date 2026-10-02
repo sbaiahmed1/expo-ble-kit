@@ -1,3 +1,7 @@
+---
+title: Bare React Native setup
+---
+
 # Bare React Native setup
 
 Apps that use Continuous Native Generation (`npx expo prebuild`) get all of this from the config plugin:
@@ -8,7 +12,7 @@ Apps that use Continuous Native Generation (`npx expo prebuild`) get all of this
 
 Bare React Native apps (with `expo` installed but without prebuild) don't run config plugins, so add these entries by hand. They are exactly what the plugin writes with its default options; a test in `plugin/src/__tests__` keeps this page in sync with the plugin.
 
-The library itself declares no permissions (plan §4.15). If an entry is missing, the library rejects with `MISCONFIGURED` and names the entry, instead of crashing.
+The library itself declares no permissions. If an entry is missing, the library rejects with `MISCONFIGURED` and names the entry, instead of crashing.
 
 ## iOS: `Info.plist`
 

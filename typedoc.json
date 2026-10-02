@@ -1,0 +1,57 @@
+{
+  "$schema": "https://typedoc.org/schema.json",
+  "name": "expo-ble-kit",
+  "entryPoints": [
+    "src/index.ts",
+    "src/testing/index.ts"
+  ],
+  "out": "docs/api",
+  "tsconfig": "tsconfig.json",
+  "disableGit": true,
+  "gitRevision": "main",
+  "sourceLinkTemplate": "https://github.com/sbaiahmed1/expo-ble-kit/blob/{gitRevision}/{path}#L{line}",
+  "readme": "README.md",
+  "projectDocuments": [
+    "docs/getting-started.md",
+    "docs/guides/permissions.md",
+    "docs/guides/bare-setup.md",
+    "docs/troubleshooting.md"
+  ],
+  "excludePrivate": true,
+  "excludeProtected": true,
+  "excludeInternal": true,
+  "sort": [
+    "source-order"
+  ],
+  "highlightLanguages": [
+    "bash",
+    "console",
+    "json",
+    "jsonc",
+    "kotlin",
+    "swift",
+    "tsx",
+    "typescript",
+    "xml",
+    "javascript"
+  ],
+  "validation": {
+    "notExported": true,
+    "invalidLink": true,
+    "rewrittenLink": true,
+    "notDocumented": true
+  },
+  "requiredToBeDocumented": [
+    "Enum",
+    "EnumMember",
+    "Variable",
+    "Function",
+    "Class",
+    "Interface",
+    "Property",
+    "Method",
+    "Accessor",
+    "TypeAlias"
+  ],
+  "treatWarningsAsErrors": true
+}

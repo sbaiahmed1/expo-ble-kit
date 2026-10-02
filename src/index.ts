@@ -1,3 +1,9 @@
+/**
+ * Bluetooth Low Energy for Expo and React Native: scan, connect, read, write and subscribe, with
+ * typed errors and React hooks. Start with {@link BleManager}, or the hooks for components.
+ *
+ * @module expo-ble-kit
+ */
 // The public API (plan §5). Everything else is internal.
 export { BleManager } from './BleManager';
 export {

@@ -65,11 +65,17 @@ function optionsError(options: ScanOptions, maxResults: number): BleError | null
  * allowed starts again when the adapter is back to `poweredOn`. Changing the options restarts it.
  */
 export function useScan(options: ScanOptions & { enabled?: boolean; maxResults?: number } = {}): {
+  /** The latest result per device, in order of first sighting. */
   results: ScanResult[];
+  /** Whether the scan runs now. */
   isScanning: boolean;
+  /** Why the scan isn't running: invalid options, Bluetooth off, a missing permission… */
   error: BleError | null;
+  /** Starts scanning (again), whatever `enabled` says, until `enabled` changes. */
   start(): void;
+  /** Stops scanning, whatever `enabled` says, until `enabled` changes. */
   stop(): void;
+  /** Empties `results`. */
   clear(): void;
 } {
   const { enabled = true, maxResults = DEFAULT_MAX_RESULTS, ...scanOptions } = options;

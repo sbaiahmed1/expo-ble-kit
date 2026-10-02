@@ -46,3 +46,6 @@ __tests__
 /ios/Tests/
 /ios/.build/
 **/.swiftpm/
+
+# Generated API reference (yarn docs)
+/typedoc.json

@@ -1,6 +1,6 @@
 # Expo BLE (`expo-ble-kit`) — Architecture & Implementation Plan
 
-> **Status:** Draft v0.26 · **Date:** 2026-10-02 · **Scope:** proposition #3, an Expo-first Bluetooth Low Energy module · **Changes:** Appendix D
+> **Status:** Draft v0.27 · **Date:** 2026-10-02 · **Scope:** proposition #3, an Expo-first Bluetooth Low Energy module · **Changes:** Appendix D
 >
 > **Package name:** `expo-ble-kit` (D0a, decided 2026-10-02) · native module `ExpoBleKit` · Android package `expo.modules.blekit`.
 >
@@ -1183,6 +1183,8 @@ Parallelism: P0-06/P0-07 can run alongside P0-03/P0-04. With two people, P4 can 
 - [ ] **P1-16 Docs v1** — deps: P1-12.
   Getting started (requirements: Expo SDK 57+, iOS 16.4+, Android 8.0 / API 26+; SDK 57 apps built with Xcode 27 need `ios.enableSceneSupport`), permissions, bare setup, API reference (TypeDoc), troubleshooting (Android 133, location services on API ≤ 30, reconnecting by id on Android (§4.12), no Bluetooth in the iOS Simulator).
   **Accept:** docs build; every public symbol is documented. Publish `0.1.0` on `next`.
+  **Progress 2026-10-02 (open: publishing waits for the maintainer):** `docs/getting-started.md`, `docs/guides/permissions.md`, `docs/troubleshooting.md` (also the iOS 27 scene crash, `MISCONFIGURED`, the missing native module, `SCAN_THROTTLED`, value lengths), the README as the docs index, and the API reference: `yarn docs` runs TypeDoc 0.28 over both entry points (`expo-ble-kit`, `expo-ble-kit/testing`) with the guides as project documents into `docs/api/` (gitignored), and fails on any undocumented public symbol, interface member or error code (`typedoc.json`: `notDocumented`, `invalidLink`, warnings as errors). CI runs it. Removing one doc comment on purpose fails the build.
+  - Pending: publishing `0.1.0` on `next` needs the npm name and account (D0a) and the maintainer's go-ahead; the reference isn't hosted until the GitHub repository exists.
 
 ### 7.4 P2 — Robustness
 
@@ -1565,3 +1567,4 @@ Submit results (`BluetoothStatusCodes`, API 33+): 1 not enabled → `BLUETOOTH_P
 | v0.24 | 2026-10-02 | P1-08 in progress: notifications and indications on both platforms and in the fake. Subscription rules in §5.4, the iOS indicate limit in §6, `isNotifying` in §5.8 |
 | v0.25 | 2026-10-02 | P1-09 in progress: MTU and RSSI on both platforms and in the fake. MTU and RSSI rules in §5.4 (`mtuChange` only on ready connections, a failed setup exchange is a warning), `mtu` and `setRssi` in §5.8 |
 | v0.26 | 2026-10-02 | P1-12 done: `BleManager`, `Peripheral` and the hooks; §5 says which members later tasks add, and a test holds the types to it. Native `name`, `getKnownPeripherals`, `getSystemConnectedPeripherals` and `AbortSignal` cancellation (§4.5, §4.9). API rules in §5.4, hook rules in §5.7, fake rules in §5.8, the Android `getSystemConnectedPeripherals` difference in §6. The default export is gone (§4.6) |
+| v0.27 | 2026-10-02 | P1-16 docs written (getting started, permissions, troubleshooting, README) and the TypeDoc reference, which fails on undocumented symbols; publishing `0.1.0` waits for the maintainer |

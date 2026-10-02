@@ -27,6 +27,8 @@ jobs:
       - run: yarn test
       - run: yarn test plugin
       - run: yarn check:package
+      - name: API reference (fails on any undocumented public symbol)
+        run: yarn docs
 
   test-peripheral:
     name: Test peripheral (Bumble)

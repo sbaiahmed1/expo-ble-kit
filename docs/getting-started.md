@@ -1,0 +1,210 @@
+---
+title: Getting started
+---
+
+# Getting started
+
+expo-ble-kit lets an Expo or React Native app talk to Bluetooth Low Energy devices: find them (scan), connect, read and write their values, and receive their notifications.
+
+## Requirements
+
+- **Expo SDK 57 or later**, in a [development build](https://docs.expo.dev/develop/development-builds/introduction/) or a bare React Native app with `expo` installed. Expo Go doesn't include the native code, so it can't run it.
+- **iOS 16.4+** on a real device. The iOS Simulator has no Bluetooth.
+- **Android 8.0 (API 26)+**. The config plugin raises the app's `minSdkVersion` to 26.
+- The New Architecture (the default since SDK 53).
+
+> **Xcode 27:** an SDK 57 app built with Xcode 27 crashes at launch on iOS 27 unless it adopts the UIScene life cycle. Add [`expo-build-properties`](https://docs.expo.dev/versions/latest/sdk/build-properties/) with `{ "ios": { "enableSceneSupport": true } }` (needs `expo` 57.0.23 or later). SDK 58 apps don't need it.
+
+## Install
+
+```bash
+npx expo install expo-ble-kit
+```
+
+Add the config plugin to `app.json`, so the app declares what Bluetooth needs:
+
+```json
+{
+  "expo": {
+    "plugins": [
+      [
+        "expo-ble-kit",
+        { "bluetoothAlwaysPermission": "Allow $(PRODUCT_NAME) to connect to your heart rate monitor." }
+      ]
+    ]
+  }
+}
+```
+
+Then rebuild the app (`npx expo run:ios`, `npx expo run:android`, or an EAS build). A JavaScript reload isn't enough after adding a native module.
+
+Plugin options:
+
+| Option | Default | What it does |
+|---|---|---|
+| `bluetoothAlwaysPermission` | A generic sentence | The iOS permission text (`NSBluetoothAlwaysUsageDescription`). Write your own: App Review reads it. `false` skips it, for apps that set it elsewhere. |
+| `android.neverForLocation` | `true` | Tells Android 12+ that the app doesn't derive location from scans, so scanning needs no location permission. Set `false` only if you do. |
+| `android.requireBleHardware` | `false` | Lists Bluetooth LE as required on Google Play, which hides the app from devices without it. |
+
+Not using prebuild? Follow the [bare setup guide](guides/bare-setup.md).
+
+## The shape of the API
+
+- **`BleManager`**: the adapter state, permissions, scanning, and peripherals by id.
+- **`Peripheral`**: one remote device. Connect, discover, read, write, subscribe.
+- **Hooks**: `useBleState`, `useBlePermissions`, `useScan`, `usePeripheral`, `useCharacteristicValue`.
+- **`BleError`**: every failure, with a `code` you can test.
+
+Values are bytes: `Uint8Array` in and out. UUIDs can be written short (`'180d'`, `0x180d`) or long; results always use the long lowercase form (`0000180d-0000-1000-8000-00805f9b34fb`). `GattServices` and `GattCharacteristics` hold common ones.
+
+## Permissions first
+
+Nothing shows a permission prompt except `requestPermissionsAsync()`.
+
+```ts
+import { BleManager } from 'expo-ble-kit';
+
+const permissions = await BleManager.requestPermissionsAsync();
+if (permissions.scan !== 'granted' || permissions.connect !== 'granted') {
+  // Explain why the app needs Bluetooth; if canAskAgain is false, send the user to Settings.
+}
+```
+
+The [permissions guide](guides/permissions.md) explains what each platform asks for.
+
+## Scan
+
+```ts
+import { BleManager, GattServices } from 'expo-ble-kit';
+
+// Stops at the first match, or resolves null after 10 s.
+const found = await BleManager.scanFor({ services: [GattServices.HeartRate], timeoutMs: 10_000 });
+
+// Or keep scanning and stop yourself.
+const session = BleManager.startScan(
+  { services: [GattServices.HeartRate] },
+  (results) => results.forEach((r) => console.log(r.id, r.name, r.rssi)),
+  (error) => console.warn('scan ended', error.code)
+);
+// later
+session.stop();
+```
+
+Filter by `services` whenever you can: it saves battery, and iOS needs it to scan in the background. Several scans may run at once; each gets only its own matches.
+
+## Connect, read, write
+
+```ts
+import { BleManager, GattCharacteristics, GattServices } from 'expo-ble-kit';
+
+const device = BleManager.getPeripheral(found.id);
+await device.connect(); // 15 s timeout; discovers every service first
+
+const level = await device.read(GattServices.Battery, GattCharacteristics.BatteryLevel);
+console.log('battery', level[0], '%');
+
+await device.write(MY_SERVICE, MY_CHARACTERISTIC, Uint8Array.of(0x01));
+await device.disconnect();
+```
+
+Operations on one device run one at a time, in order, and each has a timeout (10 s by default). If the connection drops, every pending operation rejects with `DISCONNECTED`.
+
+## Notifications
+
+```ts
+const subscription = await device.subscribe(
+  GattServices.HeartRate,
+  GattCharacteristics.HeartRateMeasurement,
+  (value, timestamp) => {
+    const bpm = value[0] & 0x01 ? value[1] | (value[2] << 8) : value[1]; // flags bit 0: 16-bit value
+    console.log(bpm, 'bpm at', new Date(timestamp));
+  }
+);
+// later
+await subscription.unsubscribe();
+```
+
+Several subscriptions to one characteristic share it: the peripheral's notifications are turned off when the last one is removed. A subscription ends with the connection.
+
+## With React hooks
+
+```tsx
+import { useBleState, useCharacteristicValue, usePeripheral, useScan } from 'expo-ble-kit';
+
+function HeartRate({ id }: { id: string }) {
+  const { peripheral, state, error } = usePeripheral(id);
+  const { value } = useCharacteristicValue(peripheral, '180d', '2a37');
+  if (state !== 'connected') {
+    return <Button title="Connect" onPress={() => peripheral?.connect()} />;
+  }
+  return <Text>{value ? `${value[1]} bpm` : '…'}</Text>;
+}
+
+function Nearby() {
+  const bluetooth = useBleState(); // 'poweredOn', 'poweredOff', …
+  const { results, isScanning, error } = useScan({ services: ['180d'] });
+  // results: the latest result per device
+}
+```
+
+`useScan` starts when the component mounts (pass `enabled: false` to wait) and stops when it unmounts. It starts again by itself when Bluetooth comes back on.
+
+## Errors
+
+Every failure is a `BleError`. Test its `code`, not its message:
+
+```ts
+import { BleError, BleErrorCode } from 'expo-ble-kit';
+
+try {
+  await device.connect({ timeoutMs: 5_000 });
+} catch (error) {
+  if (error instanceof BleError && error.code === BleErrorCode.CONNECTION_TIMEOUT) {
+    // Out of range?
+  }
+}
+```
+
+`error.retryable` says whether trying again can help, and `peripheralId`, `serviceUUID` and `characteristicUUID` say what the error is about. When reporting a bug, include `await BleManager.getDiagnostics()`.
+
+## Cancelling
+
+Every operation takes an `AbortSignal`:
+
+```ts
+const controller = new AbortController();
+const reading = device.read(SERVICE, CHARACTERISTIC, { signal: controller.signal });
+controller.abort(); // rejects with OPERATION_CANCELLED; a queued read never reaches the radio
+```
+
+`connect({ timeoutMs: null })` waits until the device appears ("connect when in range"); `disconnect()` or a signal cancels it.
+
+## Testing your app
+
+`expo-ble-kit/testing` replaces the native module with virtual peripherals in Jest:
+
+```ts
+import { installFakeBle } from 'expo-ble-kit/testing';
+import { GattCharacteristics, GattServices } from 'expo-ble-kit';
+
+const ble = installFakeBle();
+const hrm = ble.addPeripheral({
+  name: 'HRM',
+  services: [
+    {
+      uuid: GattServices.HeartRate,
+      characteristics: [{ uuid: GattCharacteristics.HeartRateMeasurement, properties: ['notify'] }],
+    },
+  ],
+});
+// render the screen under test, then:
+hrm.notify(GattServices.HeartRate, GattCharacteristics.HeartRateMeasurement, Uint8Array.of(0, 72));
+```
+
+The fake answers on later timer ticks, like a radio; Jest fake timers work (`await jest.advanceTimersByTimeAsync(10)`). `ble.injectError({ op: 'read' }, 'INSUFFICIENT_AUTHENTICATION')` makes the next read fail.
+
+## Not in this version yet
+
+Reconnection policies, background operation, the peripheral role (advertising, GATT server), chunked writes (`writeStream`), notification batching and logging come in later versions. Options for them reject with `NOT_SUPPORTED` rather than being ignored.
+
+Problems? See [troubleshooting](troubleshooting.md).

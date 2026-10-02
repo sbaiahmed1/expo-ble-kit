@@ -26,8 +26,11 @@ export function useConnectionState(peripheral: Peripheral | null): ConnectionSta
  * its last connection, cleared once it connects again (plan §5.7). Doesn't connect by itself.
  */
 export function usePeripheral(id: string | null): {
+  /** The peripheral for `id`; null for a null or invalid id. */
   peripheral: Peripheral | null;
+  /** Its connection state. */
   state: ConnectionState;
+  /** Why the last connection ended or failed, or why the id is invalid. */
   error: BleError | null;
 } {
   // An invalid id is reported as the error instead of throwing during render.

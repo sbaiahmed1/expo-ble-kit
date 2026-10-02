@@ -34,20 +34,35 @@ import { normalizeUUID, type UUID } from '../uuid';
 // the state listener hears `connected` before connect() resolves, and every pending operation fails
 // with DISCONNECTED when a connection ends. Results arrive asynchronously, as from a radio.
 
+/** A virtual peripheral for `FakeBle.addPeripheral`. */
 export interface VirtualPeripheralConfig {
-  id?: string; // generated when omitted
+  /** The peripheral id. Generated (`fake-1`, `fake-2`…) when omitted. */
+  id?: string;
+  /** The advertised name. */
   name?: string;
-  rssi?: number; // default -60
+  /** @defaultValue -60 */
+  rssi?: number;
   /** The largest ATT MTU the peripheral accepts. Default 23, so nothing above 23 is negotiated. */
   mtu?: number;
+  /** Its GATT database. */
   services: {
+    /** The service UUID (any form `normalizeUUID` accepts). */
     uuid: UUID;
+    /** Its characteristics. */
     characteristics: {
+      /** The characteristic UUID. */
       uuid: UUID;
+      /** What it allows. */
       properties: CharacteristicProperty[];
+      /** Its initial value. Writes replace it. */
       value?: Uint8Array;
       /** Notify and indicate characteristics also get a CCCD (0x2902). */
-      descriptors?: { uuid: UUID; value?: Uint8Array }[];
+      descriptors?: {
+        /** The descriptor UUID. */
+        uuid: UUID;
+        /** Its initial value. */
+        value?: Uint8Array;
+      }[];
     }[];
   }[];
 }
@@ -67,20 +82,28 @@ export type FakeOperation =
   | 'requestMtu'
   | 'readRssi';
 
+/** Controls the fake, from `installFakeBle()`. */
 export interface FakeBle {
+  /** Adds a virtual peripheral, advertising from now on. */
   addPeripheral(config: VirtualPeripheralConfig): VirtualPeripheral;
+  /** Changes the adapter state. Leaving `poweredOn` ends scans and drops connections. */
   setState(state: BleState): void;
   /** Make the next matching op fail with this code. */
   injectError(
     match: { op: FakeOperation | string; peripheralId?: string; characteristic?: UUID },
     code: BleErrorCode
   ): void;
+  /** Removes every peripheral and error and restores the initial state and permissions. */
   reset(): void;
 }
 
+/** The peripheral side of a virtual peripheral. */
 export interface VirtualPeripheral {
+  /** Its id, as `BleManager.getPeripheral` takes it. */
   readonly id: string;
+  /** Starts or stops advertising. A pending connect completes when it starts. */
   advertise(on: boolean): void;
+  /** Sets a characteristic's value, which the next read returns. */
   setValue(service: UUID, characteristic: UUID, value: Uint8Array): void;
   /** Sends a notification or indication, which a connected client receives if it enabled the CCCD. */
   notify(service: UUID, characteristic: UUID, value: Uint8Array): void;
@@ -88,8 +111,17 @@ export interface VirtualPeripheral {
   isNotifying(service: UUID, characteristic: UUID): boolean;
   /** What advertising and `readRssi()` report from now on. */
   setRssi(rssi: number): void;
+  /** Ends the connection from the peripheral's side; the app sees `DISCONNECTED`. */
   disconnect(reason?: 'peer' | 'linkLoss'): void;
-  readonly writes: readonly { characteristic: UUID; value: Uint8Array; withResponse: boolean }[];
+  /** Every characteristic write the app made, oldest first. */
+  readonly writes: readonly {
+    /** The characteristic written. */
+    characteristic: UUID;
+    /** The bytes written. */
+    value: Uint8Array;
+    /** Whether the app asked for a response. */
+    withResponse: boolean;
+  }[];
 }
 
 const CCCD = normalizeUUID('2902');
