@@ -224,15 +224,24 @@ fun service(uuid: String, vararg characteristics: Pair<String, Int>): GattServic
 fun uuid(value: String): UUID =
   if (value.length == 4) UUID.fromString("0000$value-0000-1000-8000-00805f9b34fb") else UUID.fromString(value)
 
-fun scanRecord(address: String, name: String? = null, rssi: Int = -60): ScanRecordData = ScanRecordData(
+fun scanRecord(
+  address: String,
+  name: String? = null,
+  rssi: Int = -60,
+  services: List<UUID> = emptyList(),
+  manufacturerData: Map<Int, ByteArray> = emptyMap(),
+  timestampNanos: Long = 0,
+  device: RemoteDevicePort? = null,
+): ScanRecordData = ScanRecordData(
   address = address,
   name = name,
   rssi = rssi,
   txPowerLevel = null,
   isConnectable = true,
-  serviceUuids = emptyList(),
+  serviceUuids = services,
   serviceData = emptyMap(),
-  manufacturerData = emptyMap(),
+  manufacturerData = manufacturerData,
   rawBytes = null,
-  timestampNanos = 0,
+  timestampNanos = timestampNanos,
+  device = device,
 )

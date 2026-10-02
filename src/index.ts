@@ -7,6 +7,9 @@ export type {
   BlePermissions,
   BleState,
   PermissionStatus,
+  ScanOptions,
+  ScanResult,
+  ScanSession,
   Subscription,
 } from './types';
 export { BleError, BleErrorCode } from './errors';

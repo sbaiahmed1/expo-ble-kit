@@ -1,6 +1,7 @@
 package expo.modules.blekit.core
 
 import expo.modules.blekit.core.fakes.FakeBluetoothAdapter
+import expo.modules.blekit.core.fakes.ManualExecutor
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Test
@@ -20,8 +21,19 @@ class CentralEngineTest {
   private val permissions = FakePermissionSystem(sdkInt = 34)
   private val events = mutableListOf<BleState>()
 
-  private fun engine() = CentralEngine(adapter, permissions).also { engine ->
-    engine.onStateChange = { events.add(it) }
+  private fun engine() = CentralEngine(adapter, permissions, ManualExecutor(), EpochClock(0, 0)).also { engine ->
+    engine.listener =
+      object : CentralEngine.Listener {
+        override fun onStateChange(state: BleState) {
+          events.add(state)
+        }
+
+        override fun onScanResults(sessionId: Int, results: List<Map<String, Any?>>) = Unit
+
+        override fun onScanError(sessionId: Int, error: CoreError) = Unit
+
+        override fun onWarning(warning: CoreError) = Unit
+      }
     engine.start()
   }
 
@@ -68,7 +80,7 @@ class CentralEngineTest {
   @Test
   fun `no runtime permission gates the adapter up to API 30`() {
     val legacy = FakePermissionSystem(sdkInt = 30)
-    assertEquals(BleState.POWERED_ON, CentralEngine(adapter, legacy).state)
+    assertEquals(BleState.POWERED_ON, CentralEngine(adapter, legacy, ManualExecutor(), EpochClock(0, 0)).state)
   }
 
   @Test

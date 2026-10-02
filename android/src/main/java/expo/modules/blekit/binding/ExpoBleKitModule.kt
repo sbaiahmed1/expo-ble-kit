@@ -1,12 +1,15 @@
 package expo.modules.blekit.binding
 
+import android.os.SystemClock
 import expo.modules.blekit.core.AndroidBluetoothAdapterPort
 import expo.modules.blekit.core.AndroidPermissionSystem
 import expo.modules.blekit.core.BleCapability
 import expo.modules.blekit.core.BlePermissionPolicy
 import expo.modules.blekit.core.BlePermissions
+import expo.modules.blekit.core.BleState
 import expo.modules.blekit.core.CentralEngine
 import expo.modules.blekit.core.CoreError
+import expo.modules.blekit.core.EpochClock
 import expo.modules.blekit.core.HandlerExecutor
 import expo.modules.blekit.core.PermissionResult
 import expo.modules.blekit.core.PermissionStatus
@@ -18,27 +21,6 @@ import expo.modules.kotlin.exception.CodedException
 import expo.modules.kotlin.exception.Exceptions
 import expo.modules.kotlin.modules.Module
 import expo.modules.kotlin.modules.ModuleDefinition
-import expo.modules.kotlin.records.Field
-import expo.modules.kotlin.records.Record
-
-/** JS `BlePermissionRequest` (plan §5.1). */
-class PermissionRequestRecord : Record {
-  @Field val scan: Boolean = false
-
-  @Field val connect: Boolean = false
-
-  @Field val advertise: Boolean = false
-
-  @Field val backgroundScan: Boolean = false
-
-  /** No flag set means the base capabilities. */
-  fun capabilities(): List<BleCapability> = listOfNotNull(
-    BleCapability.SCAN.takeIf { scan },
-    BleCapability.CONNECT.takeIf { connect },
-    BleCapability.ADVERTISE.takeIf { advertise },
-    BleCapability.BACKGROUND_SCAN.takeIf { backgroundScan },
-  ).ifEmpty { BleCapability.BASE }
-}
 
 /** A core error as a coded JS exception (plan §4.5). */
 class BleKitException(error: CoreError) : CodedException(error.code.value, error.jsMessage, error)
@@ -53,13 +35,18 @@ class ExpoBleKitModule : Module() {
   override fun definition() = ModuleDefinition {
     Name("ExpoBleKit")
 
-    Events("stateChange")
+    Events("stateChange", "scanResults", "scanError", "warning")
 
     OnCreate {
       val context = appContext.reactContext ?: throw Exceptions.ReactContextLost()
       executor = HandlerExecutor.start()
-      engine = CentralEngine(AndroidBluetoothAdapterPort(context, executor.handler), AndroidPermissionSystem(context))
-      engine.onStateChange = { state -> sendEvent("stateChange", mapOf("state" to state.js)) }
+      engine = CentralEngine(
+        AndroidBluetoothAdapterPort(context, executor.handler),
+        AndroidPermissionSystem(context),
+        executor,
+        EpochClock(System.currentTimeMillis(), SystemClock.elapsedRealtime()),
+      )
+      engine.listener = EngineEvents()
       executor.execute { engine.start() }
     }
 
@@ -86,6 +73,20 @@ class ExpoBleKitModule : Module() {
       }
     }
 
+    // Async functions run in call order on Expo's queue, so a stop never overtakes its start.
+    AsyncFunction("startScan") { sessionId: Int, options: ScanOptionsRecord, promise: Promise ->
+      executor.execute {
+        settle(promise) {
+          engine.startScan(sessionId, options.toSpec())
+          promise.resolve(null)
+        }
+      }
+    }
+
+    AsyncFunction("stopScan") { sessionId: Int ->
+      executor.execute { engine.stopScan(sessionId) }
+    }
+
     AsyncFunction("requestPermissionsAsync") { request: PermissionRequestRecord?, promise: Promise ->
       val capabilities = (request ?: PermissionRequestRecord()).capabilities()
       executor.execute {
@@ -98,6 +99,24 @@ class ExpoBleKitModule : Module() {
           }
         }
       }
+    }
+  }
+
+  private inner class EngineEvents : CentralEngine.Listener {
+    override fun onStateChange(state: BleState) {
+      sendEvent("stateChange", mapOf("state" to state.js))
+    }
+
+    override fun onScanResults(sessionId: Int, results: List<Map<String, Any?>>) {
+      sendEvent("scanResults", mapOf("sessionId" to sessionId, "results" to results))
+    }
+
+    override fun onScanError(sessionId: Int, error: CoreError) {
+      sendEvent("scanError", mapOf("sessionId" to sessionId, "code" to error.code.value, "message" to error.jsMessage))
+    }
+
+    override fun onWarning(warning: CoreError) {
+      sendEvent("warning", mapOf("code" to warning.code.value, "message" to warning.jsMessage))
     }
   }
 

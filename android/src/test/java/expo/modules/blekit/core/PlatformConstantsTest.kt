@@ -60,4 +60,17 @@ class PlatformConstantsTest {
     assertEquals(ScanSettings.MATCH_MODE_AGGRESSIVE, defaults.matchMode)
     assertEquals(ScanSettings.PHY_LE_ALL_SUPPORTED, defaults.phy)
   }
+
+  @Test
+  fun `scan option strings map to Android constants`() {
+    assertEquals(ScanSettings.CALLBACK_TYPE_ALL_MATCHES, ScanOptionValues.callbackType("allMatches"))
+    assertEquals(ScanSettings.CALLBACK_TYPE_FIRST_MATCH, ScanOptionValues.callbackType("firstMatch"))
+    assertEquals(ScanSettings.CALLBACK_TYPE_MATCH_LOST, ScanOptionValues.callbackType("matchLost"))
+    assertEquals(ScanSettings.MATCH_MODE_AGGRESSIVE, ScanOptionValues.matchMode("aggressive"))
+    assertEquals(ScanSettings.MATCH_MODE_STICKY, ScanOptionValues.matchMode("sticky"))
+    assertEquals(BluetoothDevice.PHY_LE_1M, ScanOptionValues.phy("le1m"))
+    assertEquals(BluetoothDevice.PHY_LE_CODED, ScanOptionValues.phy("leCoded"))
+    assertEquals(ScanSettings.PHY_LE_ALL_SUPPORTED, PlatformScan.PHY_ALL)
+    assertEquals(ScanSettings.CALLBACK_TYPE_ALL_MATCHES, PlatformScan.ALL_MATCHES)
+  }
 }

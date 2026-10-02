@@ -1,8 +1,8 @@
 import CoreBluetooth
 import Foundation
 
-/// Owns the central manager (plan §4.3). This first part covers adapter state and permissions
-/// (P1-03); scanning and peripheral sessions join in P1-04 and P1-05.
+/// Owns the central manager (plan §4.3): adapter state and permissions (P1-03) and scanning
+/// (P1-04). Peripheral sessions join in P1-05.
 ///
 /// Threading (plan §4.7): call everything except `state` on `queue`. Callbacks run on `queue`.
 final class CentralEngine: CentralManagingDelegate {
@@ -28,6 +28,7 @@ final class CentralEngine: CentralManagingDelegate {
   let queue: DispatchQueue
   /// Called on `queue` after the published state changes.
   var onStateChange: ((BleState) -> Void)?
+  let scanController: ScanController
 
   private let environment: Environment
   private(set) var central: CentralManaging?
@@ -36,9 +37,12 @@ final class CentralEngine: CentralManagingDelegate {
   private let stateLock = NSLock()
   private var publishedState: BleState
 
-  init(queue: DispatchQueue, environment: Environment = .live) {
+  init(queue: DispatchQueue, environment: Environment = .live, scheduler: Scheduling? = nil) {
     self.queue = queue
     self.environment = environment
+    let scheduler = scheduler ?? QueueScheduler(queue: queue)
+    let clock = EpochClock(wallAtStartMs: Date().timeIntervalSince1970 * 1000, monotonicAtStart: scheduler.now)
+    scanController = ScanController(scheduler: scheduler, clock: clock)
     publishedState = Self.stateWithoutCentral(environment.authorization())
   }
 
@@ -93,10 +97,67 @@ final class CentralEngine: CentralManagingDelegate {
     }
   }
 
+  /// Starts a scan session (plan §5.3). Throws when scanning can't start: a missing declaration, no
+  /// authorization, or Bluetooth that is off. Never shows the permission prompt. While the manager
+  /// still reports `unknown`, the session waits for the first real state.
+  func startScan(_ sessionId: Int, spec: ScanSpec) throws {
+    if let error = missingDeclaration() {
+      throw error
+    }
+    if scanController.activeSessionIds.contains(sessionId) {
+      throw CoreError(.invalidArgument, "Scan session \(sessionId) is already running")
+    }
+    switch environment.authorization() {
+    case .allowedAlways:
+      break
+    case .notDetermined:
+      throw CoreError(
+        .bluetoothUnauthorized,
+        "Bluetooth permission hasn't been requested yet. Call requestPermissionsAsync() first."
+      )
+    default:
+      throw CoreError(.bluetoothUnauthorized, "Bluetooth permission is denied. The user can allow it in Settings.")
+    }
+    if central == nil {
+      createCentral()
+    }
+    if let central, let error = Self.scanError(central.state) {
+      throw error
+    }
+    scanController.start(sessionId, spec: spec)
+  }
+
+  func stopScan(_ sessionId: Int) {
+    scanController.stop(sessionId)
+  }
+
+  /// Why scanning can't run in `state`; nil for `poweredOn` and for `unknown`, which resolves shortly.
+  static func scanError(_ state: CBManagerState) -> CoreError? {
+    switch state {
+    case .poweredOn, .unknown:
+      return nil
+    case .resetting:
+      return CoreError(.bluetoothResetting, "Bluetooth is resetting")
+    case .unsupported:
+      return CoreError(.bluetoothUnsupported, "This device doesn't support Bluetooth LE")
+    case .unauthorized:
+      return CoreError(.bluetoothUnauthorized, "Bluetooth permission is denied. The user can allow it in Settings.")
+    case .poweredOff:
+      return CoreError(.bluetoothPoweredOff, "Bluetooth is off")
+    @unknown default:
+      return CoreError(.internal, "Unknown Bluetooth state \(state.rawValue)")
+    }
+  }
+
   // MARK: CentralManagingDelegate
 
   func centralDidUpdateState(_ central: CentralManaging) {
     publish(BleState(central.state))
+    if central.state == .poweredOn {
+      scanController.poweredOn(central)
+    } else if let error = Self.scanError(central.state) {
+      scanController.stopAll(error)
+    }
     // CoreBluetooth reports a state once the user has answered the prompt.
     let authorization = environment.authorization()
     guard authorization != .notDetermined, !pendingPermissionRequests.isEmpty else {
@@ -106,6 +167,15 @@ final class CentralEngine: CentralManagingDelegate {
     pendingPermissionRequests.removeAll()
     let permissions = BlePermissions(authorization: authorization)
     completions.forEach { $0(.success(permissions)) }
+  }
+
+  func central(
+    _ central: CentralManaging,
+    didDiscover peripheral: PeripheralLike,
+    advertisementData: [String: Any],
+    rssi: Int
+  ) {
+    scanController.deliver(peripheral, advertisementData: advertisementData, rssi: rssi)
   }
 
   // MARK: Private

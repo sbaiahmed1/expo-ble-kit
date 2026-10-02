@@ -17,6 +17,12 @@ class ExpoBleKitModule extends NativeModule<ExpoBleKitModuleEvents> {
   async requestPermissionsAsync(): Promise<BlePermissions> {
     throw notSupported();
   }
+
+  async startScan(): Promise<void> {
+    throw notSupported();
+  }
+
+  async stopScan(): Promise<void> {}
 }
 
 function notSupported(): BleError {

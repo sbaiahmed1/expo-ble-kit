@@ -164,6 +164,52 @@ final class CentralEngineTests: XCTestCase {
     XCTAssertEqual(stateEvents, [.unknown, .poweredOn])
   }
 
+  func testScanningNeedsTheKeyAndAnAuthorizationAndNeverPrompts() {
+    makeEngine()
+    XCTAssertThrowsError(try engine.startScan(1, spec: ScanSpec())) { error in
+      XCTAssertEqual((error as? CoreError)?.code, .bluetoothUnauthorized)
+    }
+    XCTAssertTrue(created.isEmpty, "no manager, so no prompt")
+
+    infoPlist = [:]
+    authorization = .allowedAlways
+    makeEngine()
+    XCTAssertThrowsError(try engine.startScan(1, spec: ScanSpec())) { error in
+      XCTAssertEqual((error as? CoreError)?.code, .misconfigured)
+    }
+    XCTAssertTrue(created.isEmpty)
+  }
+
+  func testScanSessionsFollowTheAdapter() throws {
+    authorization = .allowedAlways
+    makeEngine()
+    var ended: [Int: CoreError.Code] = [:]
+    var found: [String] = []
+    engine.scanController.onError = { ended[$0] = $1.code }
+    engine.scanController.onResults = { _, results in found += results.compactMap { $0["name"] as? String } }
+
+    // The new manager still reports `unknown`: the session waits instead of failing.
+    try engine.startScan(1, spec: ScanSpec())
+    XCTAssertEqual(created.count, 1)
+    XCTAssertTrue(created[0].calls.isEmpty)
+    created[0].simulateState(.poweredOn)
+    XCTAssertEqual(created[0].calls, [.scan(nil)])
+    created[0].simulateDiscovery(of: FakePeripheral(name: "Pulse"))
+    XCTAssertEqual(found, ["Pulse"])
+    XCTAssertThrowsError(try engine.startScan(1, spec: ScanSpec())) { error in
+      XCTAssertEqual((error as? CoreError)?.code, .invalidArgument)
+    }
+
+    created[0].simulateState(.poweredOff)
+    XCTAssertEqual(ended, [1: .bluetoothPoweredOff])
+    XCTAssertThrowsError(try engine.startScan(2, spec: ScanSpec())) { error in
+      XCTAssertEqual((error as? CoreError)?.code, .bluetoothPoweredOff)
+    }
+    created[0].simulateState(.poweredOn)
+    try engine.startScan(3, spec: ScanSpec(services: ["0000180d-0000-1000-8000-00805f9b34fb"]))
+    XCTAssertEqual(created[0].calls.last, .scan([CBUUID(string: "180D")]))
+  }
+
   func testJsMessageCarriesTheDetails() {
     let error = CoreError(.gattError, "Read failed", nativeDomain: "CBATTErrorDomain", nativeCode: 14)
     XCTAssertEqual(

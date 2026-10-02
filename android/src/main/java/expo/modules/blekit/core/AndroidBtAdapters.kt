@@ -33,7 +33,7 @@ class AndroidBluetoothAdapterPort(private val context: Context, private val hand
   private val adapter: BluetoothAdapter? =
     context.getSystemService(BluetoothManager::class.java)?.adapter
 
-  private val scanner: AndroidLeScanner? = adapter?.let { AndroidLeScanner(it) }
+  private val scanner: AndroidLeScanner? = adapter?.let { AndroidLeScanner(it, context, handler) }
 
   override val isAvailable: Boolean
     get() = adapter != null && context.packageManager.hasSystemFeature(PackageManager.FEATURE_BLUETOOTH_LE)
@@ -71,7 +71,11 @@ class AndroidBluetoothAdapterPort(private val context: Context, private val hand
 }
 
 @SuppressLint("MissingPermission")
-class AndroidLeScanner(private val adapter: BluetoothAdapter) : LeScannerPort {
+class AndroidLeScanner(
+  private val adapter: BluetoothAdapter,
+  private val context: Context,
+  private val handler: Handler,
+) : LeScannerPort {
   private val platformCallbacks = mutableMapOf<LeScanCallback, ScanCallback>()
 
   override fun startScan(filters: List<ScanFilterSpec>, settings: ScanSettingsSpec, callback: LeScanCallback) {
@@ -83,11 +87,11 @@ class AndroidLeScanner(private val adapter: BluetoothAdapter) : LeScannerPort {
     val platformCallback =
       object : ScanCallback() {
         override fun onScanResult(callbackType: Int, result: ScanResult) {
-          callback.onScanResults(listOf(result.toRecord()))
+          callback.onScanResults(listOf(result.toRecord(context, handler)))
         }
 
         override fun onBatchScanResults(results: MutableList<ScanResult>) {
-          callback.onScanResults(results.map { it.toRecord() })
+          callback.onScanResults(results.map { it.toRecord(context, handler) })
         }
 
         override fun onScanFailed(errorCode: Int) {
@@ -100,7 +104,11 @@ class AndroidLeScanner(private val adapter: BluetoothAdapter) : LeScannerPort {
 
   override fun stopScan(callback: LeScanCallback) {
     val platformCallback = platformCallbacks.remove(callback) ?: return
-    adapter.bluetoothLeScanner?.stopScan(platformCallback)
+    try {
+      adapter.bluetoothLeScanner?.stopScan(platformCallback)
+    } catch (_: IllegalStateException) {
+      // The adapter is already off, which ends the scan anyway.
+    }
   }
 }
 
@@ -317,7 +325,7 @@ private fun BluetoothGattService.toInfo(): GattServiceInfo = GattServiceInfo(
   },
 )
 
-private fun ScanResult.toRecord(): ScanRecordData {
+private fun ScanResult.toRecord(context: Context, handler: Handler): ScanRecordData {
   val record = scanRecord
   val manufacturer = record?.manufacturerSpecificData
   return ScanRecordData(
@@ -325,7 +333,9 @@ private fun ScanResult.toRecord(): ScanRecordData {
     // From the advertisement only: BluetoothDevice.getName() needs BLUETOOTH_CONNECT.
     name = record?.deviceName,
     rssi = rssi,
-    txPowerLevel = record?.txPowerLevel?.takeIf { it != Int.MIN_VALUE },
+    // The TX Power Level AD structure, else the extended-advertising header's value.
+    txPowerLevel = record?.txPowerLevel?.takeIf { it != Int.MIN_VALUE }
+      ?: txPower.takeIf { it != ScanResult.TX_POWER_NOT_PRESENT },
     isConnectable = isConnectable,
     serviceUuids = record?.serviceUuids?.map { it.uuid } ?: emptyList(),
     serviceData = record?.serviceData?.mapKeys { it.key.uuid } ?: emptyMap(),
@@ -337,6 +347,7 @@ private fun ScanResult.toRecord(): ScanRecordData {
     },
     rawBytes = record?.bytes,
     timestampNanos = timestampNanos,
+    device = AndroidRemoteDevice(context, device, handler),
   )
 }
 

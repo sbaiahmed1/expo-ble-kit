@@ -1,6 +1,6 @@
 # Expo BLE (`expo-ble-kit`) — Architecture & Implementation Plan
 
-> **Status:** Draft v0.18 · **Date:** 2026-10-02 · **Scope:** proposition #3, an Expo-first Bluetooth Low Energy module · **Changes:** Appendix D
+> **Status:** Draft v0.19 · **Date:** 2026-10-02 · **Scope:** proposition #3, an Expo-first Bluetooth Low Energy module · **Changes:** Appendix D
 >
 > **Package name:** `expo-ble-kit` (D0a, decided 2026-10-02) · native module `ExpoBleKit` · Android package `expo.modules.blekit`.
 >
@@ -226,7 +226,7 @@ iOS platform rules:
 | Component | Responsibility |
 |---|---|
 | `CentralEngine` | `BluetoothManager` / `BluetoothAdapter`. Adapter state via `ACTION_STATE_CHANGED`, registered on the BLE thread without an export flag: it is a protected system broadcast, and it comes from the Bluetooth process, so `RECEIVER_NOT_EXPORTED` would drop it (registration checked on Android 14, targetSdk 36). One `HandlerThread` named `blekit-gatt`, plus a coroutine dispatcher built from its `Handler` |
-| `ScanController` | `BluetoothLeScanner` with `ScanFilter` / `ScanSettings`. Multiplexes JS scan sessions (§5.3). Scan-start throttle guard (about 5 starts per 30 s per app ⚠️ VERIFY): sliding window, delay restarts, emit `SCAN_THROTTLED` warning. Unfiltered scans pause when the screen is off (Android 8.1+), so docs recommend filters. Android 7+ silently downgrades a scan running longer than about 30 minutes to opportunistic ⚠️ VERIFY, so long-running scans restart before that limit (each restart counts against the throttle window) |
+| `ScanController` | `BluetoothLeScanner` with `ScanFilter` / `ScanSettings`. Multiplexes JS scan sessions (§5.3). Scan-start throttle guard, matching AOSP's `AppScanStats` (a sixth start within 30 s of the fifth-latest is "scanning too frequently", ⚠️ VERIFY on other vendors): it tracks the last 5 platform starts and delays a start that would break the limit until 30 s + 1 s after the oldest, with a `SCAN_THROTTLED` warning. Restarts caused by session changes are debounced by 300 ms, and a session change that leaves the union unchanged doesn't restart the scan. On the Galaxy A52, 10 start/stop cycles in 20 s gave a warning for each delayed start, logcat showed the platform starts exactly as the guard counted them and no "scanning too frequently" from Android, and the delayed session got results once it started. Unfiltered scans pause when the screen is off (Android 8.1+), so docs recommend filters. Android 7+ silently downgrades a scan running longer than about 30 minutes to opportunistic ⚠️ VERIFY, so long-running scans restart before that limit (each restart counts against the throttle window) |
 | `PeripheralSession` | `connectGatt(context, autoConnect, callback, TRANSPORT_LE, phyMask, handler)` (API 26+) so every callback lands on `blekit-gatt`. State machine, `GattQueue`, API 33+ overloads (`writeCharacteristic(c, value, writeType)` returning a status, `onCharacteristicChanged(gatt, c, value)`) with legacy fallbacks, CCCD handling, `requestMtu` (≤ 517), `close()` discipline, bounded retry for status 133 |
 | `BondManager` | `createBond()`, `ACTION_BOND_STATE_CHANGED` receiver, bond state per device. Never auto-confirms pairing |
 | `Advertiser` | `BluetoothLeAdvertiser` and `AdvertisingSet` (extended advertising when `isLeExtendedAdvertisingSupported`) |
@@ -238,7 +238,8 @@ iOS platform rules:
 
 ### 4.5 Binding layer
 
-- Module `ExpoBleKit`: manager functions plus module-level events `stateChange`, `scanResults`, `restoration`, `bondStateChange`, `warning`, `log`.
+- Module `ExpoBleKit`: manager functions plus module-level events `stateChange`, `scanResults`, `scanError`, `restoration`, `bondStateChange`, `warning`, `log`.
+- Scanning (P1-04): JS numbers its scan sessions. `startScan(sessionId, options)` resolves once the session is accepted and rejects when it can't start; `stopScan(sessionId)`. Results arrive as `scanResults { sessionId, results }`; a session that ends natively gets one `scanError { sessionId, code, message }`. `warning { code, message }` carries non-fatal problems such as `SCAN_THROTTLED`. Expo runs async functions in call order on one serial queue on both platforms, so a stop never overtakes its start.
 - SharedObjects:
   - `PeripheralObject`, with events `connectionStateChange`, `notification` / `notificationBatch`, `mtuChange`, `servicesChanged`.
   - `GattServerObject`, with events `readRequest`, `writeRequest`, `subscriptionChange`.
@@ -382,7 +383,7 @@ Mapping: Appendix A, implemented in `ErrorMapping.swift` / `ErrorMapping.kt` and
 - Reconnect by id: iOS `retrievePeripherals(withIdentifiers:)`, Android `BluetoothAdapter.getRemoteDevice(address)`.
 - Android caveats:
   - `getRemoteDevice(address)` never fails and assumes a public address, so unknown ids can't be detected up front.
-  - The core remembers the address type of every device seen in a scan during the current process. When it knows the type, it uses `getRemoteLeDevice(address, addressType)` (API 33+) ⚠️ VERIFY.
+  - `BluetoothDevice.getAddressType()` is public only from API 35 (`getRemoteLeDevice(address, type)` exists from API 33), so the type can't be read on Android 13–14. Instead the core keeps the `BluetoothDevice` handle from each scan result (the latest 1,000 devices), which carries the address type the scan saw on every API level, and connects through it. ⚠️ VERIFY in P1-05 that this keeps a random address type.
   - Connecting by address to a random-static device not scanned in this process may fail with `CONNECTION_FAILED` or `CONNECTION_TIMEOUT`. Docs recommend a short `scanFor` before reconnecting by a stored id.
 - UUID inputs may be 16-bit (`'180d'` or `0x180d`), 32-bit or 128-bit. Outputs are always lowercase 128-bit (`0000180d-0000-1000-8000-00805f9b34fb`). Compare normalized values only. Ship constants for common Bluetooth SIG services and characteristics.
 
@@ -612,6 +613,15 @@ export interface ScanSession { readonly active: boolean; stop(): void }
 - Settings that can't be merged use the most demanding active value: `allowDuplicates` is true if any session asks for it, and `android.scanMode` takes the highest duty cycle.
 - Starting or stopping a session restarts the platform scan with the new union. On Android, restarts are debounced because they count against the throttle window.
 - Stopping one session never stops another.
+
+Scanning rules (decided in P1-04):
+
+- `startScan` never shows a permission prompt. It rejects with `MISCONFIGURED`, `BLUETOOTH_UNAUTHORIZED` (iOS: not yet requested, or denied), `PERMISSION_DENIED` (Android: a scan permission is missing), `BLUETOOTH_POWERED_OFF`, `BLUETOOTH_RESETTING` or `BLUETOOTH_UNSUPPORTED`. On iOS, a session started while a new manager still reports `unknown` waits for the first real state.
+- When Bluetooth leaves `poweredOn`, every session ends with the matching error. Sessions don't resume on their own.
+- `allowDuplicates: false` reports each device once per session. With `reportIntervalMs`, each window delivers the latest result per device, and empty windows deliver nothing.
+- Filters: every given criterion must match; within `services` or `manufacturerData`, any entry may. `services` matches advertised service UUIDs only, not service-data keys. A manufacturer filter compares a prefix of the data under its mask; a mask needs data of the same length.
+- iOS drops results with RSSI 127 (not available). Service UUIDs from the overflow area count as advertised.
+- Android hardware filters cover services and manufacturer data; a name-prefix session makes the platform scan unfiltered and is filtered in the core.
 
 ### 5.4 Peripheral (central role)
 
@@ -1016,13 +1026,16 @@ Parallelism: P0-06/P0-07 can run alongside P0-03/P0-04. With two people, P4 can 
   - Verified on the Galaxy A52 (Android 14): `unauthorized` before the grant; first denial → `denied` with `canAskAgain: true`, second → `canAskAgain: false`, after which a request answers without a dialog; a grant made while backgrounded → `poweredOn` on return, without a restart; Allow → `granted` and `poweredOn`; Bluetooth off → `resetting`, `poweredOff`; on → `resetting`, `poweredOn`; off at launch → `poweredOff`. A build without `BLUETOOTH_CONNECT` → `MISCONFIGURED` naming it, from both calls, no crash.
   - Verified on the iOS 27 simulator: a build without `NSBluetoothAlwaysUsageDescription` → `MISCONFIGURED` from both calls, no crash, no manager created. Found: Expo's iOS JS message is the exception's `debugDescription` (class name plus Swift file and line), so `BleKitException` overrides it to keep the message plain for `BleError.fromNative`.
   - Found: the plugin's `neverForLocation: false` capped location at API 30, so scanning on Android 12+ would have been MISCONFIGURED. Fixed (§4.15).
-  - Still open: permission flows on Android 11 and 12 (no API 30/31 emulator image installed yet), and the iOS prompt and Bluetooth toggling on a physical iPhone (the simulator has no prompt and no adapter).
+  - Deferred (owner's call, 2026-10-02): permission flows on Android 11 and 12 move to later device testing or community testers; the API 30/31 rules are covered by unit tests. Still open: the iOS prompt and Bluetooth toggling on a physical iPhone (the simulator has no prompt and no adapter).
 - [ ] **P1-04 Scanning** — deps: P1-03.
   Filters, options, advertisement parsing, session multiplexing (§5.3), Android throttle guard and long-scan restart, `reportIntervalMs` batching, address-type memory (§4.12).
   **Accept:**
   - The test peripheral is found with and without filters, and parsed fields match `profile.json`.
   - 10 start/stop cycles within 20 s on Android produce a `SCAN_THROTTLED` warning instead of a silent failure.
   - Two concurrent sessions with different filters each receive only their own matches, and stopping one leaves the other running.
+  **Progress 2026-10-02 (open):** `ScanController` and advertisement parsing on both platforms, scanning in `CentralEngine`, the binding (`startScan`, `stopScan`, `scanResults`, `scanError`, `warning`), §5.3 types in `src/types.ts`, option validation for P1-12 (`src/internal/scanOptions.ts`), and scan controls in the example. Tests: 15 Android (`ScanningTest`, `ScanControllerTest`, constants), 10 iOS (`ScanningTests`, engine scan tests), and Jest tests for option validation and for the `ScanResult` keys both natives produce. The rules are in §4.4, §4.5, §4.12 and §5.3.
+  - Verified on the Galaxy A52 (Android 14): an unfiltered scan finds the devices around (18–31); three concurrent sessions (unfiltered, name prefix, Apple manufacturer data `0x004C`) each received only their own matches; the throttle run as described in §4.4. Unit tests cover stopping one session while others keep running, on both platforms.
+  - Pending: the test-peripheral item, on a real device only (owner's rule: device checks on real hardware, not emulators or simulators). It needs a real peripheral: the nRF52840, or Bumble on a USB Bluetooth dongle. Parsing is unit-tested with the `profile.json` values on both platforms. iOS scanning needs a physical iPhone.
 - [ ] **P1-05 Connect and disconnect** — deps: P1-02, P1-04.
   Timeouts, iOS cancel-on-timeout, Android `close()` on every path, bounded status-133 retry (max 3 attempts with backoff).
   **Accept:**
@@ -1442,3 +1455,4 @@ Submit results (`BluetoothStatusCodes`, API 33+): 1 not enabled → `BLUETOOTH_P
 | v0.16 | 2026-10-02 | P1-11 done: UUID normalization and SIG constants |
 | v0.17 | 2026-10-02 | P1-14 done: config plugin v1 and the bare setup guide. §4.15 mod-ordering VERIFY resolved (finalized mod, add-only-if-absent); new rules for optional hardware features and for rejecting unknown options |
 | v0.18 | 2026-10-02 | P1-03 in progress: adapter state, permissions and declaration checks on both platforms, verified on the Galaxy A52 and the iOS simulator. New permission rules in §4.13, lazy-creation and power-alert rules in §4.3, the Android state receiver in §4.4. Plugin fix: `neverForLocation: false` no longer caps location at API 30 |
+| v0.19 | 2026-10-02 | P1-04 in progress: scanning on both platforms, verified on the Galaxy A52 (multiplexing, throttle guard). New scanning rules in §5.3 and §4.5; throttle-guard details in §4.4; §4.12 address-type approach changed (the scan's device handle, since `getAddressType` is API 35+). Android 11/12 checks of P1-03 deferred |

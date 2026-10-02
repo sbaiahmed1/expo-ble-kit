@@ -1,7 +1,7 @@
 import ExpoModulesCore
 
 /// A core error as a coded JS exception (plan §4.5).
-final class BleKitException: Exception {
+final class BleKitException: Exception, @unchecked Sendable {
   init(_ error: CoreError) {
     super.init(name: "BleError", description: error.jsMessage, code: error.code.rawValue)
   }
@@ -19,13 +19,22 @@ public class ExpoBleKitModule: Module {
     engine.onStateChange = { [weak self] state in
       self?.sendEvent("stateChange", ["state": state.rawValue])
     }
+    engine.scanController.onResults = { [weak self] sessionId, results in
+      self?.sendEvent("scanResults", ["sessionId": sessionId, "results": results])
+    }
+    engine.scanController.onError = { [weak self] sessionId, error in
+      self?.sendEvent(
+        "scanError",
+        ["sessionId": sessionId, "code": error.code.rawValue, "message": error.jsMessage]
+      )
+    }
     return engine
   }()
 
   public func definition() -> ModuleDefinition {
     Name("ExpoBleKit")
 
-    Events("stateChange")
+    Events("stateChange", "scanResults", "scanError", "warning")
 
     // Reading or observing the state starts the manager when that can't show the prompt.
     OnStartObserving("stateChange") {
@@ -43,16 +52,21 @@ public class ExpoBleKitModule: Module {
     }
 
     AsyncFunction("getPermissionsAsync") { (promise: Promise) in
-      let engine = self.engine
-      engine.queue.async {
-        do {
-          promise.resolve(try engine.permissions().dictionary)
-        } catch let error as CoreError {
-          promise.reject(BleKitException(error))
-        } catch {
-          promise.reject(error)
-        }
+      self.settle(promise) { engine in try engine.permissions().dictionary }
+    }
+
+    // Async functions run in call order on Expo's serial queue, so a stop never overtakes its start.
+    AsyncFunction("startScan") { (sessionId: Int, options: ScanOptionsRecord, promise: Promise) in
+      let spec = options.spec
+      self.settle(promise) { engine -> Any? in
+        try engine.startScan(sessionId, spec: spec)
+        return nil
       }
+    }
+
+    AsyncFunction("stopScan") { (sessionId: Int) in
+      let engine = self.engine
+      engine.queue.async { engine.stopScan(sessionId) }
     }
 
     // The request flags don't matter on iOS: one authorization covers every capability.
@@ -67,6 +81,19 @@ public class ExpoBleKitModule: Module {
             promise.reject(BleKitException(error))
           }
         }
+      }
+    }
+  }
+  /// Runs `work` on the engine's queue and settles `promise` with its result or error.
+  private func settle(_ promise: Promise, _ work: @escaping (CentralEngine) throws -> Any?) {
+    let engine = self.engine
+    engine.queue.async {
+      do {
+        promise.resolve(try work(engine))
+      } catch let error as CoreError {
+        promise.reject(BleKitException(error))
+      } catch {
+        promise.reject(error)
       }
     }
   }

@@ -2,7 +2,7 @@ import { readFileSync } from 'fs';
 import { resolve } from 'path';
 
 import { BleError } from '../errors';
-import type { BlePermissions, BleState, PermissionStatus } from '../types';
+import type { BlePermissions, BleState, PermissionStatus, ScanResult } from '../types';
 
 const root = resolve(__dirname, '../..');
 const read = (path: string) => readFileSync(resolve(root, path), 'utf8');
@@ -64,6 +64,34 @@ describe('native values match the public types (plan §5.1)', () => {
     expect([...kotlinValues(kotlinPermissions, 'BleCapability'), 'canAskAgain'].sort()).toEqual(
       keys
     );
+  });
+});
+
+describe('native scan results have the ScanResult keys (plan §5.3)', () => {
+  const keys = allOf<keyof ScanResult>()([
+    'id',
+    'name',
+    'rssi',
+    'txPowerLevel',
+    'isConnectable',
+    'serviceUUIDs',
+    'serviceData',
+    'manufacturerData',
+    'rawAdvertisement',
+    'timestamp',
+  ]);
+
+  it('iOS', () => {
+    const swift = read('ios/Core/Scanning.swift');
+    const dictionary =
+      /var dictionary: \[String: Any\] \{([\s\S]*?)\n {2}\}/.exec(swift)?.[1] ?? '';
+    expect([...dictionary.matchAll(/^\s+"(\w+)": /gm)].map((m) => m[1]).sort()).toEqual(keys);
+  });
+
+  it('Android', () => {
+    const kotlin = read('android/src/main/java/expo/modules/blekit/core/Scanning.kt');
+    const toJs = /fun ScanRecordData\.toJs[\s\S]*?\n\)/.exec(kotlin)?.[0] ?? '';
+    expect([...toJs.matchAll(/^\s+"(\w+)" to /gm)].map((m) => m[1]).sort()).toEqual(keys);
   });
 });
 

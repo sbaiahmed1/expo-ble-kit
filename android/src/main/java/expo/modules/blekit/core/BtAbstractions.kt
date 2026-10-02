@@ -131,6 +131,11 @@ class ScanRecordData(
   val rawBytes: ByteArray?,
   /** `SystemClock.elapsedRealtimeNanos()` when the result was received. */
   val timestampNanos: Long,
+  /**
+   * The scanned device. It keeps the address type the scan saw, which a device created from the
+   * address alone doesn't (`getRemoteDevice` assumes public; plan §4.12).
+   */
+  val device: RemoteDevicePort? = null,
 )
 
 interface LeScanCallback {
