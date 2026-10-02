@@ -1,6 +1,6 @@
 # Expo BLE (`expo-ble-kit`) — Architecture & Implementation Plan
 
-> **Status:** Draft v0.15 · **Date:** 2026-10-02 · **Scope:** proposition #3, an Expo-first Bluetooth Low Energy module · **Changes:** Appendix D
+> **Status:** Draft v0.16 · **Date:** 2026-10-02 · **Scope:** proposition #3, an Expo-first Bluetooth Low Energy module · **Changes:** Appendix D
 >
 > **Package name:** `expo-ble-kit` (D0a, decided 2026-10-02) · native module `ExpoBleKit` · Android package `expo.modules.blekit`.
 >
@@ -1028,8 +1028,9 @@ Parallelism: P0-06/P0-07 can run alongside P0-03/P0-04. With two people, P4 can 
   `BleError`, codes, iOS and Android mapping tables (Appendix A).
   **Accept:** every native failure path maps to a code; unit tests cover the mapping tables.
   **Done 2026-10-02:** `src/errors.ts` (`BleError`, `BleErrorCode`, `BleError.fromNative`), `ErrorMapping.swift` / `ErrorMapping.kt`, and per-error `retryable` on `CoreError`. Tests walk every CBError, CBATTError and Android status (5 iOS, 6 Android, 6 Jest), and a Jest test fails if the TypeScript, Swift and Kotlin code lists drift apart. Found while verifying: Android's `GATT_CONNECTION_TIMEOUT` (147) and iOS 27's channel-sounding errors (19, 20), now in Appendix A.
-- [ ] **P1-11 UUID utilities and constants** — deps: none.
+- [x] **P1-11 UUID utilities and constants** — deps: none.
   **Accept:** normalization tests for 16/32/128-bit inputs, numbers and mixed casing.
+  **Done 2026-10-02:** `src/uuid.ts` (`normalizeUUID`, `uuid16`, `UUID`) and `src/constants.ts` (`GattServices`, `GattCharacteristics`), 37 Jest tests. Accepted inputs: 16- and 32-bit hex with an optional `0x` prefix, numbers up to 0xFFFFFFFF, dashed or compact 128-bit; any case. Everything else (wrong length, whitespace, braces, non-integers) throws `INVALID_ARGUMENT`.
 - [ ] **P1-13 Port and fake adapter** — deps: P1-10, P1-11.
   Define `NativeBleKitPort` (`src/internal/port.ts`) from §5; the native binding tasks implement it as they land. Add the lazy native-module resolution (§4.6), `FakeBleAdapter`, and the public `expo-ble-kit/testing` entry as specified in §5.8. Done before P1-12 so the TS API and hooks are built test-first against the fake.
   **Accept:** the `testing` entry resolves through the `exports` map in Jest and TypeScript; importing `expo-ble-kit` in Jest without a native module doesn't throw; the fake follows the same ordering and error semantics as the native core (shared contract test cases with P1-02).
@@ -1416,3 +1417,4 @@ Submit results (`BluetoothStatusCodes`, API 33+): 1 not enabled → `BLUETOOTH_P
 | v0.13 | 2026-10-02 | P1-01 done: core abstractions, real adapters, fakes, virtual-time schedulers and L2 harnesses on both platforms; template module moved into the binding folders |
 | v0.14 | 2026-10-02 | P1-02 done: GattQueue on both platforms with ordering, timeout, cancellation, reject-all and randomized tests; CoreError code list added |
 | v0.15 | 2026-10-02 | P1-10 done: error model and native mapping tables. Appendix A rewritten from verified SDK values (shared ATT table, Android, iOS) |
+| v0.16 | 2026-10-02 | P1-11 done: UUID normalization and SIG constants |
