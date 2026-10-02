@@ -128,29 +128,56 @@ public class ExpoBleKitModule: Module {
         self.engine.connectionState(ref.id)
       }
 
+      Property("services") { (ref: PeripheralObject) in
+        self.engine.services(ref.id)
+      }
+
+      // `services` nil discovers everything; the TS layer always passes a timeout (rule 4).
+      AsyncFunction("discover") { (ref: PeripheralObject, services: [String]?, timeoutMs: Double, promise: Promise) in
+        self.discover(ref.id, services: services, timeoutMs: timeoutMs, promise: promise)
+      }
+
       AsyncFunction("connect") { (ref: PeripheralObject, options: ConnectOptionsRecord, promise: Promise) in
-        let engine = self.engine
-        engine.queue.async {
-          do {
-            try engine.connect(ref.id, spec: options.spec()) { error in
-              if let error {
-                promise.reject(BleKitException(error))
-              } else {
-                promise.resolve()
-              }
-            }
-          } catch let error as CoreError {
-            promise.reject(BleKitException(error))
-          } catch {
-            promise.reject(error)
-          }
-        }
+        self.connect(ref.id, options: options, promise: promise)
       }
 
       AsyncFunction("disconnect") { (ref: PeripheralObject, promise: Promise) in
         let engine = self.engine
         engine.queue.async {
           engine.disconnect(ref.id) { promise.resolve() }
+        }
+      }
+    }
+  }
+
+  private func connect(_ id: String, options: ConnectOptionsRecord, promise: Promise) {
+    let engine = self.engine
+    engine.queue.async {
+      do {
+        try engine.connect(id, spec: options.spec()) { error in
+          if let error {
+            promise.reject(BleKitException(error))
+          } else {
+            promise.resolve()
+          }
+        }
+      } catch let error as CoreError {
+        promise.reject(BleKitException(error))
+      } catch {
+        promise.reject(error)
+      }
+    }
+  }
+
+  private func discover(_ id: String, services: [String]?, timeoutMs: Double, promise: Promise) {
+    let engine = self.engine
+    engine.queue.async {
+      engine.discover(id, filter: services, timeout: timeoutMs / 1000) { result in
+        switch result {
+        case let .success(found):
+          promise.resolve(found)
+        case let .failure(error):
+          promise.reject(BleKitException(error))
         }
       }
     }

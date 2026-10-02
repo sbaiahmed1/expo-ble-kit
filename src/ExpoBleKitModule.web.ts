@@ -7,6 +7,7 @@ import type { BlePermissions, BleState, Diagnostics } from './types';
 
 class WebPeripheral {
   readonly state = 'disconnected';
+  readonly services = [];
 
   constructor(readonly id: string) {}
 
@@ -15,6 +16,10 @@ class WebPeripheral {
   }
 
   async disconnect(): Promise<void> {}
+
+  async discover(): Promise<never> {
+    throw notSupported();
+  }
 
   addListener() {
     return { remove() {} };

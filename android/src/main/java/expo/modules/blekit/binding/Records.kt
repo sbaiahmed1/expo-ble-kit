@@ -99,6 +99,8 @@ class AndroidConnectOptionsRecord : Record {
 class ConnectOptionsRecord : Record {
   @Field val timeoutMs: Double? = null
 
+  @Field val autoDiscover: Boolean = true
+
   @Field val android: AndroidConnectOptionsRecord = AndroidConnectOptionsRecord()
 
   fun toSpec(): ConnectSpec {
@@ -106,6 +108,6 @@ class ConnectOptionsRecord : Record {
       if (!(it > 0)) throw CoreError(CoreError.Code.INVALID_ARGUMENT, "Invalid connect option timeoutMs: $it")
       it.toLong()
     }
-    return ConnectSpec(timeoutMs, android.autoConnect ?: (timeoutMs == null))
+    return ConnectSpec(timeoutMs, android.autoConnect ?: (timeoutMs == null), autoDiscover)
   }
 }

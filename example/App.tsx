@@ -124,11 +124,27 @@ export default function App() {
     const started = Date.now();
     addConnectLog(`connect timeoutMs ${timeoutMs}`);
     try {
-      await absent.connect({ timeoutMs, android: {}, ios: { notifyOnDisconnection: false } });
+      await absent.connect({
+        timeoutMs,
+        autoDiscover: true,
+        android: {},
+        ios: { notifyOnDisconnection: false },
+      });
       addConnectLog(`connected after ${Date.now() - started} ms`);
     } catch (error) {
       const bleError = BleError.fromNative(error);
       addConnectLog(`${bleError.code} after ${Date.now() - started} ms`);
+    }
+  }
+
+  async function discoverAbsent() {
+    try {
+      const services = await absent.discover(null, 30_000);
+      addConnectLog(`discovered ${services.length} services`);
+    } catch (error) {
+      addConnectLog(
+        `discover: ${BleError.fromNative(error).code} (services ${absent.services.length})`
+      );
     }
   }
 
@@ -137,7 +153,12 @@ export default function App() {
     addConnectLog('100 connect/cancel cycles');
     for (let cycle = 0; cycle < 100; cycle++) {
       const pending = absent
-        .connect({ timeoutMs: null, android: {}, ios: { notifyOnDisconnection: false } })
+        .connect({
+          timeoutMs: null,
+          autoDiscover: true,
+          android: {},
+          ios: { notifyOnDisconnection: false },
+        })
         .catch(() => {});
       await absent.disconnect();
       await pending;
@@ -216,6 +237,7 @@ export default function App() {
             onPress={() => absent.disconnect()}
           />
           <Button testID="cancel-cycles" title="Connect/cancel ×100" onPress={cancelCycles} />
+          <Button testID="discover-absent" title="Discover absent" onPress={discoverAbsent} />
           <Button testID="diagnostics" title="Diagnostics" onPress={showDiagnostics} />
           <Text testID="connect-log" style={styles.result}>
             {connectLog.join('\n')}

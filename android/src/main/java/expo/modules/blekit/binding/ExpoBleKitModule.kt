@@ -24,6 +24,7 @@ import expo.modules.kotlin.exception.Exceptions
 import expo.modules.kotlin.modules.Module
 import expo.modules.kotlin.modules.ModuleDefinition
 import java.lang.ref.WeakReference
+import java.util.UUID
 
 /** A core error as a coded JS exception (plan §4.5). */
 class BleKitException(error: CoreError) : CodedException(error.code.value, error.jsMessage, error)
@@ -114,6 +115,27 @@ class ExpoBleKitModule : Module() {
       Property("id") { ref: PeripheralObject -> ref.id }
 
       Property("state") { ref: PeripheralObject -> engine.connectionState(ref.id) }
+
+      Property("services") { ref: PeripheralObject -> engine.services(ref.id) }
+
+      // `services` null discovers everything; the TS layer always passes a timeout (rule 4).
+      AsyncFunction("discover") { ref: PeripheralObject, services: List<String>?, timeoutMs: Double, promise: Promise ->
+        executor.execute {
+          settle(promise) {
+            val filter = services?.map { uuid ->
+              runCatching { UUID.fromString(uuid) }.getOrElse {
+                throw CoreError(CoreError.Code.INVALID_ARGUMENT, "Invalid service UUID: $uuid")
+              }
+            }
+            engine.discover(ref.id, filter, timeoutMs.toLong()) { result ->
+              result.fold(
+                onSuccess = { promise.resolve(it) },
+                onFailure = { promise.reject(BleKitException(it as CoreError)) },
+              )
+            }
+          }
+        }
+      }
 
       AsyncFunction("connect") { ref: PeripheralObject, options: ConnectOptionsRecord, promise: Promise ->
         executor.execute {

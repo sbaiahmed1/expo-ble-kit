@@ -1,6 +1,6 @@
 # Expo BLE (`expo-ble-kit`) — Architecture & Implementation Plan
 
-> **Status:** Draft v0.20 · **Date:** 2026-10-02 · **Scope:** proposition #3, an Expo-first Bluetooth Low Energy module · **Changes:** Appendix D
+> **Status:** Draft v0.21 · **Date:** 2026-10-02 · **Scope:** proposition #3, an Expo-first Bluetooth Low Energy module · **Changes:** Appendix D
 >
 > **Package name:** `expo-ble-kit` (D0a, decided 2026-10-02) · native module `ExpoBleKit` · Android package `expo.modules.blekit`.
 >
@@ -316,7 +316,7 @@ Invariants:
 
 - One FIFO per `PeripheralSession`, exactly one op in flight.
 - Op kinds: discover (services, characteristics, descriptors), read, write with response, write without response, descriptor read/write (including CCCD), set notify/indicate, read RSSI, request MTU, connection priority, PHY, bond.
-- **Timeouts:** default 10 s per op, configurable globally and per call. On Android, two consecutive timeouts force a disconnect + `close()` (configurable).
+- **Timeouts:** default 10 s per op, configurable globally and per call. On Android, two consecutive timeouts force a disconnect + `close()` (configurable; the switch lands with P2-06). Discovery counts as one op with a 30 s default: on iOS it chains services, then characteristics, then descriptors.
 - **Cancellation:** `AbortSignal` removes queued ops. An in-flight op can't be aborted at the radio, so its result is discarded and its promise rejects with `OPERATION_CANCELLED`.
 - **Write without response** (no acknowledgement from the peer): on iOS, wait for `canSendWriteWithoutResponse`. On Android 33+, honor the status returned by `writeCharacteristic` (busy → retry after the next write callback or a short delay). Older Android: pace on `onCharacteristicWrite` ⚠️ VERIFY legacy semantics.
 - **Long values:** writes with response larger than MTU − 3 rely on the platform's long-write support, up to the 512-byte ATT maximum ⚠️ VERIFY on both platforms. Larger payloads use `writeStream()` (chunked, flow-controlled, progress callback, abortable).
@@ -750,6 +750,13 @@ Connection rules (decided in P1-05):
 - When Bluetooth leaves `poweredOn`, every session ends with the matching error (`BLUETOOTH_POWERED_OFF` …), and pending connects fail with it.
 - The state listener hears only changes of the JS state, and hears `connected` before `connect()` resolves.
 
+Discovery rules (decided in P1-06):
+
+- `discover(services?)` needs a ready connection (else `DISCONNECTED`) and resolves with the requested services, each with all its characteristics and descriptors. Android always discovers the whole database (`discoverServices` has no filter), so `services` only narrows the result; iOS asks CoreBluetooth for just those services.
+- The cache (`peripheral.services`) keeps everything found: an unfiltered discovery replaces it, a filtered one adds or replaces the services it found. It is cleared on every disconnect.
+- With `autoDiscover` (default), discovery runs between link-up and `connected`, inside the connect timeout. A discovery failure fails the connect with the discovery's error and closes the link; a link drop during discovery fails it with `CONNECTION_FAILED`.
+- Several instances of one service or characteristic UUID: the cache lists them all; addressing by UUID (P1-07) takes the first.
+
 ### 5.5 Peripheral role (P4)
 
 ```ts
@@ -1061,6 +1068,9 @@ Parallelism: P0-06/P0-07 can run alongside P0-03/P0-04. With two people, P4 can 
   - Pending real hardware: 100 connect/disconnect cycles with a real peripheral, a `timeoutMs: null` connect that completes when the device appears, and `connect()` resolving with `connected` on a live link; all of iOS on a physical iPhone.
 - [ ] **P1-06 Discovery and cache** — deps: P1-05.
   **Accept:** full profile discovered; filtered discovery works; cache cleared on disconnect.
+  **Progress 2026-10-02 (open):** discovery on both platforms as one queued operation (Android `discoverServices`; iOS services → characteristics → descriptors, with late callbacks after a timeout ignored), `autoDiscover` inside the connect, the cache with thread-safe snapshots for `peripheral.services`, `discover(services, timeoutMs)` in the binding, and the §5.4 `Service` types. Also from P1-02/§4.9, now that sessions queue operations: Android resets the connection after two operations in a row time out. Fixed on the way: a disconnect failed the queued discovery while the state still read `discovering`, so the connect rejected with `DISCONNECTED` instead of the real error; the state now changes first. Tests: 9 Android, 7 iOS, Jest for `autoDiscover` and the property names. Rules in §4.9 and §5.4.
+  - Verified on the Galaxy A52: `discover()` without a connection rejects with `DISCONNECTED` and the cache is empty; a 5 s connect with `autoDiscover` to an absent device still times out on time (5,218 ms from JS).
+  - Pending real hardware: discovering the full test profile, filtered discovery and the cache cleared on disconnect, on both platforms.
 - [ ] **P1-07 Read, write, descriptors** — deps: P1-06.
   With and without response (basic pacing only; full flow control is P2-02). Long values up to 512 bytes.
   **Accept:** every profile characteristic read/written as its properties allow; 512-byte read and write succeed on both platforms ⚠️ VERIFY long-write behavior.
@@ -1473,3 +1483,4 @@ Submit results (`BluetoothStatusCodes`, API 33+): 1 not enabled → `BLUETOOTH_P
 | v0.18 | 2026-10-02 | P1-03 in progress: adapter state, permissions and declaration checks on both platforms, verified on the Galaxy A52 and the iOS simulator. New permission rules in §4.13, lazy-creation and power-alert rules in §4.3, the Android state receiver in §4.4. Plugin fix: `neverForLocation: false` no longer caps location at API 30 |
 | v0.19 | 2026-10-02 | P1-04 in progress: scanning on both platforms, verified on the Galaxy A52 (multiplexing, throttle guard). New scanning rules in §5.3 and §4.5; throttle-guard details in §4.4; §4.12 address-type approach changed (the scan's device handle, since `getAddressType` is API 35+). Android 11/12 checks of P1-03 deferred |
 | v0.20 | 2026-10-02 | P1-05 in progress: connect and disconnect on both platforms, verified on the Galaxy A52 without a peripheral (absent-device timeout, cancellable no-timeout connect, 100 cycles without GATT client leaks). Connection rules in §5.4, binding identity in §4.5, `android.openGattClients` in §5.7 `Diagnostics` |
+| v0.21 | 2026-10-02 | P1-06 in progress: discovery, `autoDiscover` and the cache on both platforms; two-timeout reset on Android. Discovery rules in §5.4, the discovery timeout in §4.9 |

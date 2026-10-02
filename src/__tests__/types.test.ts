@@ -5,6 +5,7 @@ import { BleError } from '../errors';
 import type {
   BlePermissions,
   BleState,
+  CharacteristicProperty,
   ConnectionState,
   PermissionStatus,
   ScanResult,
@@ -93,6 +94,26 @@ describe('native connection states are ConnectionState values (plan §4.8)', () 
   ])('%s', (_, path, pattern) => {
     const values = [...new Set([...read(path).matchAll(pattern)].map((m) => m[1]))].sort();
     expect(values).toEqual(states);
+  });
+});
+
+describe('native characteristic properties are CharacteristicProperty values (plan §5.4)', () => {
+  const properties = allOf<CharacteristicProperty>()([
+    'broadcast',
+    'read',
+    'writeWithoutResponse',
+    'write',
+    'notify',
+    'indicate',
+    'authenticatedSignedWrites',
+    'extendedProperties',
+  ]);
+
+  it.each([
+    ['iOS', 'ios/Core/Discovery.swift', /\(\[?[.\w, ]+\]?, "(\w+)"\)/g],
+    ['Android', 'android/src/main/java/expo/modules/blekit/core/Discovery.kt', / to "(\w+)",/g],
+  ])('%s', (_, path, pattern) => {
+    expect([...read(path).matchAll(pattern)].map((m) => m[1]).sort()).toEqual(properties);
   });
 });
 

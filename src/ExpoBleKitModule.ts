@@ -9,16 +9,21 @@ import type {
   BleState,
   ConnectionState,
   Diagnostics,
+  Service,
 } from './types';
 
 /** One peripheral's native handle (plan §4.5): the same object for the same id. */
 export declare class NativePeripheral extends SharedObject<PeripheralObjectEvents> {
   readonly id: string;
   readonly state: ConnectionState;
+  /** The discovery cache; empty before discovery and after a disconnect. */
+  readonly services: Service[];
   /** Resolves when the connection is ready; the `connected` event comes first. */
   connect(options: NativeConnectOptions): Promise<void>;
   /** During a connect, cancels it: the connect rejects with OPERATION_CANCELLED. */
   disconnect(): Promise<void>;
+  /** `services` null discovers everything. UUIDs must be normalized; the timeout is required. */
+  discover(services: string[] | null, timeoutMs: number): Promise<Service[]>;
 }
 
 // The raw native module. Its rejections carry a BleErrorCode `code`; convert them with

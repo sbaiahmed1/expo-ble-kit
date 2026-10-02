@@ -108,3 +108,29 @@ export interface Diagnostics {
   /** Android: GATT clients opened and not yet closed. Stable across connect cycles when nothing leaks. */
   android?: { openGattClients: number };
 }
+
+export type CharacteristicProperty =
+  | 'broadcast'
+  | 'read'
+  | 'writeWithoutResponse'
+  | 'write'
+  | 'notify'
+  | 'indicate'
+  | 'authenticatedSignedWrites'
+  | 'extendedProperties';
+
+export interface Service {
+  uuid: UUID;
+  isPrimary: boolean;
+  characteristics: Characteristic[];
+}
+export interface Characteristic {
+  uuid: UUID;
+  serviceUUID: UUID;
+  properties: CharacteristicProperty[];
+  descriptors: Descriptor[];
+}
+export interface Descriptor {
+  uuid: UUID;
+  characteristicUUID: UUID;
+}

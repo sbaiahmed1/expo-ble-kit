@@ -3,6 +3,7 @@ import XCTest
 @testable import BleKitCore
 
 /// P1-05: connect, timeouts with cancel, disconnect and link loss on iOS, through the engine.
+/// P1-06: discovery, autoDiscover and the cache.
 final class PeripheralSessionTests: XCTestCase {
   private var scheduler: TestScheduler!
   private var central: FakeCentralManager!
@@ -35,8 +36,9 @@ final class PeripheralSessionTests: XCTestCase {
 
   private var id: String { peripheral.identifier.uuidString }
 
-  private func connect(timeout: TimeInterval? = 15, id: String? = nil) throws {
-    try engine.connect(id ?? self.id, spec: ConnectSpec(timeout: timeout)) { [unowned self] error in
+  private func connect(timeout: TimeInterval? = 15, id: String? = nil, autoDiscover: Bool = false) throws {
+    let spec = ConnectSpec(timeout: timeout, autoDiscover: autoDiscover)
+    try engine.connect(id ?? self.id, spec: spec) { [unowned self] error in
       connectError = error
       log.append("connect " + (error?.code.rawValue ?? "ok"))
     }
@@ -156,5 +158,132 @@ final class PeripheralSessionTests: XCTestCase {
     var disconnected = false
     engine.disconnect(UUID().uuidString) { disconnected = true }
     XCTAssertTrue(disconnected, "unknown peripherals are already disconnected")
+  }
+
+  // MARK: P1-06 discovery
+
+  private let heartRate = "0000180d-0000-1000-8000-00805f9b34fb"
+  private let battery = "0000180f-0000-1000-8000-00805f9b34fb"
+
+  private func giveProfile() {
+    peripheral.services = [
+      FakeService(uuid: "180D", characteristics: [
+        FakeCharacteristic(uuid: "2A37", properties: [.notify], descriptors: [FakeDescriptor(uuid: "2902")])
+      ]),
+      FakeService(uuid: "180F", characteristics: [
+        FakeCharacteristic(uuid: "2A19", properties: [.read, .notifyEncryptionRequired])
+      ])
+    ]
+  }
+
+  private func discover(
+    _ filter: [String]?,
+    timeout: TimeInterval? = nil
+  ) -> () -> Result<[[String: Any]], CoreError>? {
+    var outcome: Result<[[String: Any]], CoreError>?
+    engine.discover(id, filter: filter, timeout: timeout) { outcome = $0 }
+    scheduler.runUntilIdle()
+    return { outcome }
+  }
+
+  private func serviceUUIDs(_ services: [[String: Any]]?) -> [String] {
+    (services ?? []).compactMap { $0["uuid"] as? String }
+  }
+
+  func testAutoDiscoverRunsBeforeTheConnectionIsReady() throws {
+    giveProfile()
+    peripheral.respondsAutomatically = true
+    try connect(autoDiscover: true)
+    central.simulateConnection(of: peripheral)
+    XCTAssertEqual(log, ["state connecting"], "still connecting while discovering")
+    scheduler.runUntilIdle()
+    XCTAssertEqual(log, ["state connecting", "state connected", "connect ok"])
+    let services = engine.services(id)
+    XCTAssertEqual(serviceUUIDs(services), [heartRate, battery])
+    let measurement = (services[0]["characteristics"] as? [[String: Any]])?.first
+    XCTAssertEqual(measurement?["properties"] as? [String], ["notify"])
+    XCTAssertEqual(measurement?["serviceUUID"] as? String, heartRate)
+    let descriptor = (measurement?["descriptors"] as? [[String: Any]])?.first
+    XCTAssertEqual(descriptor?["uuid"] as? String, "00002902-0000-1000-8000-00805f9b34fb")
+    XCTAssertEqual(descriptor?["characteristicUUID"] as? String, "00002a37-0000-1000-8000-00805f9b34fb")
+  }
+
+  func testFilteredDiscoveryAsksOnlyForTheServicesGiven() throws {
+    giveProfile()
+    peripheral.respondsAutomatically = true
+    try connect()
+    central.simulateConnection(of: peripheral)
+    let filtered = discover([battery])
+    XCTAssertTrue(peripheral.calls.contains(.discoverServices([CBUUID(string: "180F")])))
+    XCTAssertEqual(serviceUUIDs(try filtered()?.get()), [battery])
+    XCTAssertEqual(serviceUUIDs(engine.services(id)), [battery])
+    _ = discover(nil)
+    XCTAssertEqual(serviceUUIDs(engine.services(id)), [heartRate, battery])
+  }
+
+  func testAFailedAutoDiscoverFailsTheConnect() throws {
+    giveProfile()
+    try connect(autoDiscover: true)
+    central.simulateConnection(of: peripheral)
+    scheduler.runUntilIdle()
+    peripheral.completeServiceDiscovery(error: NSError(domain: CBATTErrorDomain, code: 5))
+    XCTAssertEqual(connectError?.code, .insufficientAuthentication)
+    XCTAssertEqual(central.calls.last, .cancelConnection(peripheral.identifier))
+    XCTAssertEqual(engine.connectionState(id), "disconnected")
+  }
+
+  func testTheConnectTimeoutCoversDiscovery() throws {
+    giveProfile()
+    try connect(timeout: 5, autoDiscover: true)
+    scheduler.advance(by: 1)
+    central.simulateConnection(of: peripheral)
+    scheduler.advance(by: 4)
+    XCTAssertEqual(connectError?.code, .connectionTimeout)
+    peripheral.completeServiceDiscovery()
+    XCTAssertEqual(engine.connectionState(id), "disconnected")
+  }
+
+  func testLateDiscoveryCallbacksAfterATimeoutAreIgnored() throws {
+    giveProfile()
+    try connect()
+    central.simulateConnection(of: peripheral)
+    let first = discover(nil, timeout: 1)
+    scheduler.advance(by: 1)
+    XCTAssertEqual(first()?.failure?.code, .operationTimeout)
+    peripheral.completeServiceDiscovery()
+    XCTAssertTrue(engine.services(id).isEmpty, "the stale run doesn't fill the cache")
+
+    peripheral.respondsAutomatically = true
+    let second = discover(nil)
+    XCTAssertEqual(serviceUUIDs(try second()?.get()), [heartRate, battery])
+  }
+
+  func testDiscoveryNeedsAConnectionAndDisconnectingClearsTheCache() throws {
+    XCTAssertEqual(discover(nil)()?.failure?.code, .disconnected)
+    giveProfile()
+    peripheral.respondsAutomatically = true
+    try connect(autoDiscover: true)
+    central.simulateConnection(of: peripheral)
+    scheduler.runUntilIdle()
+    XCTAssertEqual(engine.services(id).count, 2)
+    central.simulateDisconnection(of: peripheral, error: NSError(domain: CBErrorDomain, code: 7))
+    XCTAssertTrue(engine.services(id).isEmpty)
+  }
+
+  func testPropertyNames() {
+    XCTAssertEqual(DiscoveredService.propertyNames([]), [])
+    XCTAssertEqual(
+      DiscoveredService.propertyNames([.read, .indicateEncryptionRequired, .authenticatedSignedWrites]),
+      ["read", "indicate", "authenticatedSignedWrites"]
+    )
+  }
+}
+
+private extension Result {
+  var failure: Failure? {
+    if case let .failure(error) = self {
+      return error
+    }
+    return nil
   }
 }

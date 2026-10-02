@@ -1,12 +1,14 @@
 import CoreBluetooth
 import Foundation
 
-/// Native connection states (plan §4.8). Discovery joins in P1-06.
+/// Native connection states (plan §4.8).
 enum SessionState {
   case disconnected
   case connecting
   /// The link is up; post-connect setup is running.
   case connected
+  /// `autoDiscover` is running before the connection is ready.
+  case discovering
   /// Link up and setup done: what JS calls `connected`.
   case ready
   case disconnecting
@@ -16,7 +18,7 @@ enum SessionState {
     switch self {
     case .disconnected:
       return "disconnected"
-    case .connecting, .connected:
+    case .connecting, .connected, .discovering:
       return "connecting"
     case .ready:
       return "connected"
@@ -32,15 +34,27 @@ struct ConnectSpec {
   /// `timeoutMs: null` gets here.
   var timeout: TimeInterval?
   var notifyOnDisconnection = false
+  /// Discover every service before the connection counts as ready (plan §4.8).
+  var autoDiscover = true
 }
 
 /// One peripheral's connection (plan §4.3, §4.8): connect with a timeout that cancels the pending
-/// connection (CoreBluetooth never times out on its own), disconnect, and link loss.
+/// connection (CoreBluetooth never times out on its own), service discovery and its cache,
+/// disconnect, and link loss.
 ///
 /// Threading (plan §4.7): everything on the engine's queue. The engine publishes `state` for
 /// synchronous reads.
-final class PeripheralSession {
+final class PeripheralSession: PeripheralLikeDelegate {
   typealias Completion = (CoreError?) -> Void
+  typealias DiscoveryCompletion = (Result<[DiscoveredService], CoreError>) -> Void
+
+  /// One discovery run: services, then characteristics, then descriptors (plan §4.9).
+  private struct DiscoveryRun {
+    let id: Int
+    let filter: [String]?
+    /// Characteristic and descriptor discoveries still outstanding.
+    var outstanding = 0
+  }
 
   let peripheral: PeripheralLike
   /// Operations on this connection (Appendix B rule 2). Used from P1-06 on.
@@ -49,6 +63,10 @@ final class PeripheralSession {
   /// unexpectedly.
   var onStateChange: ((SessionState, CoreError?) -> Void)?
   private(set) var state = SessionState.disconnected
+  /// The discovery cache, by service UUID in discovery order. Empty when disconnected.
+  private(set) var services: [DiscoveredService] = []
+  /// Called after the cache changes.
+  var onServicesChange: (([DiscoveredService]) -> Void)?
 
   private let central: CentralManaging
   private let scheduler: Scheduling
@@ -56,14 +74,20 @@ final class PeripheralSession {
   private var disconnectTimeout: CancellableWork?
   private var connectWaiters: [Completion] = []
   private var disconnectWaiters: [() -> Void] = []
+  private var autoDiscover = true
+  private var discovery: DiscoveryRun?
+  private var nextDiscoveryId = 0
 
   static let disconnectTimeout: TimeInterval = 5
+  /// Discovery is one queued operation, and slower than the 10 s default (plan §4.9).
+  static let discoveryTimeout: TimeInterval = 30
 
   init(peripheral: PeripheralLike, central: CentralManaging, scheduler: Scheduling) {
     self.peripheral = peripheral
     self.central = central
     self.scheduler = scheduler
     queue = GattQueue(scheduler: scheduler)
+    peripheral.delegate = self
   }
 
   /// Completes with nil once the connection is ready. A connect while one is pending joins it, with
@@ -72,12 +96,13 @@ final class PeripheralSession {
     switch state {
     case .ready:
       completion(nil)
-    case .connecting, .connected:
+    case .connecting, .connected, .discovering:
       connectWaiters.append(completion)
     case .disconnecting:
       disconnectWaiters.append { [weak self] in self?.connect(spec, completion: completion) }
     case .disconnected:
       connectWaiters.append(completion)
+      autoDiscover = spec.autoDiscover
       setState(.connecting, nil)
       if let timeout = spec.timeout {
         connectTimeout = scheduler.schedule(after: timeout) { [weak self] in
@@ -105,7 +130,7 @@ final class PeripheralSession {
       completion()
     case .disconnecting:
       disconnectWaiters.append(completion)
-    case .connecting, .connected:
+    case .connecting, .connected, .discovering:
       disconnectWaiters.append(completion)
       failConnect(nil, connectError: CoreError(.operationCancelled, "disconnect() cancelled the connection attempt"))
     case .ready:
@@ -118,6 +143,34 @@ final class PeripheralSession {
         self?.finishDisconnected(nil)
       }
     }
+  }
+
+  /// Discovers services through the queue (plan §4.9): `filter` (all when nil), then all their
+  /// characteristics and descriptors. The cache gains what was found; an unfiltered run replaces it.
+  func discover(_ filter: [String]?, timeout: TimeInterval?, completion: @escaping DiscoveryCompletion) {
+    guard state == .ready || state == .discovering else {
+      return completion(.failure(CoreError(.disconnected, "Not connected")))
+    }
+    nextDiscoveryId += 1
+    let runId = nextDiscoveryId
+    queue.enqueue(
+      .discoverServices,
+      timeout: timeout ?? Self.discoveryTimeout,
+      start: { [weak self] in
+        self?.discovery = DiscoveryRun(id: runId, filter: filter)
+        self?.peripheral.discoverServices(filter?.map(CBUUID.init(string:)))
+      },
+      completion: { [weak self] result in
+        guard let self else {
+          return
+        }
+        if discovery?.id == runId {
+          // A timeout or a disconnect ended the run; later callbacks are ignored.
+          discovery = nil
+        }
+        completion(result.map { _ in self.updateCache(filter) })
+      }
+    )
   }
 
   /// Bluetooth went away: CoreBluetooth drops every connection without callbacks.
@@ -133,15 +186,23 @@ final class PeripheralSession {
   func didConnect() {
     switch state {
     case .connecting:
-      connectTimeout?.cancel()
-      connectTimeout = nil
+      // The connect timeout keeps running through setup: connect() covers it all (plan §4.8).
       setState(.connected, nil)
-      // P1-06 adds discovery (autoDiscover) here, before ready.
-      setState(.ready, nil)
-      // The state listener has seen `connected` before connect() resolves (plan §4.8).
-      let waiters = connectWaiters
-      connectWaiters.removeAll()
-      waiters.forEach { $0(nil) }
+      guard autoDiscover else {
+        return becomeReady()
+      }
+      setState(.discovering, nil)
+      discover(nil, timeout: nil) { [weak self] result in
+        guard let self, state == .discovering else {
+          return
+        }
+        switch result {
+        case .success:
+          becomeReady()
+        case let .failure(error):
+          failConnect(error)
+        }
+      }
     case .disconnected:
       // A connect we gave up on completed anyway: drop the link.
       central.cancelPeripheralConnection(peripheral)
@@ -159,9 +220,10 @@ final class PeripheralSession {
 
   func didDisconnect(_ error: Error?) {
     switch state {
-    case .connecting:
+    case .connecting, .connected, .discovering:
+      // Before ready, a dropped link is a failed connect.
       failConnect(Self.connectionError(error))
-    case .connected, .ready:
+    case .ready:
       let lost = error.map(CoreBluetoothErrorMapping.coreError(from:))
         ?? CoreError(.disconnected, "The peripheral disconnected")
       finishDisconnected(lost)
@@ -173,6 +235,16 @@ final class PeripheralSession {
   }
 
   // MARK: Private
+
+  private func becomeReady() {
+    connectTimeout?.cancel()
+    connectTimeout = nil
+    setState(.ready, nil)
+    // The state listener has seen `connected` before connect() resolves (plan §4.8).
+    let waiters = connectWaiters
+    connectWaiters.removeAll()
+    waiters.forEach { $0(nil) }
+  }
 
   /// A failed connect is CONNECTION_FAILED whatever CoreBluetooth called it; the native code is kept.
   static func connectionError(_ error: Error?) -> CoreError {
@@ -201,8 +273,14 @@ final class PeripheralSession {
     connectTimeout = nil
     disconnectTimeout?.cancel()
     disconnectTimeout = nil
-    queue.failAll(CoreError(.disconnected, "Disconnected"))
+    // Handles and the database can differ on the next connection.
+    if !services.isEmpty {
+      services = []
+      onServicesChange?([])
+    }
+    // The state changes first, so callbacks of the operations failed below see the final state.
     setState(.disconnected, error)
+    queue.failAll(CoreError(.disconnected, "Disconnected"))
     let connectFailure = connectError ?? error
       ?? CoreError(.disconnected, "Disconnected before the connection was ready")
     let connects = connectWaiters
@@ -219,5 +297,83 @@ final class PeripheralSession {
     if newState.js != previous.js {
       onStateChange?(newState, error)
     }
+  }
+}
+
+// MARK: - Discovery callbacks
+
+extension PeripheralSession {
+  func peripheralDidDiscoverServices(_ peripheral: PeripheralLike, error: Error?) {
+    guard var run = discovery else {
+      return
+    }
+    if let error {
+      return finishDiscovery(.failure(CoreBluetoothErrorMapping.coreError(from: error)))
+    }
+    let services = peripheral.serviceList.filter { run.filter?.contains($0.uuid.fullUUIDString) ?? true }
+    run.outstanding = services.count
+    discovery = run
+    if services.isEmpty {
+      return finishDiscovery(.success(.none))
+    }
+    services.forEach { peripheral.discoverCharacteristics(nil, for: $0) }
+  }
+
+  func peripheral(_ peripheral: PeripheralLike, didDiscoverCharacteristicsFor service: ServiceLike, error: Error?) {
+    guard discovery != nil else {
+      return
+    }
+    if let error {
+      return finishDiscovery(.failure(CoreBluetoothErrorMapping.coreError(from: error)))
+    }
+    discovery?.outstanding += service.characteristicList.count - 1
+    service.characteristicList.forEach { peripheral.discoverDescriptors(for: $0) }
+    finishDiscoveryIfDone()
+  }
+
+  func peripheral(
+    _ peripheral: PeripheralLike,
+    didDiscoverDescriptorsFor characteristic: CharacteristicLike,
+    error: Error?
+  ) {
+    guard discovery != nil else {
+      return
+    }
+    if let error {
+      return finishDiscovery(.failure(CoreBluetoothErrorMapping.coreError(from: error)))
+    }
+    discovery?.outstanding -= 1
+    finishDiscoveryIfDone()
+  }
+
+  private func finishDiscoveryIfDone() {
+    if let run = discovery, run.outstanding == 0 {
+      finishDiscovery(.success(.none))
+    }
+  }
+
+  private func finishDiscovery(_ result: Result<GattOperation.Output, CoreError>) {
+    discovery = nil
+    queue.complete(result) { $0.kind == .discoverServices }
+  }
+
+  /// Records what the run found and returns the services it asked for.
+  private func updateCache(_ filter: [String]?) -> [DiscoveredService] {
+    let found = peripheral.serviceList
+      .filter { filter?.contains($0.uuid.fullUUIDString) ?? true }
+      .map(DiscoveredService.init)
+    if filter == nil {
+      services = found
+    } else {
+      for service in found {
+        if let index = services.firstIndex(where: { $0.uuid == service.uuid }) {
+          services[index] = service
+        } else {
+          services.append(service)
+        }
+      }
+    }
+    onServicesChange?(services)
+    return found
   }
 }

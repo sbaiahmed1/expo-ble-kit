@@ -1,12 +1,17 @@
 package expo.modules.blekit.core
 
-/** Native connection states (plan §4.8). Discovery joins in P1-06. */
+import java.util.UUID
+
+/** Native connection states (plan §4.8). */
 enum class SessionState {
   DISCONNECTED,
   CONNECTING,
 
   /** The link is up; post-connect setup is running. */
   CONNECTED,
+
+  /** `autoDiscover` is running before the connection is ready. */
+  DISCOVERING,
 
   /** Link up and setup done: what JS calls `connected`. */
   READY,
@@ -17,7 +22,7 @@ enum class SessionState {
   val js: String
     get() = when (this) {
       DISCONNECTED -> "disconnected"
-      CONNECTING, CONNECTED -> "connecting"
+      CONNECTING, CONNECTED, DISCOVERING -> "connecting"
       READY -> "connected"
       DISCONNECTING -> "disconnecting"
     }
@@ -29,12 +34,14 @@ class ConnectSpec(
   val timeoutMs: Long?,
   /** Android `autoConnect`. By default, a background connect exactly when there is no timeout. */
   val autoConnect: Boolean = timeoutMs == null,
+  /** Discover every service before the connection counts as ready (plan §4.8). */
+  val autoDiscover: Boolean = true,
 )
 
 /**
  * One peripheral's connection (plan §4.4, §4.8): connect with a timeout and a bounded retry of
- * status 133, disconnect, and link loss. Every GATT client it opens is closed exactly once, on every
- * path (Appendix B rule 3).
+ * status 133, service discovery and its cache, disconnect, and link loss. Every GATT client it
+ * opens is closed exactly once, on every path (Appendix B rule 3).
  *
  * Threading (plan §4.7): everything on the BLE thread. [state] is safe to read from any thread.
  */
@@ -49,8 +56,23 @@ class PeripheralSession(
   var state = SessionState.DISCONNECTED
     private set
 
-  /** Operations on this connection (Appendix B rule 2). Used from P1-06 on. */
-  val queue = GattQueue(executor)
+  /** Operations on this connection (Appendix B rule 2). */
+  val queue = GattQueue(executor).also { queue ->
+    // Plan §4.9: on Android, two operations in a row that time out mean a stuck stack.
+    queue.onTimeout = { _, consecutiveTimeouts ->
+      if (consecutiveTimeouts >= 2 && state != SessionState.DISCONNECTED) {
+        closeGatt(disconnectFirst = true)
+        finishDisconnected(
+          CoreError(CoreError.Code.DISCONNECTED, "Two operations in a row timed out, so the connection was reset"),
+        )
+      }
+    }
+  }
+
+  /** The discovery cache: every service the last discovery found. Empty when disconnected. */
+  @Volatile
+  var services: List<GattServiceInfo> = emptyList()
+    private set
 
   private var gatt: GattClientPort? = null
 
@@ -58,6 +80,7 @@ class PeripheralSession(
   private var generation = 0
   private var attempts = 0
   private var autoConnect = false
+  private var autoDiscover = true
   private var connectTimeout: Cancellable? = null
   private var retry: Cancellable? = null
   private var disconnectTimeout: Cancellable? = null
@@ -75,7 +98,7 @@ class PeripheralSession(
     when (state) {
       SessionState.READY -> completion(null)
 
-      SessionState.CONNECTING, SessionState.CONNECTED -> connectWaiters += completion
+      SessionState.CONNECTING, SessionState.CONNECTED, SessionState.DISCOVERING -> connectWaiters += completion
 
       SessionState.DISCONNECTING -> disconnectWaiters += { connect(spec, completion) }
 
@@ -83,6 +106,7 @@ class PeripheralSession(
         connectWaiters += completion
         attempts = 0
         autoConnect = spec.autoConnect
+        autoDiscover = spec.autoDiscover
         setState(SessionState.CONNECTING, null)
         spec.timeoutMs?.let { timeoutMs ->
           connectTimeout = executor.executeDelayed(timeoutMs) {
@@ -107,7 +131,7 @@ class PeripheralSession(
 
       SessionState.DISCONNECTING -> disconnectWaiters += completion
 
-      SessionState.CONNECTING, SessionState.CONNECTED -> {
+      SessionState.CONNECTING, SessionState.CONNECTED, SessionState.DISCOVERING -> {
         disconnectWaiters += completion
         failConnect(
           error = null,
@@ -127,6 +151,37 @@ class PeripheralSession(
         }
       }
     }
+  }
+
+  /**
+   * Discovers services through the queue (plan §4.9). Android always discovers the whole database,
+   * so [filter] narrows the result, not the work. The cache keeps everything found.
+   */
+  fun discover(filter: List<UUID>?, timeoutMs: Long?, completion: (Result<List<GattServiceInfo>>) -> Unit) {
+    if (state != SessionState.READY && state != SessionState.DISCOVERING) {
+      completion(Result.failure(CoreError(CoreError.Code.DISCONNECTED, "Not connected to $address")))
+      return
+    }
+    queue.enqueue(
+      GattOperation.Kind.DISCOVER_SERVICES,
+      timeoutMs = timeoutMs ?: DISCOVERY_TIMEOUT_MS,
+      start = {
+        if (gatt?.discoverServices() != true) {
+          val error = CoreError(CoreError.Code.GATT_ERROR, "Android refused to start service discovery")
+          queue.complete(GattResult.Failure(error)) { it.kind == GattOperation.Kind.DISCOVER_SERVICES }
+        }
+      },
+      completion = { result ->
+        when (result) {
+          is GattResult.Failure -> completion(Result.failure(result.error))
+
+          is GattResult.Success -> {
+            services = gatt?.services().orEmpty()
+            completion(Result.success(services.filter { filter == null || it.uuid in filter }))
+          }
+        }
+      },
+    )
   }
 
   /** The adapter went away (off, or the module is destroyed): drop everything with [error]. */
@@ -155,6 +210,14 @@ class PeripheralSession(
         onLinkState(status, newState)
       }
     }
+
+    override fun onServicesDiscovered(status: Int) {
+      if (attemptGeneration == generation) {
+        val result = AndroidErrorMapping.operationError(status, "Service discovery")?.let(GattResult::Failure)
+          ?: GattResult.Success()
+        queue.complete(result) { it.kind == GattOperation.Kind.DISCOVER_SERVICES }
+      }
+    }
   }
 
   private fun onLinkState(status: Int, newState: Int) {
@@ -167,7 +230,13 @@ class PeripheralSession(
         onConnectFailed(status)
       }
 
-      SessionState.CONNECTED, SessionState.READY -> if (down) {
+      // The link dropped during post-connect setup: the connect failed.
+      SessionState.CONNECTED, SessionState.DISCOVERING -> if (down) {
+        closeGatt(disconnectFirst = false)
+        finishDisconnected(AndroidErrorMapping.connectionError(status, wasConnected = false))
+      }
+
+      SessionState.READY -> if (down) {
         closeGatt(disconnectFirst = false)
         finishDisconnected(AndroidErrorMapping.connectionError(status, wasConnected = true))
       }
@@ -181,11 +250,25 @@ class PeripheralSession(
     }
   }
 
+  /** The connect timeout keeps running through setup: connect() covers it all (plan §4.8). */
   private fun onLinkUp() {
+    setState(SessionState.CONNECTED, null)
+    // P1-09 adds the MTU request here.
+    if (!autoDiscover) {
+      becomeReady()
+      return
+    }
+    setState(SessionState.DISCOVERING, null)
+    discover(filter = null, timeoutMs = null) { result ->
+      if (state == SessionState.DISCOVERING) {
+        result.fold(onSuccess = { becomeReady() }, onFailure = { failConnect(it as CoreError) })
+      }
+    }
+  }
+
+  private fun becomeReady() {
     connectTimeout?.cancel()
     connectTimeout = null
-    setState(SessionState.CONNECTED, null)
-    // P1-06 adds discovery (autoDiscover) and P1-09 the MTU request here, before READY.
     setState(SessionState.READY, null)
     // The state listener has seen `connected` before connect() resolves (plan §4.8).
     val waiters = connectWaiters.toList()
@@ -236,8 +319,11 @@ class PeripheralSession(
     retry = null
     disconnectTimeout?.cancel()
     disconnectTimeout = null
-    queue.failAll(CoreError(CoreError.Code.DISCONNECTED, "Disconnected from $address"))
+    // Handles and the database can differ on the next connection.
+    services = emptyList()
+    // The state changes first, so callbacks of the operations failed below see the final state.
     setState(SessionState.DISCONNECTED, error)
+    queue.failAll(CoreError(CoreError.Code.DISCONNECTED, "Disconnected from $address"))
     val connects = connectWaiters.toList()
     connectWaiters.clear()
     connects.forEach { it(connectError) }
@@ -261,5 +347,8 @@ class PeripheralSession(
     const val MAX_CONNECT_ATTEMPTS = 3
     const val RETRY_BASE_DELAY_MS = 250L
     const val DISCONNECT_TIMEOUT_MS = 5_000L
+
+    /** Discovery is one queued operation, and slower than the 10 s default (plan §4.9). */
+    const val DISCOVERY_TIMEOUT_MS = 30_000L
   }
 }

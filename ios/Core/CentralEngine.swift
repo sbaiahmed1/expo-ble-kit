@@ -40,6 +40,8 @@ final class CentralEngine: CentralManagingDelegate {
   private var pendingConnects: [(id: UUID, run: (Result<CentralManaging, CoreError>) -> Void)] = []
   /// JS connection states by peripheral id, for synchronous reads. Guarded by `stateLock`.
   private var connectionStates: [String: String] = [:]
+  /// Discovery caches by peripheral id, for synchronous reads. Guarded by `stateLock`.
+  private var discoveredServices: [String: [DiscoveredService]] = [:]
   private(set) var central: CentralManaging?
   private var pendingPermissionRequests: [PermissionsCompletion] = []
 
@@ -108,7 +110,7 @@ final class CentralEngine: CentralManagingDelegate {
   }
 
   /// The manager, created if needed, when the app is authorized. Never shows the prompt.
-  private func authorizedCentral() throws -> CentralManaging {
+  func authorizedCentral() throws -> CentralManaging {
     switch environment.authorization() {
     case .allowedAlways:
       break
@@ -193,7 +195,7 @@ final class CentralEngine: CentralManagingDelegate {
   }
 
   /// Creating a manager without the usage description crashes the app (plan §4.3).
-  private func missingDeclaration() -> CoreError? {
+  func missingDeclaration() -> CoreError? {
     if let value = environment.infoDictionary()?[Self.usageDescriptionKey] as? String, !value.isEmpty {
       return nil
     }
@@ -208,40 +210,6 @@ final class CentralEngine: CentralManagingDelegate {
   /// Before the manager exists, the authorization is all that can be read without the prompt.
   static func stateWithoutCentral(_ authorization: CBManagerAuthorization) -> BleState {
     authorization == .denied || authorization == .restricted ? .unauthorized : .unknown
-  }
-}
-
-// MARK: - Scanning (P1-04)
-
-extension CentralEngine {
-  /// Starts a scan session (plan §5.3). Throws when scanning can't start: a missing declaration, no
-  /// authorization, or Bluetooth that is off. Never shows the permission prompt. While the manager
-  /// still reports `unknown`, the session waits for the first real state.
-  func startScan(_ sessionId: Int, spec: ScanSpec) throws {
-    if let error = missingDeclaration() {
-      throw error
-    }
-    if scanController.activeSessionIds.contains(sessionId) {
-      throw CoreError(.invalidArgument, "Scan session \(sessionId) is already running")
-    }
-    let central = try authorizedCentral()
-    if let error = Self.adapterError(central.state) {
-      throw error
-    }
-    scanController.start(sessionId, spec: spec)
-  }
-
-  func stopScan(_ sessionId: Int) {
-    scanController.stop(sessionId)
-  }
-
-  func central(
-    _ central: CentralManaging,
-    didDiscover peripheral: PeripheralLike,
-    advertisementData: [String: Any],
-    rssi: Int
-  ) {
-    scanController.deliver(peripheral, advertisementData: advertisementData, rssi: rssi)
   }
 }
 
@@ -282,6 +250,28 @@ extension CentralEngine {
       pendingConnects.append((identifier, run))
     } else {
       run(.success(central))
+    }
+  }
+
+  /// The discovery cache of `peripheralId` as JS `Service[]`. Safe from any thread.
+  func services(_ peripheralId: String) -> [[String: Any]] {
+    stateLock.lock()
+    defer { stateLock.unlock() }
+    return (discoveredServices[peripheralId.uppercased()] ?? []).map(\.dictionary)
+  }
+
+  /// Discovers `filter` (all when nil) on a ready connection; DISCONNECTED otherwise.
+  func discover(
+    _ peripheralId: String,
+    filter: [String]?,
+    timeout: TimeInterval?,
+    completion: @escaping (Result<[[String: Any]], CoreError>) -> Void
+  ) {
+    guard let identifier = UUID(uuidString: peripheralId), let session = sessions[identifier] else {
+      return completion(.failure(CoreError(.disconnected, "Not connected to \(peripheralId)")))
+    }
+    session.discover(filter, timeout: timeout) { result in
+      completion(result.map { $0.map(\.dictionary) })
     }
   }
 
@@ -334,6 +324,14 @@ extension CentralEngine {
     let session = PeripheralSession(peripheral: peripheral, central: central, scheduler: scheduler)
     session.onStateChange = { [weak self] state, error in
       self?.publishConnectionState(identifier.uuidString, state, error)
+    }
+    session.onServicesChange = { [weak self] services in
+      guard let self else {
+        return
+      }
+      stateLock.lock()
+      discoveredServices[identifier.uuidString] = services
+      stateLock.unlock()
     }
     sessions[identifier] = session
     session.connect(spec, completion: completion)

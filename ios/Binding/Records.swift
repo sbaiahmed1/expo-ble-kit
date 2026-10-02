@@ -40,13 +40,18 @@ struct IosConnectOptionsRecord: Record {
 /// JS `ConnectOptions` (plan §5.4) after the TS layer applied defaults: `timeoutMs` nil means none.
 struct ConnectOptionsRecord: Record {
   @Field var timeoutMs: Double?
+  @Field var autoDiscover: Bool = true
   @Field var ios: IosConnectOptionsRecord = IosConnectOptionsRecord()
 
   func spec() throws -> ConnectSpec {
     if let timeoutMs, !(timeoutMs > 0) {
       throw CoreError(.invalidArgument, "Invalid connect option timeoutMs: \(timeoutMs)")
     }
-    return ConnectSpec(timeout: timeoutMs.map { $0 / 1000 }, notifyOnDisconnection: ios.notifyOnDisconnection)
+    return ConnectSpec(
+      timeout: timeoutMs.map { $0 / 1000 },
+      notifyOnDisconnection: ios.notifyOnDisconnection,
+      autoDiscover: autoDiscover
+    )
   }
 }
 

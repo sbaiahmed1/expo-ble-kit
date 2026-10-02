@@ -6,11 +6,16 @@ describe('toNativeConnectOptions', () => {
   it('applies the default timeout and keeps an explicit null', () => {
     expect(toNativeConnectOptions()).toEqual({
       timeoutMs: DEFAULT_CONNECT_TIMEOUT_MS,
+      autoDiscover: true,
       android: {},
       ios: { notifyOnDisconnection: false },
     });
     expect(toNativeConnectOptions({ timeoutMs: null }).timeoutMs).toBeNull();
     expect(toNativeConnectOptions({ timeoutMs: 2500 }).timeoutMs).toBe(2500);
+  });
+
+  it('keeps autoDiscover false', () => {
+    expect(toNativeConnectOptions({ autoDiscover: false }).autoDiscover).toBe(false);
   });
 
   it('passes the platform options', () => {
@@ -28,6 +33,7 @@ describe('toNativeConnectOptions', () => {
     ['timeoutMs NaN', { timeoutMs: NaN }],
     ['timeoutMs string', { timeoutMs: '100' }],
     ['android.autoConnect', { android: { autoConnect: 'yes' } }],
+    ['autoDiscover', { autoDiscover: 'no' }],
     ['ios.notifyOnDisconnection', { ios: { notifyOnDisconnection: 1 } }],
   ])('rejects %s', (_, options) => {
     let error: unknown;

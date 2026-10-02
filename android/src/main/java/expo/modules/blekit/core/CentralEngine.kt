@@ -1,5 +1,6 @@
 package expo.modules.blekit.core
 
+import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
 
 /** What the engine reads about the app's permissions. Real implementation: [AndroidPermissionSystem]. */
@@ -141,6 +142,25 @@ class CentralEngine(
       }
     }
     session.connect(spec, completion)
+  }
+
+  /** The discovery cache of [peripheralId] as JS `Service[]`. Safe to read from any thread. */
+  fun services(peripheralId: String): List<Map<String, Any?>> =
+    normalizeAddress(peripheralId)?.let { sessions[it]?.services }.orEmpty().map { it.toJs() }
+
+  /** Discovers [filter] (all when null) on a ready connection; DISCONNECTED otherwise. */
+  fun discover(
+    peripheralId: String,
+    filter: List<UUID>?,
+    timeoutMs: Long?,
+    completion: (Result<List<Map<String, Any?>>>) -> Unit,
+  ) {
+    val session = normalizeAddress(peripheralId)?.let { sessions[it] }
+    if (session == null) {
+      completion(Result.failure(CoreError(CoreError.Code.DISCONNECTED, "Not connected to $peripheralId")))
+      return
+    }
+    session.discover(filter, timeoutMs) { result -> completion(result.map { found -> found.map { it.toJs() } }) }
   }
 
   fun disconnect(peripheralId: String, completion: () -> Unit) {

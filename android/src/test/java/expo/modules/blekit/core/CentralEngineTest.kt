@@ -130,7 +130,7 @@ class CentralEngineTest {
     adapter.scanner.emit(scanRecord(scanned.address, device = scanned))
 
     var result: CoreError? = CoreError(CoreError.Code.INTERNAL, "pending")
-    engine.connect("c0:ff:ee:00:00:01", ConnectSpec(15_000)) { result = it }
+    engine.connect("c0:ff:ee:00:00:01", ConnectSpec(15_000, autoDiscover = false)) { result = it }
     assertEquals("the scanned handle, not getRemoteDevice", 1, scanned.clients.size)
     assertTrue(adapter.devices.isEmpty())
     scanned.clients[0].callback.onConnectionStateChange(GATT_SUCCESS, ConnectionStates.CONNECTED)
