@@ -2,6 +2,7 @@ included:
   - ios
 excluded:
   - ios/build
+  - ios/.build
 line_length:
   warning: 120
   error: 160

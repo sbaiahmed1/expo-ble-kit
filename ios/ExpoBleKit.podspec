@@ -25,6 +25,6 @@ Pod::Spec.new do |s|
   }
 
   s.source_files = "**/*.{h,m,mm,swift,hpp,cpp}"
-  # Native unit tests are run separately (§4.2) and never ship in the pod.
-  s.exclude_files = "Tests/**/*"
+  # Core unit tests run through the Swift package in Package.swift (§4.2) and never ship in the pod.
+  s.exclude_files = ["Tests/**/*", "Package.swift", ".build/**/*"]
 end

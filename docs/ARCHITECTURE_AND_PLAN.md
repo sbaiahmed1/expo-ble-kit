@@ -1,6 +1,6 @@
 # Expo BLE (`expo-ble-kit`) — Architecture & Implementation Plan
 
-> **Status:** Draft v0.12 · **Date:** 2026-10-02 · **Scope:** proposition #3, an Expo-first Bluetooth Low Energy module · **Changes:** Appendix D
+> **Status:** Draft v0.13 · **Date:** 2026-10-02 · **Scope:** proposition #3, an Expo-first Bluetooth Low Energy module · **Changes:** Appendix D
 >
 > **Package name:** `expo-ble-kit` (D0a, decided 2026-10-02) · native module `ExpoBleKit` · Android package `expo.modules.blekit`.
 >
@@ -975,9 +975,15 @@ Parallelism: P0-06/P0-07 can run alongside P0-03/P0-04. With two people, P4 can 
 
 ### 7.3 P1 — Central-role MVP
 
-- [ ] **P1-01 Core abstractions and fakes** — deps: P0-04.
+- [x] **P1-01 Core abstractions and fakes** — deps: P0-04.
   CoreBluetooth / Android Bluetooth interfaces (§4.3, §4.4) plus fake implementations. Set up the native unit-test harnesses: iOS core tests outside the pod's sources (podspec `test_spec` or a SwiftPM package over `ios/Core`, pick one), and JVM tests under `android/src/test`. Both run in CI.
   **Accept:** at least one unit test per platform runs against the fakes, in CI.
+  **Done 2026-10-02:**
+  - iOS: `ios/Core/CBAbstractions.swift` (`CentralManaging`, `PeripheralLike`, `ServiceLike`, `CharacteristicLike`, `DescriptorLike`), real adapters in `CBAdapters.swift`, `Scheduling` (+ `QueueScheduler`). Fakes and a virtual-time `TestScheduler` in `ios/Tests/Fakes`. Harness: the SwiftPM package `ios/Package.swift`, run with `swift test --package-path ios` (macOS host, no simulator); it also enforces the no-Expo rule at compile time.
+  - Android: `core/BtAbstractions.kt` (`BluetoothAdapterPort`, `LeScannerPort`, `RemoteDevicePort`, `GattClientPort` with plain data types, since `android.bluetooth` classes can't be created in JVM tests), real adapters in `AndroidBtAdapters.kt`, `SerialExecutor` (+ `HandlerExecutor`). Fakes and a virtual-time `ManualExecutor` in `android/src/test`. JVM tests check the mirrored constants against android.jar and fail on Expo or React imports in `core/`.
+  - The template module moved to `ios/Binding` and `android/.../binding` (§4.2).
+  - Scope note: the peripheral-role abstractions (`PeripheralManaging`, GATT server, advertiser) are added with P4-01, which first needs them.
+  - 7 iOS and 8 Android tests pass locally; both example apps still build. CI jobs added (`ios-core-tests`, Android unit tests in `example-android`); not run yet.
 - [ ] **P1-02 GattQueue (iOS + Android)** — deps: P1-01.
   **Accept:** unit tests for ordering, per-op timeout, `AbortSignal` cancellation, reject-all on disconnect, and a randomized test proving no op starts while another is in flight.
 - [ ] **P1-03 Adapter state and permissions** — deps: P1-01, P1-14 (the example needs the Info.plist key and manifest permissions before any manager can be created).
@@ -1354,3 +1360,4 @@ Connection state changes (`onConnectionStateChange` status, HCI disconnect reaso
 | v0.10 | 2026-10-02 | P0-04 report (`docs/spikes/P0-04-binding.md`) with Galaxy A52 measurements; recommends the 1.0 DSL on SDK 57+. iOS device run and D1 pending |
 | v0.11 | 2026-10-02 | D1 decided: Expo Modules 1.0 DSL with Expo SDK 57 as the minimum (ADR-002); P0-04 done. `expo` peer dependency set to `>=57.0.0` |
 | v0.12 | 2026-10-02 | D0b decided: build (ADR-012); P0-02 closed. P1 starts |
+| v0.13 | 2026-10-02 | P1-01 done: core abstractions, real adapters, fakes, virtual-time schedulers and L2 harnesses on both platforms; template module moved into the binding folders |

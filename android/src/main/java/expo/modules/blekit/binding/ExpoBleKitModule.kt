@@ -1,4 +1,4 @@
-package expo.modules.blekit
+package expo.modules.blekit.binding
 
 import expo.modules.kotlin.modules.Module
 import expo.modules.kotlin.modules.ModuleDefinition

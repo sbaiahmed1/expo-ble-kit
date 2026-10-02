@@ -1,4 +1,4 @@
-package expo.modules.blekit
+package expo.modules.blekit.binding
 
 import expo.modules.kotlin.AppContext
 import expo.modules.kotlin.sharedobjects.SharedObject

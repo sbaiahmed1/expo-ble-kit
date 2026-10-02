@@ -76,3 +76,7 @@ example/.yarn/
 __pycache__/
 .pytest_cache/
 e2e/android-netsim/artifacts/
+
+# SwiftPM build output (ios/Package.swift)
+ios/.build/
+.swiftpm/

@@ -41,3 +41,5 @@ __tests__
 /eslint.config.cjs
 /CONTRIBUTING.md
 /SECURITY.md
+/ios/Package.swift
+/ios/Tests/

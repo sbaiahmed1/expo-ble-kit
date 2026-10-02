@@ -38,6 +38,13 @@ jobs:
       - run: uv sync --locked
       - run: uv run pytest
 
+  ios-core-tests:
+    name: iOS core unit tests (L2)
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v7
+      - run: swift test --package-path ios
+
   native-lint:
     name: SwiftLint and ktlint
     runs-on: macos-latest
@@ -53,7 +60,7 @@ jobs:
           ./ktlint "android/src/**/*.kt"
 
   example-android:
-    name: Example app (Android)
+    name: Example app (Android) and Android core unit tests
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -73,6 +80,9 @@ jobs:
         working-directory: example
       - run: npx expo prebuild --platform android --clean
         working-directory: example
+      - name: Android core unit tests (L2)
+        run: ./gradlew :expo-ble-kit:testDebugUnitTest
+        working-directory: example/android
       - run: ./gradlew :app:assembleDebug -PreactNativeArchitectures=x86_64
         working-directory: example/android
 

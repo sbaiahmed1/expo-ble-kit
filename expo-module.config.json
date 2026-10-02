@@ -4,6 +4,6 @@
     "modules": ["ExpoBleKitModule"]
   },
   "android": {
-    "modules": ["expo.modules.blekit.ExpoBleKitModule"]
+    "modules": ["expo.modules.blekit.binding.ExpoBleKitModule"]
   }
 }
