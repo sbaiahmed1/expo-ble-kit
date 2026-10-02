@@ -940,6 +940,7 @@ Parallelism: P0-06/P0-07 can run alongside P0-03/P0-04. With two people, P4 can 
   Scaffold on the latest stable SDK, 57 today (ADR-011): iOS + Android, no native view, example app, strict TypeScript, ESLint/Prettier, SwiftLint, ktlint, changesets, CI skeleton (lint, typecheck, unit tests, example builds on both platforms).
   - Findings from 2026-10-02: the module template pins stale root devDependencies (RN 0.82.1, `jest-expo` / `babel-preset-expo` 55.x) even in its SDK 58 version; only `expo` moves. The module sources are identical in the SDK 57 and 58 templates, so a later SDK bump only changes dependency versions. jest-expo 57+ also needs `@react-native/jest-preset` as a peer.
   - Yarn 4 is pinned in the repo (`.yarnrc.yml` + `.yarn/releases`, `nodeLinker: node-modules`). Its default one-day age gate rejects packages published less than 24 hours ago; use version ranges rather than disabling the gate.
+  - **iOS 27:** the SDK 57 example built with Xcode 27 crashes at launch on iOS 27 (`_UIApplicationEvaluateRuntimeIssueForNoSceneLifecycleAdoption`: apps linked against the iOS 27 SDK must adopt the UIScene life cycle; the SDK 58 template adds a `SceneDelegate`). The same build runs on iOS 26.5. Until `main` moves to SDK 58, run the example on iOS ≤ 26 simulators or devices. See the §10 risk.
   - Run `git init`. Move this file to `docs/`, add the root `AGENTS.md` from §0, and replace the template `example/AGENTS.md` (it prescribes Expo Router, which the example doesn't use).
   - Align the root devDependencies with the example's SDK: `expo`, `react-native`, `react`, `@types/react`, `jest-expo`, `babel-preset-expo`, `typescript`.
   - Set the package version to `0.0.0`. The podspec reads version, summary, author and homepage from `package.json`, declares iOS only (§1.3) and excludes `Tests/` (§4.2).
@@ -1207,6 +1208,7 @@ The standard Heart Rate service (`0x180D` / `0x2A37`) is also exposed for demos.
 | Risk | Impact | Likelihood | Mitigation |
 |---|---|---|---|
 | Expo Modules 2.0 beta changes during SDK 58/59 | Binding rework | Medium | Thin binding (ADR-005), gate D1, 1.0/2.0 coexistence |
+| SDK 57 example can't run on iOS 27 when built with Xcode 27 (no UIScene life cycle; confirmed 2026-10-02) | iOS device testing (P0-05, L4) blocked on iOS 27 hardware while `main` is on SDK 57 | High until SDK 58 ships | Test on iOS ≤ 26 devices/simulators; do iOS 27 work on SDK 58 spike branches (ADR-011); move `main` to SDK 58 when stable |
 | iOS background relaunch behaves differently under the scene life cycle | Background features fail on iOS | Medium | Spike P0-05 first; native-first buffering; TaskManager delivery |
 | Android OEM quirks (status 133, scan throttling, battery killers) | Flaky connections, bad reviews for users' apps | High | Bounded retries, throttle guard, OEM matrix, troubleshooting docs |
 | Emulator + Bumble flaky on hosted CI | False alarms | Medium–High | L3 allowed to fail; L4 is the source of truth |
