@@ -40,13 +40,27 @@ struct CoreError: Error, Equatable {
 
   let code: Code
   let message: String
+  /// Whether retrying the same call can succeed without user action (plan §4.11).
+  let retryable: Bool
   var nativeDomain: String?
   var nativeCode: Int?
 
-  init(_ code: Code, _ message: String, nativeDomain: String? = nil, nativeCode: Int? = nil) {
+  init(_ code: Code, _ message: String, retryable: Bool? = nil, nativeDomain: String? = nil, nativeCode: Int? = nil) {
     self.code = code
     self.message = message
+    self.retryable = retryable ?? Self.defaultRetryable(code)
     self.nativeDomain = nativeDomain
     self.nativeCode = nativeCode
+  }
+
+  /// Retryability by code (plan §4.11). Codes marked "depends" there default to false; the
+  /// mappings in ErrorMapping.swift set them per error.
+  static func defaultRetryable(_ code: Code) -> Bool {
+    switch code {
+    case .bluetoothResetting, .scanThrottled, .connectionFailed, .connectionTimeout, .operationTimeout, .congested:
+      return true
+    default:
+      return false
+    }
   }
 }

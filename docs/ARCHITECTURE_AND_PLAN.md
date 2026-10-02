@@ -1,6 +1,6 @@
 # Expo BLE (`expo-ble-kit`) — Architecture & Implementation Plan
 
-> **Status:** Draft v0.14 · **Date:** 2026-10-02 · **Scope:** proposition #3, an Expo-first Bluetooth Low Energy module · **Changes:** Appendix D
+> **Status:** Draft v0.15 · **Date:** 2026-10-02 · **Scope:** proposition #3, an Expo-first Bluetooth Low Energy module · **Changes:** Appendix D
 >
 > **Package name:** `expo-ble-kit` (D0a, decided 2026-10-02) · native module `ExpoBleKit` · Android package `expo.modules.blekit`.
 >
@@ -372,7 +372,7 @@ export class BleError extends Error {
 | `L2CAP_FAILED` | Channel open or I/O error | Maybe |
 | `INTERNAL` | A bug. Include `getDiagnostics()` output in reports | No |
 
-Mapping: Android statuses in Appendix A. iOS maps `CBError` / `CBATTError` codes to the closest code ⚠️ VERIFY the full list.
+Mapping: Appendix A, implemented in `ErrorMapping.swift` / `ErrorMapping.kt` and verified against the iOS 27 SDK headers and android.jar (API 36) in P1-10. Native rejections carry the code, and extra fields as a `[blekit]{json}` marker in the message that `BleError.fromNative` strips.
 
 ### 4.12 Identifiers and UUIDs
 
@@ -1024,9 +1024,10 @@ Parallelism: P0-06/P0-07 can run alongside P0-03/P0-04. With two people, P4 can 
 - [ ] **P1-09 MTU and RSSI** — deps: P1-06.
   Android `requestMtu` after discovery (default per Q3; note the Android 14+ behavior in Q3), iOS-derived MTU, `readRssi`.
   **Accept:** `mtu` reflects the negotiated value; `mtuChange` fires on Android; the value requested vs. negotiated is recorded on API 33 and API 34+ devices for Q3.
-- [ ] **P1-10 Error model** — deps: P1-02.
+- [x] **P1-10 Error model** — deps: P1-02.
   `BleError`, codes, iOS and Android mapping tables (Appendix A).
   **Accept:** every native failure path maps to a code; unit tests cover the mapping tables.
+  **Done 2026-10-02:** `src/errors.ts` (`BleError`, `BleErrorCode`, `BleError.fromNative`), `ErrorMapping.swift` / `ErrorMapping.kt`, and per-error `retryable` on `CoreError`. Tests walk every CBError, CBATTError and Android status (5 iOS, 6 Android, 6 Jest), and a Jest test fails if the TypeScript, Swift and Kotlin code lists drift apart. Found while verifying: Android's `GATT_CONNECTION_TIMEOUT` (147) and iOS 27's channel-sounding errors (19, 20), now in Appendix A.
 - [ ] **P1-11 UUID utilities and constants** — deps: none.
   **Accept:** normalization tests for 16/32/128-bit inputs, numbers and mixed casing.
 - [ ] **P1-13 Port and fake adapter** — deps: P1-10, P1-11.
@@ -1283,33 +1284,78 @@ The standard Heart Rate service (`0x180D` / `0x2A37`) is also exposed for demos.
 
 ---
 
-## Appendix A — Android status mapping (subset) ⚠️ VERIFY against AOSP / Android docs
+## Appendix A — Native error mapping
 
-Operation callbacks (`onCharacteristicRead`, `onCharacteristicWrite`, `onDescriptorWrite`, …):
+Verified in P1-10: Android values against `android.jar` (API 36), iOS values against `CBError.h` in the iOS 27 SDK. The tables are implemented in `android/.../core/ErrorMapping.kt` and `ios/Core/ErrorMapping.swift` and covered by unit tests that walk every value.
+
+### A.0 ATT error codes (shared)
+
+Android GATT operation statuses 0x01–0x11 and iOS `CBATTError` raw values are the same ATT codes (Bluetooth Core Vol 3, Part F, 3.4.1.1), so both platforms use one table.
+
+| ATT code | Meaning | `BleErrorCode` | Retryable |
+|---|---|---|---|
+| 0x02 | Read not permitted | `READ_NOT_PERMITTED` | No |
+| 0x03 | Write not permitted | `WRITE_NOT_PERMITTED` | No |
+| 0x05 | Insufficient authentication | `INSUFFICIENT_AUTHENTICATION` | After bonding |
+| 0x06 | Request not supported | `NOT_SUPPORTED` | No |
+| 0x07 | Invalid offset | `INVALID_OFFSET` | No |
+| 0x08 | Insufficient authorization | `INSUFFICIENT_AUTHORIZATION` | After bonding |
+| 0x0C, 0x0F | Insufficient encryption key size, insufficient encryption | `INSUFFICIENT_ENCRYPTION` | After bonding |
+| 0x0D | Invalid attribute value length | `INVALID_ATTRIBUTE_LENGTH` | No |
+| 0x10 | Unsupported group type | `NOT_SUPPORTED` | No |
+| 0x11 | Insufficient resources | `GATT_ERROR` | Yes |
+| 0x01, 0x04, 0x09–0x0B, 0x0E, others | Invalid handle/PDU, prepare queue full, not found, not long, unlikely | `GATT_ERROR` | No |
+
+### A.1 Android
+
+Operation callbacks (`onCharacteristicRead`, `onCharacteristicWrite`, `onDescriptorWrite`, …): 0 is success, ATT codes use A.0, and:
 
 | Status | Meaning | `BleErrorCode` | Retry |
 |---|---|---|---|
-| 0 | Success | — | — |
-| 2 (0x02) | Read not permitted | `READ_NOT_PERMITTED` | No |
-| 3 (0x03) | Write not permitted | `WRITE_NOT_PERMITTED` | No |
-| 5 (0x05) | Insufficient authentication | `INSUFFICIENT_AUTHENTICATION` | After bonding |
-| 6 (0x06) | Request not supported | `NOT_SUPPORTED` | No |
-| 7 (0x07) | Invalid offset | `INVALID_OFFSET` | No |
-| 8 (0x08) | Insufficient authorization | `INSUFFICIENT_AUTHORIZATION` | After bonding |
-| 13 (0x0D) | Invalid attribute length | `INVALID_ATTRIBUTE_LENGTH` | No |
-| 15 (0x0F) | Insufficient encryption | `INSUFFICIENT_ENCRYPTION` | After bonding |
-| 143 (0x8F) | Connection congested | `CONGESTED` | Yes, with backoff |
-| 257 (0x101) | Generic failure | `GATT_ERROR` | Maybe |
+| 143 (0x8F) | `GATT_CONNECTION_CONGESTED` | `CONGESTED` | Yes, with backoff |
+| 147 (0x93) | `GATT_CONNECTION_TIMEOUT` (API 35) | `DISCONNECTED` | Yes |
+| 257 (0x101) | `GATT_FAILURE` | `GATT_ERROR` | Maybe |
 
-Connection state changes (`onConnectionStateChange` status, HCI disconnect reasons):
+Connection state changes (`onConnectionStateChange` to disconnected): before the link was up → `CONNECTION_FAILED`; after → `DISCONNECTED`. `gattStatus` keeps the raw value.
 
-| Status | Meaning | `BleErrorCode` | Retry |
+| Status | Meaning | Retry |
+|---|---|---|
+| 8 (0x08) | Supervision timeout (link loss) | Per reconnect policy |
+| 19 (0x13) | Remote device terminated | Per reconnect policy |
+| 22 (0x16) | Local host terminated | No (we asked for it) |
+| 62 (0x3E) | Failed to establish | Yes |
+| 133 (0x85) | Generic `GATT_ERROR` | Yes: `close()`, delay, new `connectGatt`, max 3 |
+| 147 (0x93) | `GATT_CONNECTION_TIMEOUT` | Yes |
+
+Scan failures (`ScanCallback.SCAN_FAILED_*`): 6 too frequently → `SCAN_THROTTLED` (retry later); 4 feature unsupported → `NOT_SUPPORTED`; 1 already started → `SCAN_FAILED` (no retry); 2, 3, 5 → `SCAN_FAILED` (retryable).
+
+Submit results (`BluetoothStatusCodes`, API 33+): 1 not enabled → `BLUETOOTH_POWERED_OFF`; 6 missing BLUETOOTH_CONNECT → `PERMISSION_DENIED`; 200 write not allowed → `WRITE_NOT_PERMITTED`; 201 request busy → `GATT_ERROR` (retryable; flow control retries it, P2-02); 9 profile service not bound → `BLUETOOTH_RESETTING`; others → `GATT_ERROR`.
+
+### A.2 iOS
+
+`CBATTErrorDomain` uses A.0. `CBErrorDomain` (all values in the iOS 27 SDK); errors from other domains map to `INTERNAL`.
+
+| `CBError` | Value | `BleErrorCode` | Retryable |
 |---|---|---|---|
-| 8 (0x08) | Supervision timeout (link loss) | `DISCONNECTED` | Per reconnect policy |
-| 19 (0x13) | Remote device terminated | `DISCONNECTED` | Per reconnect policy |
-| 22 (0x16) | Local host terminated | `DISCONNECTED` | No (we asked for it) |
-| 62 (0x3E) | Failed to establish | `CONNECTION_FAILED` | Yes |
-| 133 (0x85) | Generic `GATT_ERROR` | `CONNECTION_FAILED` | Yes: `close()`, delay, new `connectGatt`, max 3 |
+| unknown | 0 | `GATT_ERROR` | No |
+| invalidParameters | 1 | `INVALID_ARGUMENT` | No |
+| invalidHandle | 2 | `GATT_ERROR` | No |
+| notConnected | 3 | `DISCONNECTED` | No |
+| outOfSpace | 4 | `GATT_ERROR` | Yes |
+| operationCancelled | 5 | `OPERATION_CANCELLED` | No |
+| connectionTimeout (link supervision) | 6 | `DISCONNECTED` | Yes |
+| peripheralDisconnected | 7 | `DISCONNECTED` | Yes |
+| uuidNotAllowed | 8 | `NOT_SUPPORTED` | No |
+| alreadyAdvertising | 9 | `ADVERTISING_FAILED` | No |
+| connectionFailed | 10 | `CONNECTION_FAILED` | Yes |
+| connectionLimitReached | 11 | `CONNECTION_FAILED` | No (free a connection first) |
+| unknownDevice | 12 | `PERIPHERAL_NOT_FOUND` | No |
+| operationNotSupported | 13 | `NOT_SUPPORTED` | No |
+| peerRemovedPairingInformation | 14 | `BOND_FAILED` | No (user must forget the device) |
+| encryptionTimedOut | 15 | `BOND_FAILED` | Yes |
+| tooManyLEPairedDevices | 16 | `BOND_FAILED` | No |
+| leGatt…BackgroundNotificationLimit (watchOS only) | 17, 18 | `GATT_ERROR` | No |
+| channelSounding… (iOS 27, unused) | 19, 20 | `NOT_SUPPORTED` | No |
 
 ---
 
@@ -1369,3 +1415,4 @@ Connection state changes (`onConnectionStateChange` status, HCI disconnect reaso
 | v0.12 | 2026-10-02 | D0b decided: build (ADR-012); P0-02 closed. P1 starts |
 | v0.13 | 2026-10-02 | P1-01 done: core abstractions, real adapters, fakes, virtual-time schedulers and L2 harnesses on both platforms; template module moved into the binding folders |
 | v0.14 | 2026-10-02 | P1-02 done: GattQueue on both platforms with ordering, timeout, cancellation, reject-all and randomized tests; CoreError code list added |
+| v0.15 | 2026-10-02 | P1-10 done: error model and native mapping tables. Appendix A rewritten from verified SDK values (shared ATT table, Android, iOS) |
