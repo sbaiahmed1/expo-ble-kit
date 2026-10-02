@@ -1,6 +1,6 @@
 # Expo BLE (`expo-ble-kit`) — Architecture & Implementation Plan
 
-> **Status:** Draft v0.11 · **Date:** 2026-10-02 · **Scope:** proposition #3, an Expo-first Bluetooth Low Energy module · **Changes:** Appendix D
+> **Status:** Draft v0.12 · **Date:** 2026-10-02 · **Scope:** proposition #3, an Expo-first Bluetooth Low Energy module · **Changes:** Appendix D
 >
 > **Package name:** `expo-ble-kit` (D0a, decided 2026-10-02) · native module `ExpoBleKit` · Android package `expo.modules.blekit`.
 >
@@ -83,7 +83,7 @@
 
 **Positioning:** the boring, complete, Expo-native default. Reliability, background support, testability and docs over novelty.
 
-**[GATE D0b] Build vs join:** before P1 starts, contact the maintainers of the two most active Expo-compatible efforts and record the decision in §3.
+**[GATE D0b] Build vs join — decided 2026-10-02: build** (ADR-012). The maintainer chose to build `expo-ble-kit` rather than join an existing effort.
 
 ---
 
@@ -102,6 +102,7 @@
 | ADR-009 | License: MIT, personal ownership (github.com/sbaiahmed1), no CLA | Accepted 2026-10-02 (D2) |
 | ADR-010 | Four-layer test pyramid, including a public fake adapter and a Bumble virtual peripheral | Accepted |
 | ADR-011 | **Stable releases only.** Every branch, spikes included, builds against the latest stable Expo SDK (57 today) and stable packages. No beta, alpha, RC, canary or `next`-tagged versions, and no experimental or undocumented features of a stable SDK, unless the maintainer explicitly asks. The repo moves to SDK 58 when it is stable | Accepted 2026-10-02, tightened the same day |
+| ADR-012 | **Build** `expo-ble-kit` as a new library instead of joining an existing effort (gate D0b) | Accepted 2026-10-02 |
 
 **ADR-001 rationale.** Expo Modules give us everything in one package: app-lifecycle subscribers (needed to create `CBCentralManager` at launch for state restoration), config plugins, SharedObjects with events, and TaskManager interop. Performance is no longer a reason to look elsewhere: on iOS, Expo Modules 2.0 synchronous calls are 2.5–5.6× faster than the 1.0 API, and Expo's Android microbenchmarks show 2.0 faster than a TurboModule in all twelve cases. Nitro was considered and rejected for v1 because we would have to rebuild the lifecycle and plugin integration ourselves. Re-evaluate only if P2 benchmarks show the JS boundary, not the radio, is the bottleneck.
 
@@ -933,9 +934,10 @@ Parallelism: P0-06/P0-07 can run alongside P0-03/P0-04. With two people, P4 can 
 - [ ] **P0-01 Name and npm scope** `[GATE D0a]` — deps: none.
   **Decided 2026-10-02: `expo-ble-kit`** (unscoped; free on npm that day). Remaining: reserve it on npm (needs the owner's npm login).
   **Accept:** name recorded in this file's header ✅; name reserved on npm.
-- [ ] **P0-02 Build vs join** `[GATE D0b]` — deps: none.
+- [x] **P0-02 Build vs join** `[GATE D0b]` — deps: none.
   Contact the maintainers of the two most active Expo-compatible projects (§2). Assess their code against Appendix B.
   **Accept:** decision and rationale recorded in §3.
+  **Decided 2026-10-02: build** (ADR-012). The maintainer decided without the maintainer conversations.
 - [ ] **P0-03 Scaffold** — deps: P0-01.
   Scaffold on the latest stable SDK, 57 today (ADR-011): iOS + Android, no native view, example app, strict TypeScript, ESLint/Prettier, SwiftLint, ktlint, changesets, CI skeleton (lint, typecheck, unit tests, example builds on both platforms).
   - Findings from 2026-10-02: the module template pins stale root devDependencies (RN 0.82.1, `jest-expo` / `babel-preset-expo` 55.x) even in its SDK 58 version; only `expo` moves. The module sources are identical in the SDK 57 and 58 templates, so a later SDK bump only changes dependency versions. jest-expo 57+ also needs `@react-native/jest-preset` as a peer.
@@ -1237,7 +1239,7 @@ The standard Heart Rate service (`0x180D` / `0x2A37`) is also exposed for demos.
 | ID | Question | Decide by |
 |---|---|---|
 | D0a | ~~Package name and npm scope~~ **Decided 2026-10-02: `expo-ble-kit`** (unscoped). Reserving it on npm is still open (P0-01) | Done |
-| D0b | Build a new library or join an existing effort | Before P1 |
+| D0b | ~~Build a new library or join an existing effort~~ **Decided 2026-10-02: build** (ADR-012) | Done |
 | D1 | ~~Binding API: Expo Modules 2.0 with min SDK 58, or 1.0 DSL with SDK 57+~~ **Decided 2026-10-02: 1.0 DSL, minimum SDK 57** (ADR-002) | Done |
 | D2 | ~~License and ownership~~ **Decided 2026-10-02: MIT, personal ownership, no CLA** (ADR-009) | Done |
 | D3 | Web Bluetooth support in 1.0 or later | Before P6 |
@@ -1351,3 +1353,4 @@ Connection state changes (`onConnectionStateChange` status, HCI disconnect reaso
 | v0.9 | 2026-10-02 | ADR-011 tightened: stable releases only on every branch, spikes included. P0-04 rescoped to the stable 1.0 DSL on SDK 57; the D1 options now include waiting for SDK 58 stable to start on 2.0 |
 | v0.10 | 2026-10-02 | P0-04 report (`docs/spikes/P0-04-binding.md`) with Galaxy A52 measurements; recommends the 1.0 DSL on SDK 57+. iOS device run and D1 pending |
 | v0.11 | 2026-10-02 | D1 decided: Expo Modules 1.0 DSL with Expo SDK 57 as the minimum (ADR-002); P0-04 done. `expo` peer dependency set to `>=57.0.0` |
+| v0.12 | 2026-10-02 | D0b decided: build (ADR-012); P0-02 closed. P1 starts |
