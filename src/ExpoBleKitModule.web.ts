@@ -1,11 +1,26 @@
 import { registerWebModule, NativeModule } from 'expo';
 
-import { ExpoBleKitModuleEvents } from './ExpoBleKit.types';
+import type { ExpoBleKitModuleEvents } from './ExpoBleKit.types';
+import { BleError, BleErrorCode } from './errors';
+import type { BlePermissions, BleState } from './types';
 
+// Plan §4.6: until D3 is decided, the web build reports `unsupported` and every call rejects.
 class ExpoBleKitModule extends NativeModule<ExpoBleKitModuleEvents> {
-  async setValueAsync(value: string): Promise<void> {
-    this.emit('onChange', { value });
+  getState(): BleState {
+    return 'unsupported';
   }
+
+  async getPermissionsAsync(): Promise<BlePermissions> {
+    throw notSupported();
+  }
+
+  async requestPermissionsAsync(): Promise<BlePermissions> {
+    throw notSupported();
+  }
+}
+
+function notSupported(): BleError {
+  return new BleError(BleErrorCode.NOT_SUPPORTED, 'Bluetooth LE is not supported on web.');
 }
 
 export default registerWebModule(ExpoBleKitModule, 'ExpoBleKitModule');

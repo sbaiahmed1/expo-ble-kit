@@ -35,7 +35,7 @@ Inside `<manifest>`, which must declare `xmlns:tools="http://schemas.android.com
 ```
 
 - If your app already declares one of these permissions (for example `ACCESS_FINE_LOCATION` for location features), keep your entry and skip this one. In particular, don't add `maxSdkVersion` to a location permission your app needs on Android 12+. In that case also skip the `android.hardware.location` line: your app decides whether location hardware is required.
-- `neverForLocation` tells Android 12+ that your app doesn't derive location from scans. Without it, Android requires location permission for scanning. Drop the flag only if you do derive location from Bluetooth scans; some beacon advertisements are filtered while it is set.
+- `neverForLocation` tells Android 12+ that your app doesn't derive location from scans. Without it, Android requires location permission for scanning. Drop the flag only if you do derive location from Bluetooth scans; some beacon advertisements are filtered while it is set. Without the flag, also remove `android:maxSdkVersion` from `ACCESS_FINE_LOCATION`; `requestPermissionsAsync` then asks for location too.
 - The `android.hardware.bluetooth` line matters: the legacy `BLUETOOTH` permission otherwise makes Google Play treat classic Bluetooth as *required*. Set `android:required="true"` on both features only if the app is useless without Bluetooth LE: Play then hides it from devices without it.
 
 ## Android: minimum SDK 26

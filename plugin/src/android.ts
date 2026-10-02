@@ -20,7 +20,10 @@ export function blePermissions(props: ExpoBleKitPluginProps = {}): PermissionDec
   return [
     { name: 'android.permission.BLUETOOTH', maxSdkVersion: 30 },
     { name: 'android.permission.BLUETOOTH_ADMIN', maxSdkVersion: 30 },
-    { name: 'android.permission.ACCESS_FINE_LOCATION', maxSdkVersion: 30 },
+    // Without neverForLocation, Android 12+ also needs location permission to scan.
+    neverForLocation
+      ? { name: 'android.permission.ACCESS_FINE_LOCATION', maxSdkVersion: 30 }
+      : { name: 'android.permission.ACCESS_FINE_LOCATION' },
     neverForLocation
       ? { name: 'android.permission.BLUETOOTH_SCAN', usesPermissionFlags: 'neverForLocation' }
       : { name: 'android.permission.BLUETOOTH_SCAN' },

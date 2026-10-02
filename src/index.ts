@@ -2,7 +2,13 @@
 // and on native platforms to ExpoBleKitModule.ts
 export { default } from './ExpoBleKitModule';
 export * from './ExpoBleKit.types';
-export * from './ExpoBleKitModuleSharedObject';
+export type {
+  BlePermissionRequest,
+  BlePermissions,
+  BleState,
+  PermissionStatus,
+  Subscription,
+} from './types';
 export { BleError, BleErrorCode } from './errors';
 export type { BleErrorDetails } from './errors';
 export { normalizeUUID, uuid16 } from './uuid';

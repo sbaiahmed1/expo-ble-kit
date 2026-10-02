@@ -1,36 +1,154 @@
 package expo.modules.blekit.binding
 
+import expo.modules.blekit.core.AndroidBluetoothAdapterPort
+import expo.modules.blekit.core.AndroidPermissionSystem
+import expo.modules.blekit.core.BleCapability
+import expo.modules.blekit.core.BlePermissionPolicy
+import expo.modules.blekit.core.BlePermissions
+import expo.modules.blekit.core.CentralEngine
+import expo.modules.blekit.core.CoreError
+import expo.modules.blekit.core.HandlerExecutor
+import expo.modules.blekit.core.PermissionResult
+import expo.modules.blekit.core.PermissionStatus
+import expo.modules.interfaces.permissions.Permissions
+import expo.modules.interfaces.permissions.PermissionsResponse
+import expo.modules.interfaces.permissions.PermissionsStatus
+import expo.modules.kotlin.Promise
+import expo.modules.kotlin.exception.CodedException
+import expo.modules.kotlin.exception.Exceptions
 import expo.modules.kotlin.modules.Module
 import expo.modules.kotlin.modules.ModuleDefinition
+import expo.modules.kotlin.records.Field
+import expo.modules.kotlin.records.Record
+
+/** JS `BlePermissionRequest` (plan §5.1). */
+class PermissionRequestRecord : Record {
+  @Field val scan: Boolean = false
+
+  @Field val connect: Boolean = false
+
+  @Field val advertise: Boolean = false
+
+  @Field val backgroundScan: Boolean = false
+
+  /** No flag set means the base capabilities. */
+  fun capabilities(): List<BleCapability> = listOfNotNull(
+    BleCapability.SCAN.takeIf { scan },
+    BleCapability.CONNECT.takeIf { connect },
+    BleCapability.ADVERTISE.takeIf { advertise },
+    BleCapability.BACKGROUND_SCAN.takeIf { backgroundScan },
+  ).ifEmpty { BleCapability.BASE }
+}
+
+/** A core error as a coded JS exception (plan §4.5). */
+class BleKitException(error: CoreError) : CodedException(error.code.value, error.jsMessage, error)
 
 class ExpoBleKitModule : Module() {
+  private lateinit var executor: HandlerExecutor
+  private lateinit var engine: CentralEngine
+
+  private val permissionManager: Permissions
+    get() = appContext.permissions ?: throw Exceptions.PermissionsModuleNotFound()
+
   override fun definition() = ModuleDefinition {
     Name("ExpoBleKit")
 
-    Events("onChange")
+    Events("stateChange")
 
-    AsyncFunction("setValueAsync") { value: String ->
-      sendEvent(
-        "onChange",
-        mapOf(
-          "value" to value,
-        ),
-      )
+    OnCreate {
+      val context = appContext.reactContext ?: throw Exceptions.ReactContextLost()
+      executor = HandlerExecutor.start()
+      engine = CentralEngine(AndroidBluetoothAdapterPort(context, executor.handler), AndroidPermissionSystem(context))
+      engine.onStateChange = { state -> sendEvent("stateChange", mapOf("state" to state.js)) }
+      executor.execute { engine.start() }
     }
 
-    Class(ExpoBleKitModuleSharedObject::class) {
-      Constructor {
-        val instance = ExpoBleKitModuleSharedObject(appContext)
-        return@Constructor instance
-      }
+    OnDestroy {
+      executor.execute { engine.close() }
+      executor.handler.looper.quitSafely()
+    }
 
-      Property("count")
-        .get { ref: ExpoBleKitModuleSharedObject ->
-          ref.count
+    OnActivityEntersForeground {
+      executor.execute { engine.refresh() }
+    }
+
+    Function("getState") {
+      engine.state.js
+    }
+
+    AsyncFunction("getPermissionsAsync") { promise: Promise ->
+      executor.execute {
+        settle(promise) {
+          val policy = engine.permissionPolicy()
+          policy.checkDeclared(BleCapability.BASE)
+          readPermissions(policy) { promise.resolve(it.toJs()) }
         }
-        .set { ref: ExpoBleKitModuleSharedObject, count: Int ->
-          ref.count = count
+      }
+    }
+
+    AsyncFunction("requestPermissionsAsync") { request: PermissionRequestRecord?, promise: Promise ->
+      val capabilities = (request ?: PermissionRequestRecord()).capabilities()
+      executor.execute {
+        settle(promise) {
+          val policy = engine.permissionPolicy()
+          policy.checkDeclared(capabilities)
+          requestStages(policy.requestStages(capabilities), promise) {
+            engine.refresh()
+            readPermissions(policy) { promise.resolve(it.toJs()) }
+          }
         }
+      }
     }
   }
+
+  /** Runs [block] on the BLE thread, rejecting [promise] with whatever it throws. */
+  private fun settle(promise: Promise, block: () -> Unit) {
+    try {
+      block()
+    } catch (error: CoreError) {
+      promise.reject(BleKitException(error))
+    } catch (error: CodedException) {
+      promise.reject(error)
+    }
+  }
+
+  /** Asks stage by stage; a stage is only asked once the previous one is fully granted. */
+  private fun requestStages(stages: List<List<String>>, promise: Promise, done: () -> Unit) {
+    val stage = stages.firstOrNull() ?: return done()
+    if (stage.all(engine.permissionSystem::isGranted)) {
+      return requestStages(stages.drop(1), promise, done)
+    }
+    permissionManager.askForPermissions(
+      { results ->
+        executor.execute {
+          settle(promise) {
+            val granted = results.values.all { it.status == PermissionsStatus.GRANTED }
+            if (granted) requestStages(stages.drop(1), promise, done) else done()
+          }
+        }
+      },
+      *stage.toTypedArray(),
+    )
+  }
+
+  private fun readPermissions(policy: BlePermissionPolicy, completion: (BlePermissions) -> Unit) {
+    val names = policy.declaredRuntimePermissions()
+    if (names.isEmpty()) {
+      completion(policy.permissions(emptyMap()))
+      return
+    }
+    permissionManager.getPermissions(
+      { results -> completion(policy.permissions(results.mapValues { (_, response) -> response.toCore() })) },
+      *names.toTypedArray(),
+    )
+  }
 }
+
+private fun PermissionsResponse.toCore() = PermissionResult(
+  status = when (status) {
+    PermissionsStatus.GRANTED -> PermissionStatus.GRANTED
+    PermissionsStatus.DENIED -> PermissionStatus.DENIED
+    else -> PermissionStatus.UNDETERMINED
+  },
+  canAskAgain = canAskAgain,
+)

@@ -1,6 +1,6 @@
 # Expo BLE (`expo-ble-kit`) — Architecture & Implementation Plan
 
-> **Status:** Draft v0.17 · **Date:** 2026-10-02 · **Scope:** proposition #3, an Expo-first Bluetooth Low Energy module · **Changes:** Appendix D
+> **Status:** Draft v0.18 · **Date:** 2026-10-02 · **Scope:** proposition #3, an Expo-first Bluetooth Low Energy module · **Changes:** Appendix D
 >
 > **Package name:** `expo-ble-kit` (D0a, decided 2026-10-02) · native module `ExpoBleKit` · Android package `expo.modules.blekit`.
 >
@@ -209,7 +209,9 @@ expo-ble-kit/
 
 iOS platform rules:
 
-- Creating a CoreBluetooth manager without `NSBluetoothAlwaysUsageDescription` in Info.plist crashes the app. Check for the key before creating any manager and reject with `MISCONFIGURED` instead.
+- Creating a CoreBluetooth manager without `NSBluetoothAlwaysUsageDescription` in Info.plist crashes the app. Check for the key before creating any manager and reject with `MISCONFIGURED` instead. Reading `CBManager.authorization` without the key is safe (checked on the iOS 27 simulator).
+- Lazy creation (P1-03): the manager is created by `requestPermissionsAsync()`, or as soon as JS reads or observes the state while the app is already authorized (no prompt can appear then). Before that, `state` is `unauthorized` when the authorization is denied or restricted, and `unknown` otherwise. The manager is created with `CBCentralManagerOptionShowPowerAlertKey: false`: the app sees `poweredOff` and decides what to show.
+- The iOS Simulator reports `CBManager.authorization == .allowedAlways` without a prompt, and the adapter as `unsupported`. Permission prompts can only be tested on a device.
 - There is no MTU API. Report `mtu = maximumWriteValueLength(for: .withoutResponse) + 3`.
 - Bonding is implicit: it is triggered when an encrypted attribute is accessed. There is no `createBond` on iOS.
 - A pending `connect` never times out on its own. Our connect timeout MUST call `cancelPeripheralConnection`.
@@ -223,7 +225,7 @@ iOS platform rules:
 
 | Component | Responsibility |
 |---|---|
-| `CentralEngine` | `BluetoothManager` / `BluetoothAdapter`. Adapter state via `ACTION_STATE_CHANGED`. One `HandlerThread` named `blekit-gatt`, plus a coroutine dispatcher built from its `Handler` |
+| `CentralEngine` | `BluetoothManager` / `BluetoothAdapter`. Adapter state via `ACTION_STATE_CHANGED`, registered on the BLE thread without an export flag: it is a protected system broadcast, and it comes from the Bluetooth process, so `RECEIVER_NOT_EXPORTED` would drop it (registration checked on Android 14, targetSdk 36). One `HandlerThread` named `blekit-gatt`, plus a coroutine dispatcher built from its `Handler` |
 | `ScanController` | `BluetoothLeScanner` with `ScanFilter` / `ScanSettings`. Multiplexes JS scan sessions (§5.3). Scan-start throttle guard (about 5 starts per 30 s per app ⚠️ VERIFY): sliding window, delay restarts, emit `SCAN_THROTTLED` warning. Unfiltered scans pause when the screen is off (Android 8.1+), so docs recommend filters. Android 7+ silently downgrades a scan running longer than about 30 minutes to opportunistic ⚠️ VERIFY, so long-running scans restart before that limit (each restart counts against the throttle window) |
 | `PeripheralSession` | `connectGatt(context, autoConnect, callback, TRANSPORT_LE, phyMask, handler)` (API 26+) so every callback lands on `blekit-gatt`. State machine, `GattQueue`, API 33+ overloads (`writeCharacteristic(c, value, writeType)` returning a status, `onCharacteristicChanged(gatt, c, value)`) with legacy fallbacks, CCCD handling, `requestMtu` (≤ 517), `close()` discipline, bounded retry for status 133 |
 | `BondManager` | `createBond()`, `ACTION_BOND_STATE_CHANGED` receiver, bond state per device. Never auto-confirms pairing |
@@ -403,6 +405,16 @@ Mapping: Appendix A, implemented in `ErrorMapping.swift` / `ErrorMapping.kt` and
 
 Runtime API: `getPermissionsAsync()` and `requestPermissionsAsync({ scan, connect, advertise, backgroundScan })`. On iOS, "request" means creating the manager (prompts once); the status comes from `CBManager.authorization`. `backgroundScan` only differs from `scan` on Android 10–11. Elsewhere it mirrors `scan`; iOS background scanning needs the background mode, not a permission.
 
+Rules (decided in P1-03):
+
+- `requestPermissionsAsync()` with no flag set asks for `scan` and `connect`. iOS ignores the flags: one prompt covers every capability.
+- Both calls reject with `MISCONFIGURED` when the base declarations are missing: the Info.plist key on iOS; on Android, the `scan` and `connect` entries for the device's API level. A request also rejects for any other requested capability that isn't declared.
+- A capability the manifest doesn't declare (for example `advertise` before P4) reads `denied`, and its permissions don't count towards `canAskAgain`.
+- Android reads the declarations from `PackageInfo.requestedPermissions`, which leaves out entries whose `maxSdkVersion` is below the device's API level. When `BLUETOOTH_SCAN` lacks `neverForLocation`, scanning on Android 12+ also needs `ACCESS_FINE_LOCATION` (declared without `maxSdkVersion`), and the request asks for it.
+- On Android 10–11, background location is requested last and alone, only after the foreground permissions are granted.
+- `undetermined`, `denied` and `canAskAgain` on Android come from Expo's permission manager, which remembers what was asked and when a permission became blocked.
+- Adapter state on Android 12+ is `unauthorized` until `BLUETOOTH_CONNECT` is granted. The engine re-reads the state after each request and whenever the app returns to the foreground, so a grant made in Settings shows up without a restart.
+
 ### 4.14 Background and lifecycle
 
 **iOS**
@@ -452,6 +464,7 @@ Plugin rules:
 - Idempotent, never duplicates entries, everything beyond the base permissions is opt-in, one snapshot test per option.
 - Android `minSdk` (ADR-002): the plugin sets `android.minSdkVersion=26` in `gradle.properties` when it is absent or lower. It never lowers a higher value. Expo's autolinking reads this property into its version catalog (checked on SDK 57). Snapshot tests run with `expo-build-properties` before and after this plugin. If another plugin later writes a lower value, the library's own `minSdkVersion 26` fails the manifest merge with a clear error.
 - Legacy permissions use `maxSdkVersion`, but the plugin never adds `maxSdkVersion` to a permission that is already declared without it. Otherwise an app that also uses location for other reasons (e.g. through `expo-location`) loses it on Android 12+. Snapshot tests run with `expo-location` listed both before and after this plugin, and the result must be identical in both orders.
+- With `neverForLocation: false`, `ACCESS_FINE_LOCATION` is declared without `maxSdkVersion`, because Android 12+ then needs location permission to scan.
 - Ordering (verified on SDK 57): the Android changes run in `withFinalizedMod`, after every other plugin's mods, and only add entries that are absent. A plain `withAndroidManifest` / `withGradleProperties` mod would depend on the app's plugin order, because Expo runs mods in reverse registration order.
 - Hardware features: the plugin declares `android.hardware.bluetooth` and `android.hardware.bluetooth_le` with `android:required` from `requireBleHardware` (default `false`). It also declares `android.hardware.location` as not required when it adds `ACCESS_FINE_LOCATION` itself. Without these lines, Google Play treats the features the legacy permissions imply as required and hides the app from devices without them (seen with `aapt2 dump badging` on the example APK). If the app declared location itself, the app decides whether location hardware is required.
 - Unknown options, and options that belong to later phases, fail prebuild with an error naming the option, instead of being ignored.
@@ -999,6 +1012,11 @@ Parallelism: P0-06/P0-07 can run alongside P0-03/P0-04. With two people, P4 can 
 - [ ] **P1-03 Adapter state and permissions** — deps: P1-01, P1-14 (the example needs the Info.plist key and manifest permissions before any manager can be created).
   Lazy iOS manager creation, Android 12+ and legacy permission paths, `getPermissionsAsync` / `requestPermissionsAsync`, `stateChange`, declaration checks (`MISCONFIGURED`, §4.15).
   **Accept:** state transitions verified by toggling Bluetooth on devices; permission flows verified on Android 11, 12 and 14, and on iOS; removing `NSBluetoothAlwaysUsageDescription` or a manifest permission yields `MISCONFIGURED`, not a crash.
+  **Progress 2026-10-02 (open):** native `CentralEngine` state and permissions on both platforms, the binding (`getState`, `getPermissionsAsync`, `requestPermissionsAsync`, `stateChange`), §5.1 types in `src/types.ts`, the web stub, and an example screen. Tests: 10 iOS (`CentralEngineTests`), 16 Android (`PermissionsTest`, `CentralEngineTest`), and a Jest test that keeps the state and permission names identical across TypeScript, Swift and Kotlin. The rules are in §4.3, §4.4 and §4.13.
+  - Verified on the Galaxy A52 (Android 14): `unauthorized` before the grant; first denial → `denied` with `canAskAgain: true`, second → `canAskAgain: false`, after which a request answers without a dialog; a grant made while backgrounded → `poweredOn` on return, without a restart; Allow → `granted` and `poweredOn`; Bluetooth off → `resetting`, `poweredOff`; on → `resetting`, `poweredOn`; off at launch → `poweredOff`. A build without `BLUETOOTH_CONNECT` → `MISCONFIGURED` naming it, from both calls, no crash.
+  - Verified on the iOS 27 simulator: a build without `NSBluetoothAlwaysUsageDescription` → `MISCONFIGURED` from both calls, no crash, no manager created. Found: Expo's iOS JS message is the exception's `debugDescription` (class name plus Swift file and line), so `BleKitException` overrides it to keep the message plain for `BleError.fromNative`.
+  - Found: the plugin's `neverForLocation: false` capped location at API 30, so scanning on Android 12+ would have been MISCONFIGURED. Fixed (§4.15).
+  - Still open: permission flows on Android 11 and 12 (no API 30/31 emulator image installed yet), and the iOS prompt and Bluetooth toggling on a physical iPhone (the simulator has no prompt and no adapter).
 - [ ] **P1-04 Scanning** — deps: P1-03.
   Filters, options, advertisement parsing, session multiplexing (§5.3), Android throttle guard and long-scan restart, `reportIntervalMs` batching, address-type memory (§4.12).
   **Accept:**
@@ -1423,3 +1441,4 @@ Submit results (`BluetoothStatusCodes`, API 33+): 1 not enabled → `BLUETOOTH_P
 | v0.15 | 2026-10-02 | P1-10 done: error model and native mapping tables. Appendix A rewritten from verified SDK values (shared ATT table, Android, iOS) |
 | v0.16 | 2026-10-02 | P1-11 done: UUID normalization and SIG constants |
 | v0.17 | 2026-10-02 | P1-14 done: config plugin v1 and the bare setup guide. §4.15 mod-ordering VERIFY resolved (finalized mod, add-only-if-absent); new rules for optional hardware features and for rejecting unknown options |
+| v0.18 | 2026-10-02 | P1-03 in progress: adapter state, permissions and declaration checks on both platforms, verified on the Galaxy A52 and the iOS simulator. New permission rules in §4.13, lazy-creation and power-alert rules in §4.3, the Android state receiver in §4.4. Plugin fix: `neverForLocation: false` no longer caps location at API 30 |

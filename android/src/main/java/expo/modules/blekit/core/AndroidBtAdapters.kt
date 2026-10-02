@@ -13,7 +13,10 @@ import android.bluetooth.le.ScanCallback
 import android.bluetooth.le.ScanFilter
 import android.bluetooth.le.ScanResult
 import android.bluetooth.le.ScanSettings
+import android.content.BroadcastReceiver
 import android.content.Context
+import android.content.Intent
+import android.content.IntentFilter
 import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Handler
@@ -40,6 +43,26 @@ class AndroidBluetoothAdapterPort(private val context: Context, private val hand
 
   override val leScanner: LeScannerPort?
     get() = scanner.takeIf { adapter?.bluetoothLeScanner != null }
+
+  private var stateReceiver: BroadcastReceiver? = null
+
+  override fun setStateListener(listener: ((Int) -> Unit)?) {
+    stateReceiver?.let(context::unregisterReceiver)
+    stateReceiver = null
+    if (listener == null || adapter == null) {
+      return
+    }
+    val receiver =
+      object : BroadcastReceiver() {
+        override fun onReceive(context: Context, intent: Intent) {
+          listener(intent.getIntExtra(BluetoothAdapter.EXTRA_STATE, BluetoothAdapter.ERROR))
+        }
+      }
+    // ACTION_STATE_CHANGED is a protected system broadcast, so no export flag is needed. It comes
+    // from the Bluetooth process, not the system server, so RECEIVER_NOT_EXPORTED would drop it.
+    context.registerReceiver(receiver, IntentFilter(BluetoothAdapter.ACTION_STATE_CHANGED), null, handler)
+    stateReceiver = receiver
+  }
 
   override fun remoteDevice(address: String): RemoteDevicePort {
     val adapter = checkNotNull(adapter) { "No Bluetooth adapter" }

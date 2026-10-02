@@ -9,7 +9,20 @@ class CoreError(val code: Code, message: String, val gattStatus: Int? = null, re
   /** Whether retrying the same call can succeed without user action (plan §4.11). */
   val retryable: Boolean = retryable ?: defaultRetryable(code)
 
+  /**
+   * The message the binding gives JS: the text, then `[blekit]` and the details as flat JSON. This
+   * is the contract with `BleError.fromNative` in src/errors.ts.
+   */
+  val jsMessage: String
+    get() {
+      val details = listOfNotNull(gattStatus?.let { "\"gattStatus\":$it" }, "\"retryable\":$retryable")
+      return "$message [blekit]{${details.joinToString(",")}}"
+    }
+
   companion object {
+    /** Where MISCONFIGURED messages send developers. */
+    const val SETUP_GUIDE = "see docs/guides/bare-setup.md in the expo-ble-kit repository"
+
     /**
      * Retryability by code (plan §4.11). Codes marked "depends" there default to false; the mappings
      * in ErrorMapping.kt set them per error.

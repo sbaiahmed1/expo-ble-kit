@@ -159,6 +159,9 @@ interface BluetoothAdapterPort {
   /** Null while the adapter is off. */
   val leScanner: LeScannerPort?
 
+  /** Reports each adapter state change (one of [AdapterStates]) on the BLE thread. Null stops reporting. */
+  fun setStateListener(listener: ((Int) -> Unit)?)
+
   /** Never fails, even for unknown addresses (plan §4.12). */
   fun remoteDevice(address: String): RemoteDevicePort
 }

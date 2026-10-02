@@ -96,6 +96,11 @@ describe('Android manifest', () => {
       (p) => p['android:name'] === 'android.permission.BLUETOOTH_SCAN'
     );
     expect(scan).toEqual({ 'android:name': 'android.permission.BLUETOOTH_SCAN' });
+    // Scanning without neverForLocation needs location on Android 12+, so no maxSdkVersion.
+    const location = permissionsOf(manifest).find(
+      (p) => p['android:name'] === 'android.permission.ACCESS_FINE_LOCATION'
+    );
+    expect(location).toEqual({ 'android:name': 'android.permission.ACCESS_FINE_LOCATION' });
     expect(manifest.manifest['uses-feature']).toEqual([
       { $: { 'android:name': BLUETOOTH_FEATURE, 'android:required': 'true' } },
       { $: { 'android:name': BLE_FEATURE, 'android:required': 'true' } },

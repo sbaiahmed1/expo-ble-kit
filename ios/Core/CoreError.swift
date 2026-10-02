@@ -64,3 +64,27 @@ struct CoreError: Error, Equatable {
     }
   }
 }
+
+extension CoreError {
+  /// Where MISCONFIGURED messages send developers.
+  static let setupGuide = "see docs/guides/bare-setup.md in the expo-ble-kit repository"
+
+  /// The message the binding gives JS: the text, then `[blekit]` and the details as flat JSON. This
+  /// is the contract with `BleError.fromNative` in src/errors.ts.
+  var jsMessage: String {
+    var details: [String: Any] = ["retryable": retryable]
+    if let nativeDomain {
+      details["nativeDomain"] = nativeDomain
+    }
+    if let nativeCode {
+      details["nativeCode"] = nativeCode
+    }
+    guard
+      let data = try? JSONSerialization.data(withJSONObject: details, options: [.sortedKeys]),
+      let json = String(data: data, encoding: .utf8)
+    else {
+      return message
+    }
+    return "\(message) [blekit]\(json)"
+  }
+}

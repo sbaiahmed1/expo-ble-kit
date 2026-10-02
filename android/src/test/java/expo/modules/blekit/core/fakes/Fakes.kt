@@ -29,6 +29,19 @@ class FakeBluetoothAdapter(override var isAvailable: Boolean = true, override va
     get() = scanner.takeIf { state == AdapterStates.ON }
 
   override fun remoteDevice(address: String): RemoteDevicePort = devices.getOrPut(address) { FakeRemoteDevice(address) }
+
+  var stateListener: ((Int) -> Unit)? = null
+    private set
+
+  override fun setStateListener(listener: ((Int) -> Unit)?) {
+    stateListener = listener
+  }
+
+  /** Changes the adapter state and reports it, like the ACTION_STATE_CHANGED broadcast. */
+  fun simulateState(newState: Int) {
+    state = newState
+    stateListener?.invoke(newState)
+  }
 }
 
 class FakeLeScanner : LeScannerPort {
