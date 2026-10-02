@@ -1,6 +1,6 @@
 # Expo BLE (`expo-ble-kit`) — Architecture & Implementation Plan
 
-> **Status:** Draft v0.13 · **Date:** 2026-10-02 · **Scope:** proposition #3, an Expo-first Bluetooth Low Energy module · **Changes:** Appendix D
+> **Status:** Draft v0.14 · **Date:** 2026-10-02 · **Scope:** proposition #3, an Expo-first Bluetooth Low Energy module · **Changes:** Appendix D
 >
 > **Package name:** `expo-ble-kit` (D0a, decided 2026-10-02) · native module `ExpoBleKit` · Android package `expo.modules.blekit`.
 >
@@ -984,8 +984,15 @@ Parallelism: P0-06/P0-07 can run alongside P0-03/P0-04. With two people, P4 can 
   - The template module moved to `ios/Binding` and `android/.../binding` (§4.2).
   - Scope note: the peripheral-role abstractions (`PeripheralManaging`, GATT server, advertiser) are added with P4-01, which first needs them.
   - 7 iOS and 8 Android tests pass locally; both example apps still build. CI jobs added (`ios-core-tests`, Android unit tests in `example-android`); not run yet.
-- [ ] **P1-02 GattQueue (iOS + Android)** — deps: P1-01.
+- [x] **P1-02 GattQueue (iOS + Android)** — deps: P1-01.
   **Accept:** unit tests for ordering, per-op timeout, `AbortSignal` cancellation, reject-all on disconnect, and a randomized test proving no op starts while another is in flight.
+  **Done 2026-10-02:** `ios/Core/GattQueue.swift` and `android/.../core/GattQueue.kt`, same semantics and the same tests on both platforms (7 each). Decisions recorded here:
+  - Completions are matched to the in-flight operation by a caller-supplied predicate (kind and target); late callbacks after a timeout are ignored.
+  - Cancelling the running operation answers the caller at once with `OPERATION_CANCELLED`, but the queue stays busy until the radio answers or the timeout fires (rule 2).
+  - The queue counts consecutive timeouts and reports each one; the session (P1-05) applies the Android two-timeout disconnect.
+  - The next operation always starts on a later turn, never re-entrantly from inside a completion.
+  - The randomized test (25 seeds × 2,000 random actions) was checked against a deliberately broken queue on both platforms and fails on it.
+  - `CoreError` with the full §4.11 code list was added here; the platform mapping tables remain P1-10.
 - [ ] **P1-03 Adapter state and permissions** — deps: P1-01, P1-14 (the example needs the Info.plist key and manifest permissions before any manager can be created).
   Lazy iOS manager creation, Android 12+ and legacy permission paths, `getPermissionsAsync` / `requestPermissionsAsync`, `stateChange`, declaration checks (`MISCONFIGURED`, §4.15).
   **Accept:** state transitions verified by toggling Bluetooth on devices; permission flows verified on Android 11, 12 and 14, and on iOS; removing `NSBluetoothAlwaysUsageDescription` or a manifest permission yields `MISCONFIGURED`, not a crash.
@@ -1361,3 +1368,4 @@ Connection state changes (`onConnectionStateChange` status, HCI disconnect reaso
 | v0.11 | 2026-10-02 | D1 decided: Expo Modules 1.0 DSL with Expo SDK 57 as the minimum (ADR-002); P0-04 done. `expo` peer dependency set to `>=57.0.0` |
 | v0.12 | 2026-10-02 | D0b decided: build (ADR-012); P0-02 closed. P1 starts |
 | v0.13 | 2026-10-02 | P1-01 done: core abstractions, real adapters, fakes, virtual-time schedulers and L2 harnesses on both platforms; template module moved into the binding folders |
+| v0.14 | 2026-10-02 | P1-02 done: GattQueue on both platforms with ordering, timeout, cancellation, reject-all and randomized tests; CoreError code list added |
