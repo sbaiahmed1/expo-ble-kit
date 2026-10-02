@@ -1,0 +1,102 @@
+name: Bug report
+description: Something in expo-ble-kit doesn't work as documented.
+labels: ["bug", "needs triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting! Security problems go through [private reporting](https://github.com/sbaiahmed1/expo-ble-kit/security/advisories/new) instead, see SECURITY.md.
+        Logs and diagnostics can contain device names and identifiers: redact what you don't want public.
+  - type: textarea
+    id: description
+    attributes:
+      label: What happened?
+      description: Include the error code and message if a `BleError` was thrown.
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Steps to reproduce
+      description: The smallest code that shows the problem. A link to a repository is best.
+      render: tsx
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: expo-ble-kit version
+      placeholder: "0.1.0"
+    validations:
+      required: true
+  - type: input
+    id: sdk
+    attributes:
+      label: Expo SDK and React Native versions
+      placeholder: "SDK 57, React Native 0.86.3"
+    validations:
+      required: true
+  - type: dropdown
+    id: platform
+    attributes:
+      label: Platform
+      multiple: true
+      options:
+        - iOS
+        - Android
+        - Web
+    validations:
+      required: true
+  - type: input
+    id: device
+    attributes:
+      label: OS version and phone model
+      description: Bluetooth doesn't work in the iOS Simulator, so iOS reports need a real device.
+      placeholder: "iOS 27.0, iPhone 14 Pro Max / Android 15, Pixel 8"
+    validations:
+      required: true
+  - type: input
+    id: peripheral
+    attributes:
+      label: Peripheral
+      description: What the phone talks to, and its firmware if you know it.
+      placeholder: "Polar H10 heart-rate strap / nRF52840 running Zephyr / another phone"
+  - type: dropdown
+    id: app-state
+    attributes:
+      label: App state when it happens
+      options:
+        - Foreground
+        - Background
+        - Relaunched by the system in the background
+        - Not sure
+  - type: textarea
+    id: diagnostics
+    attributes:
+      label: BleManager.getDiagnostics() output
+      description: |
+        Right after the problem, run `console.log(JSON.stringify(await BleManager.getDiagnostics(), null, 2))` and paste the result.
+        It shows adapter state, permissions, sessions, queue depths, subscriptions and recent errors. Available from 0.2.0.
+      render: json
+  - type: textarea
+    id: logs
+    attributes:
+      label: Debug logs
+      description: |
+        Call `BleManager.setLogLevel('debug')` before reproducing. Paste the JS logs and the native logs:
+        iOS: Xcode console or Console.app, filtered on subsystem `expo.blekit`. Android: `adb logcat -s BleKit`.
+      render: shell
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Checks
+      options:
+        - label: I searched existing issues and this isn't a duplicate.
+          required: true
+        - label: I can reproduce this with the latest version.

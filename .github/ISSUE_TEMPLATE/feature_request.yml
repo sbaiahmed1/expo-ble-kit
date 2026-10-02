@@ -1,0 +1,36 @@
+name: Feature request
+description: Suggest a new capability or an API change.
+labels: ["enhancement", "needs triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Before asking, check the roadmap and the non-goals for 1.0 (Bluetooth Classic, iBeacon ranging, BLE Mesh, LE Audio, vendor DFU protocols) in [docs/ARCHITECTURE_AND_PLAN.md](https://github.com/sbaiahmed1/expo-ble-kit/blob/main/docs/ARCHITECTURE_AND_PLAN.md) (§1.3 and §7).
+  - type: textarea
+    id: problem
+    attributes:
+      label: What are you trying to do?
+      description: The use case, and what is hard or impossible today.
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed API or behavior
+      render: ts
+  - type: dropdown
+    id: platforms
+    attributes:
+      label: Platforms
+      multiple: true
+      options:
+        - iOS
+        - Android
+        - Web
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: Workarounds you use now, or how other libraries handle it.

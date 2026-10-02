@@ -1,6 +1,6 @@
 # Expo BLE (`expo-ble-kit`) — Architecture & Implementation Plan
 
-> **Status:** Draft v0.7 · **Date:** 2026-10-02 · **Scope:** proposition #3, an Expo-first Bluetooth Low Energy module · **Changes:** Appendix D
+> **Status:** Draft v0.8 · **Date:** 2026-10-02 · **Scope:** proposition #3, an Expo-first Bluetooth Low Energy module · **Changes:** Appendix D
 >
 > **Package name:** `expo-ble-kit` (D0a, decided 2026-10-02) · native module `ExpoBleKit` · Android package `expo.modules.blekit`.
 >
@@ -965,9 +965,10 @@ Parallelism: P0-06/P0-07 can run alongside P0-03/P0-04. With two people, P4 can 
   Define `test-peripherals/profile.json` (§8.3) and implement it with Bumble. The Zephyr firmware for nRF52840 can follow during P1.
   **Accept:** the Bumble peripheral is discoverable from a real phone (Bumble over a USB Bluetooth dongle) or from the emulator.
   **Done 2026-10-02:** `test-peripherals/profile.json` (UUID base `0c6c0000-b347-4cfa-9827-1c5a13658519`) and `test-peripherals/bumble/` (Bumble 0.0.219, run with `uv run blekit-peripheral`). Discovered as `BleKit-Test` from the Android emulator (Android 15 / API 35 image, emulator 37.1) over netsim. 26 hardware-free pytest tests (in-memory radio) cover every characteristic and command, and run in CI. Bumble's GATT server lacks prepared writes and service removal, so the peripheral adds both itself (see `test-peripherals/README.md`).
-- [ ] **P0-08 License and governance** `[GATE D2]` — deps: none.
-  License, CODEOWNERS, CONTRIBUTING, SECURITY, issue templates (with a field for `getDiagnostics()` output). D2 decided 2026-10-02: MIT, personal ownership, no CLA (ADR-009). The scaffold's `LICENSE` and `"license": "MIT"` stand.
+- [x] **P0-08 License and governance** `[GATE D2]` — deps: none.
+  License, CODEOWNERS, CONTRIBUTING, SECURITY, issue templates (with a field for `getDiagnostics()` output). D2 decided 2026-10-02: MIT, personal ownership, no CLA (ADR-009).
   **Accept:** files merged.
+  **Done 2026-10-02:** `LICENSE` (the template's copyright line named 650 Industries / Expo; now Ahmed Sbai, also in `example/LICENSE`), `.github/CODEOWNERS`, `CONTRIBUTING.md`, `SECURITY.md` (GitHub private vulnerability reporting, which must be enabled in the repository settings after creation), issue forms (bug report with `getDiagnostics()` and debug-log fields, feature request), a PR template carrying the §0 Definition of Done, and a short `README.md`.
 
 ### 7.3 P1 — Central-role MVP
 
@@ -1345,3 +1346,4 @@ Connection state changes (`onConnectionStateChange` status, HCI disconnect reaso
 | v0.5 | 2026-10-02 | iOS 27 launch crash on SDK 57 resolved in the example with `expo-build-properties` `ios.enableSceneSupport` (example only); §10 risk updated; P0-05 and P1-16 implications noted |
 | v0.6 | 2026-10-02 | P0-07 done: `test-peripherals/profile.json` and the Bumble peripheral, discovered from the emulator over netsim. §8.3 notes the `SEND_INDICATIONS` command and the `SECONDARY` service; P0-06 notes that emulator 37.1 starts netsim by itself |
 | v0.7 | 2026-10-02 | P0-06 green locally: instrumented scan/connect/read test against the Bumble peripheral over netsim, `e2e/android-netsim/run.sh`, nightly CI job (not yet run). Q3 gets its first measurement (API 35 ignores the requested MTU). P0-07 note corrected to API 35 |
+| v0.8 | 2026-10-02 | P0-08 done: governance files, issue and PR templates, README; LICENSE copyright corrected from the template's Expo line to Ahmed Sbai |
