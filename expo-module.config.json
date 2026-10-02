@@ -1,0 +1,9 @@
+{
+  "platforms": ["apple", "android", "web"],
+  "apple": {
+    "modules": ["ExpoBleKitModule"]
+  },
+  "android": {
+    "modules": ["expo.modules.blekit.ExpoBleKitModule"]
+  }
+}

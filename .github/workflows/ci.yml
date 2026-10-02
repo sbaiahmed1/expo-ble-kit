@@ -1,0 +1,90 @@
+# Per-PR CI (docs/ARCHITECTURE_AND_PLAN.md §8.6). Nightly L3 and weekly L4 jobs are added in P0-06 / P2.
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  js:
+    name: Lint, typecheck, unit tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: .nvmrc
+      - run: yarn install --immutable
+      - run: yarn prepare
+      - run: yarn lint
+      - run: yarn format:check
+      - run: yarn typecheck
+      - run: yarn test
+
+  native-lint:
+    name: SwiftLint and ktlint
+    runs-on: macos-latest
+    env:
+      KTLINT_VERSION: 1.8.0
+    steps:
+      - uses: actions/checkout@v7
+      - run: swiftlint lint --strict
+      - name: ktlint
+        run: |
+          curl -sSL -o ktlint "https://github.com/pinterest/ktlint/releases/download/${KTLINT_VERSION}/ktlint"
+          chmod +x ktlint
+          ./ktlint "android/src/**/*.kt"
+
+  example-android:
+    name: Example app (Android)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: .nvmrc
+      - uses: actions/setup-java@v6
+        with:
+          distribution: zulu
+          java-version: 17
+      - uses: gradle/actions/setup-gradle@v6
+      - run: yarn install --immutable
+      - run: yarn prepare
+      - run: yarn install --immutable
+        working-directory: example
+      - run: npx expo install --check
+        working-directory: example
+      - run: npx expo prebuild --platform android --clean
+        working-directory: example
+      - run: ./gradlew :app:assembleDebug -PreactNativeArchitectures=x86_64
+        working-directory: example/android
+
+  example-ios:
+    name: Example app (iOS)
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: .nvmrc
+      - run: yarn install --immutable
+      - run: yarn prepare
+      - run: yarn install --immutable
+        working-directory: example
+      - run: npx expo prebuild --platform ios --clean
+        working-directory: example
+      - name: xcodebuild
+        working-directory: example/ios
+        run: |
+          xcodebuild build \
+            -workspace expoblekitexample.xcworkspace \
+            -scheme expoblekitexample \
+            -configuration Debug \
+            -sdk iphonesimulator \
+            -destination 'generic/platform=iOS Simulator' \
+            CODE_SIGNING_ALLOWED=NO

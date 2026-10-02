@@ -1,0 +1,10 @@
+{
+  "extends": "expo/tsconfig.base",
+  "compilerOptions": {
+    "strict": true,
+    "paths": {
+      "expo-ble-kit": ["../src/index"],
+      "expo-ble-kit/*": ["../src/*"]
+    }
+  }
+}

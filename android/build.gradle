@@ -1,0 +1,25 @@
+import groovy.json.JsonSlurper
+
+plugins {
+  id 'com.android.library'
+  id 'expo-module-gradle-plugin'
+}
+
+def packageJson = new JsonSlurper().parse(file("../package.json"))
+
+group = 'expo.modules.blekit'
+version = packageJson.version
+
+android {
+  namespace "expo.modules.blekit"
+  defaultConfig {
+    // ADR-002: the Android core relies on API 26+ calls. Declaring it here also makes the manifest
+    // merge fail loudly for apps below 26 instead of crashing at runtime.
+    minSdkVersion 26
+    versionCode 1
+    versionName packageJson.version
+  }
+  lintOptions {
+    abortOnError false
+  }
+}
