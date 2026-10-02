@@ -15,6 +15,7 @@ yarn typecheck               # tsc for src/ and plugin/
 yarn lint                    # ESLint (universe config)
 yarn lint:native             # SwiftLint + ktlint (brew install swiftlint ktlint)
 CI=1 yarn test               # Jest, no watch mode
+CI=1 yarn test plugin        # config plugin tests (snapshots, plugin order, bare guide)
 swift test --package-path ios   # iOS core unit tests (no simulator needed)
 (cd example/android && ./gradlew :expo-ble-kit:testDebugUnitTest)   # Android core unit tests
 yarn check:package           # fail if npm would ship tests, build output, docs or tooling

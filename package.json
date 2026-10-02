@@ -48,6 +48,7 @@
     "@changesets/cli": "^3.0.3",
     "@react-native/jest-preset": "0.86.3",
     "@types/jest": "^29.2.1",
+    "@types/node": "^24.18.0",
     "@types/react": "~19.2.2",
     "babel-preset-expo": "~57.0.13",
     "eslint": "~9.39.4",

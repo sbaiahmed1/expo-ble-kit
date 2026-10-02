@@ -1,0 +1,134 @@
+import { AndroidConfig, ConfigPlugin, withFinalizedMod } from 'expo/config-plugins';
+import { promises as fs } from 'fs';
+import { join } from 'path';
+
+import type { ExpoBleKitPluginProps } from './schema';
+
+/** ADR-002: the Android core relies on API 26+ calls. */
+export const MIN_ANDROID_SDK = 26;
+const MIN_SDK_PROPERTY = 'android.minSdkVersion';
+
+export type PermissionDeclaration = {
+  name: string;
+  maxSdkVersion?: number;
+  usesPermissionFlags?: string;
+};
+
+/** The base permissions of plan §4.13. Single source for the plugin, its tests and the bare guide. */
+export function blePermissions(props: ExpoBleKitPluginProps = {}): PermissionDeclaration[] {
+  const neverForLocation = props.android?.neverForLocation ?? true;
+  return [
+    { name: 'android.permission.BLUETOOTH', maxSdkVersion: 30 },
+    { name: 'android.permission.BLUETOOTH_ADMIN', maxSdkVersion: 30 },
+    { name: 'android.permission.ACCESS_FINE_LOCATION', maxSdkVersion: 30 },
+    neverForLocation
+      ? { name: 'android.permission.BLUETOOTH_SCAN', usesPermissionFlags: 'neverForLocation' }
+      : { name: 'android.permission.BLUETOOTH_SCAN' },
+    { name: 'android.permission.BLUETOOTH_CONNECT' },
+  ];
+}
+
+export const BLE_FEATURE = 'android.hardware.bluetooth_le';
+/**
+ * Declared explicitly because the legacy BLUETOOTH permission implies it as *required*, which would
+ * hide the app on Google Play from devices without classic Bluetooth.
+ */
+export const BLUETOOTH_FEATURE = 'android.hardware.bluetooth';
+/** Implied as required by ACCESS_FINE_LOCATION; declared optional only when this plugin adds that permission. */
+export const LOCATION_FEATURE = 'android.hardware.location';
+const FINE_LOCATION = 'android.permission.ACCESS_FINE_LOCATION';
+
+type ManifestItem = { $: Record<string, string> };
+
+/**
+ * Adds the base declarations to a parsed AndroidManifest. Entries another plugin or the app already
+ * declared are left exactly as they are (plan §4.15): adding `maxSdkVersion` to an existing location
+ * permission would remove location access on Android 12+ for apps that need it.
+ */
+export function applyAndroidManifest(
+  manifest: AndroidConfig.Manifest.AndroidManifest,
+  props: ExpoBleKitPluginProps = {}
+): AndroidConfig.Manifest.AndroidManifest {
+  const root = manifest.manifest as unknown as Record<string, ManifestItem[] | undefined> & {
+    $: Record<string, string>;
+  };
+  root['uses-permission'] ??= [];
+  const permissions = root['uses-permission'];
+  const declared = new Set(permissions.map((item) => item.$['android:name']));
+
+  const addsLocation = !declared.has(FINE_LOCATION);
+  for (const permission of blePermissions(props)) {
+    if (declared.has(permission.name)) {
+      continue;
+    }
+    const attributes: Record<string, string> = { 'android:name': permission.name };
+    if (permission.maxSdkVersion !== undefined) {
+      attributes['android:maxSdkVersion'] = String(permission.maxSdkVersion);
+    }
+    if (permission.usesPermissionFlags !== undefined) {
+      attributes['android:usesPermissionFlags'] = permission.usesPermissionFlags;
+      attributes['tools:targetApi'] = 's';
+      root.$['xmlns:tools'] ??= 'http://schemas.android.com/tools';
+    }
+    permissions.push({ $: attributes });
+  }
+
+  root['uses-feature'] ??= [];
+  const features = root['uses-feature'];
+  const required = String(props.android?.requireBleHardware ?? false);
+  for (const feature of [BLUETOOTH_FEATURE, BLE_FEATURE]) {
+    if (!features.some((item) => item.$['android:name'] === feature)) {
+      features.push({ $: { 'android:name': feature, 'android:required': required } });
+    }
+  }
+  // Our location permission only exists for scanning on Android 11 and older, so it must not make
+  // location hardware a Play Store requirement. If the app declared location itself, it owns this.
+  if (addsLocation && !features.some((item) => item.$['android:name'] === LOCATION_FEATURE)) {
+    features.push({ $: { 'android:name': LOCATION_FEATURE, 'android:required': 'false' } });
+  }
+  return manifest;
+}
+
+/** Raises `android.minSdkVersion` to MIN_ANDROID_SDK when absent or lower. Never lowers it. */
+export function applyGradleProperties(
+  properties: AndroidConfig.Properties.PropertiesItem[]
+): AndroidConfig.Properties.PropertiesItem[] {
+  const existing = properties.find(
+    (item) => item.type === 'property' && item.key === MIN_SDK_PROPERTY
+  );
+  if (!existing) {
+    properties.push({ type: 'property', key: MIN_SDK_PROPERTY, value: String(MIN_ANDROID_SDK) });
+  } else if (existing.type === 'property' && !(Number(existing.value) >= MIN_ANDROID_SDK)) {
+    existing.value = String(MIN_ANDROID_SDK);
+  }
+  return properties;
+}
+
+/**
+ * Runs in the finalized mod, after every other plugin has written the native files, so the result is
+ * the same whichever order the app lists its plugins in (plan §4.15).
+ */
+export const withBleKitAndroid: ConfigPlugin<ExpoBleKitPluginProps> = (config, props) =>
+  withFinalizedMod(config, [
+    'android',
+    async (config) => {
+      const projectRoot = config.modRequest.projectRoot;
+      const manifestPath = await AndroidConfig.Paths.getAndroidManifestAsync(projectRoot);
+      const manifest = await AndroidConfig.Manifest.readAndroidManifestAsync(manifestPath);
+      await AndroidConfig.Manifest.writeAndroidManifestAsync(
+        manifestPath,
+        applyAndroidManifest(manifest, props)
+      );
+
+      const propertiesPath = join(config.modRequest.platformProjectRoot, 'gradle.properties');
+      const contents = await fs.readFile(propertiesPath, 'utf8');
+      const properties = applyGradleProperties(
+        AndroidConfig.Properties.parsePropertiesFile(contents)
+      );
+      await fs.writeFile(
+        propertiesPath,
+        AndroidConfig.Properties.propertiesListToString(properties)
+      );
+      return config;
+    },
+  ]);

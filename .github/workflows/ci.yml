@@ -25,6 +25,7 @@ jobs:
       - run: yarn format:check
       - run: yarn typecheck
       - run: yarn test
+      - run: yarn test plugin
       - run: yarn check:package
 
   test-peripheral:

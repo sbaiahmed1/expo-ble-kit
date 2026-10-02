@@ -1,6 +1,6 @@
 # Expo BLE (`expo-ble-kit`) — Architecture & Implementation Plan
 
-> **Status:** Draft v0.16 · **Date:** 2026-10-02 · **Scope:** proposition #3, an Expo-first Bluetooth Low Energy module · **Changes:** Appendix D
+> **Status:** Draft v0.17 · **Date:** 2026-10-02 · **Scope:** proposition #3, an Expo-first Bluetooth Low Energy module · **Changes:** Appendix D
 >
 > **Package name:** `expo-ble-kit` (D0a, decided 2026-10-02) · native module `ExpoBleKit` · Android package `expo.modules.blekit`.
 >
@@ -451,7 +451,10 @@ Plugin rules:
 
 - Idempotent, never duplicates entries, everything beyond the base permissions is opt-in, one snapshot test per option.
 - Android `minSdk` (ADR-002): the plugin sets `android.minSdkVersion=26` in `gradle.properties` when it is absent or lower. It never lowers a higher value. Expo's autolinking reads this property into its version catalog (checked on SDK 57). Snapshot tests run with `expo-build-properties` before and after this plugin. If another plugin later writes a lower value, the library's own `minSdkVersion 26` fails the manifest merge with a clear error.
-- Legacy permissions use `maxSdkVersion`, but the plugin never adds `maxSdkVersion` to a permission that is already declared without it. Otherwise an app that also uses location for other reasons (e.g. through `expo-location`) loses it on Android 12+. Snapshot tests run with `expo-location` listed both before and after this plugin, and the result must be identical in both orders ⚠️ VERIFY mod ordering.
+- Legacy permissions use `maxSdkVersion`, but the plugin never adds `maxSdkVersion` to a permission that is already declared without it. Otherwise an app that also uses location for other reasons (e.g. through `expo-location`) loses it on Android 12+. Snapshot tests run with `expo-location` listed both before and after this plugin, and the result must be identical in both orders.
+- Ordering (verified on SDK 57): the Android changes run in `withFinalizedMod`, after every other plugin's mods, and only add entries that are absent. A plain `withAndroidManifest` / `withGradleProperties` mod would depend on the app's plugin order, because Expo runs mods in reverse registration order.
+- Hardware features: the plugin declares `android.hardware.bluetooth` and `android.hardware.bluetooth_le` with `android:required` from `requireBleHardware` (default `false`). It also declares `android.hardware.location` as not required when it adds `ACCESS_FINE_LOCATION` itself. Without these lines, Google Play treats the features the legacy permissions imply as required and hides the app from devices without them (seen with `aapt2 dump badging` on the example APK). If the app declared location itself, the app decides whether location hardware is required.
+- Unknown options, and options that belong to later phases, fail prebuild with an error naming the option, instead of being ignored.
 
 **Bare React Native apps (G1).** The config plugin never runs in bare apps. The library's own `AndroidManifest.xml` therefore declares **no** permissions and **no** components:
 
@@ -1037,9 +1040,10 @@ Parallelism: P0-06/P0-07 can run alongside P0-03/P0-04. With two people, P4 can 
 - [ ] **P1-12 TS API and hooks** — deps: P1-03 … P1-10, P1-13.
   `BleManager`, `Peripheral`, `useBleState`, `useBlePermissions`, `useScan`, `usePeripheral`, `useCharacteristicValue`.
   **Accept:** exported types match §5 exactly; hooks tested with the fake adapter.
-- [ ] **P1-14 Config plugin v1** — deps: P0-03.
+- [x] **P1-14 Config plugin v1** — deps: P0-03.
   Base iOS/Android declarations from §4.13 and §4.15 (no background or peripheral-role options yet), the `minSdkVersion` raise, and `docs/guides/bare-setup.md`.
   **Accept:** snapshot tests, including the `expo-location` and `expo-build-properties` ordering cases (§4.15); an app left on Expo's default `minSdk` builds after adding the plugin; running `npx expo prebuild --clean` twice gives identical native projects; a test checks that the bare-setup guide lists exactly what the plugin writes.
+  **Done 2026-10-02:** `plugin/src/` (`schema.ts`, `ios.ts`, `android.ts`) and `docs/guides/bare-setup.md`; 19 Jest tests in `plugin/src/__tests__` (`yarn test plugin`, also in CI). The ordering tests run the real mod pipeline (`compileModsAsync`) with stand-ins for `expo-location` and `expo-build-properties` (which sets `minSdk` 24) in both orders, and assert byte-identical output. Two `prebuild --clean` runs of the example gave identical trees (70 files). On the Galaxy A52 (API 34), the release APK has `minSdk` 26 and requests only `BLUETOOTH_SCAN` and `BLUETOOTH_CONNECT`; `aapt2` lists no Bluetooth or location hardware as required. Found on the device build: the legacy permissions made classic Bluetooth and location hardware required on Google Play, so the plugin now declares them optional (§4.15).
 - [ ] **P1-15 Explorer and Heart Rate examples** — deps: P1-12.
   Explorer: scan list → device → services → read / write / subscribe, with hex and UTF-8 views. Heart Rate: scan for `0x180D`, connect with a reconnect policy, live BPM.
   **Accept:** both work against Bumble (emulator) and the nRF52840 on iOS and Android devices; Maestro flows `explorer-basic.yaml` and `heart-rate.yaml` pass; example screens have Jest tests using the fake adapter.
@@ -1418,3 +1422,4 @@ Submit results (`BluetoothStatusCodes`, API 33+): 1 not enabled → `BLUETOOTH_P
 | v0.14 | 2026-10-02 | P1-02 done: GattQueue on both platforms with ordering, timeout, cancellation, reject-all and randomized tests; CoreError code list added |
 | v0.15 | 2026-10-02 | P1-10 done: error model and native mapping tables. Appendix A rewritten from verified SDK values (shared ATT table, Android, iOS) |
 | v0.16 | 2026-10-02 | P1-11 done: UUID normalization and SIG constants |
+| v0.17 | 2026-10-02 | P1-14 done: config plugin v1 and the bare setup guide. §4.15 mod-ordering VERIFY resolved (finalized mod, add-only-if-absent); new rules for optional hardware features and for rejecting unknown options |
