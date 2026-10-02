@@ -1,6 +1,6 @@
 # Expo BLE (`expo-ble-kit`) — Architecture & Implementation Plan
 
-> **Status:** Draft v0.23 · **Date:** 2026-10-02 · **Scope:** proposition #3, an Expo-first Bluetooth Low Energy module · **Changes:** Appendix D
+> **Status:** Draft v0.24 · **Date:** 2026-10-02 · **Scope:** proposition #3, an Expo-first Bluetooth Low Energy module · **Changes:** Appendix D
 >
 > **Package name:** `expo-ble-kit` (D0a, decided 2026-10-02) · native module `ExpoBleKit` · Android package `expo.modules.blekit`.
 >
@@ -767,6 +767,15 @@ Attribute rules (decided in P1-07):
 - iOS reports reads and notifications through the same callback: an update while a read of that characteristic is in flight answers the read.
 - The native functions take one request object (`service`, `characteristic`, `descriptor`, `withResponse`, `timeoutMs`) plus the value; the TS layer normalizes UUIDs and fills the defaults (`src/internal/attributeRequest.ts`).
 
+Subscription rules (decided in P1-08):
+
+- Native keeps the subscribers of each characteristic, under ids JS assigns: `subscribe(request, id, mode)` and `unsubscribe(id, timeoutMs)`. The first subscriber enables the CCCD through the queue (Android: `setCharacteristicNotification` plus the CCCD write; iOS: `setNotifyValue`); later subscribers share it, waiting for that write if it is still in flight. Removing the last subscriber disables it, and a failed write rejects `unsubscribe`. Delivery to the removed subscriber stops at once either way.
+- Values arrive as one `notification { service, characteristic, value, timestamp }` event on the peripheral object per value, whatever the number of subscribers; the TS layer fans them out (and P2-04 batches per subscriber). Values of a characteristic nobody subscribes to are dropped.
+- `mode: 'auto'` takes notifications when a characteristic has both. A characteristic with neither, or without the asked mode, is `NOT_SUPPORTED`; Android also needs its CCCD to be discovered (`DESCRIPTOR_NOT_FOUND`). An explicit mode different from the active one is `INVALID_ARGUMENT`, as is an id already in use. Unsubscribing an unknown id, or after the connection ended, resolves.
+- An `unsubscribe` while the enabling write is still in flight rejects that subscriber's `subscribe` with `OPERATION_CANCELLED`, and the CCCD is disabled again after it is enabled, so nothing stays on.
+- Indications are acknowledged by the stack on both platforms.
+- A disconnect ends every subscription without writing (the link is gone); restoring them on reconnect is P2-01's (`restoreSubscriptionsOnReconnect`).
+
 ### 5.5 Peripheral role (P4)
 
 ```ts
@@ -895,7 +904,7 @@ export interface VirtualPeripheralConfig {
 export interface FakeBle {
   addPeripheral(config: VirtualPeripheralConfig): VirtualPeripheral;
   setState(state: BleState): void;
-  /** Make the next matching op fail with this code. Ops: requestPermissions, startScan, connect, discover, read, write, readDescriptor, writeDescriptor. */
+  /** Make the next matching op fail with this code. Ops: requestPermissions, startScan, connect, discover, read, write, readDescriptor, writeDescriptor, subscribe, unsubscribe. */
   injectError(match: { op: string; peripheralId?: string; characteristic?: UUID }, code: BleErrorCode): void;
   reset(): void;
 }
@@ -905,12 +914,14 @@ export interface VirtualPeripheral {
   advertise(on: boolean): void;
   setValue(service: UUID, characteristic: UUID, value: Uint8Array): void;
   notify(service: UUID, characteristic: UUID, value: Uint8Array): void;
+  /** The peripheral side of the CCCD: whether a client has notifications or indications on. */
+  isNotifying(service: UUID, characteristic: UUID): boolean;
   disconnect(reason?: 'peer' | 'linkLoss'): void;
   readonly writes: ReadonlyArray<{ characteristic: UUID; value: Uint8Array; withResponse: boolean }>;
 }
 ```
 
-Fake rules (P1-13): Bluetooth is on and every permission granted unless `installFakeBle` says otherwise; a peripheral advertises from `addPeripheral` until `advertise(false)`; a connect to a peripheral that isn't advertising waits (times out, or completes when it advertises), like a real absent device; writes store the value, so a later read returns it; writes without response take at most 20 bytes (one packet at the default MTU); results and operation answers arrive on later timer ticks, so tests advance timers (Jest fake timers work). `notify()` throws until P1-08 adds notification delivery.
+Fake rules (P1-13): Bluetooth is on and every permission granted unless `installFakeBle` says otherwise; a peripheral advertises from `addPeripheral` until `advertise(false)`; a connect to a peripheral that isn't advertising waits (times out, or completes when it advertises), like a real absent device; writes store the value, so a later read returns it; writes without response take at most 20 bytes (one packet at the default MTU); results and operation answers arrive on later timer ticks, so tests advance timers (Jest fake timers work). `notify()` reaches a connected client only while it has the CCCD enabled, as on a real peripheral, and a disconnect resets the CCCDs; `mode: 'indicate'` follows Android (allowed on a characteristic that also notifies).
 
 ### 5.9 Usage examples
 
@@ -961,6 +972,7 @@ hrm.notify(GattServices.HeartRate, GattCharacteristics.HeartRateMeasurement, Uin
 | Write-without-response flow control | ✅ | ✅ (API 33+ status codes, legacy pacing below) | Partial |
 | Connection priority / PHY | ❌ | ✅ | ❌ |
 | Explicit bonding | ❌ implicit | ✅ | ❌ |
+| Indications on a characteristic that also notifies | ❌ CoreBluetooth picks notifications (`mode: 'indicate'` rejects with `NOT_SUPPORTED`) | ✅ | ❌ |
 | Advertise local name + service UUIDs | ✅ | ✅ | ❌ |
 | Advertise manufacturer / service data | ❌ | ✅ | ❌ |
 | GATT server | ✅ | ✅ | ❌ |
@@ -1100,6 +1112,9 @@ Parallelism: P0-06/P0-07 can run alongside P0-03/P0-04. With two people, P4 can 
   - No CCCD is left enabled after the last subscriber is removed (checked on the peripheral side).
   - With two subscribers on one characteristic, removing one keeps the other receiving.
   - `unsubscribe()` rejects with a coded error when the CCCD write fails.
+  **Progress 2026-10-02 (open):** subscriptions on both platforms (shared CCCD per characteristic, mode resolution, delivery, cleanup on disconnect), the binding (`subscribe`, `unsubscribe`, `notification` events with epoch timestamps), the §5.4 `SubscribeOptions` and `CharacteristicSubscription` types, mode validation for P1-12, and subscriptions in the fake with a peripheral-side CCCD (`isNotifying`). iOS now tells reads and notifications apart: an update while a read of that characteristic is in flight answers the read. Tests: 6 Android, 5 iOS, 3 Jest. Rules in §5.4; the iOS indicate limit in §6.
+  - Verified on the Galaxy A52: `subscribe()` without a connection rejects with `DISCONNECTED`, and `unsubscribe()` of an unknown id resolves, through the binding.
+  - Pending real hardware: the 20 Hz stream for 5 minutes, indications, the CCCD state on the peripheral side, two subscribers on one characteristic, and a failed CCCD write, on both platforms (each is unit-tested against the fakes).
 - [ ] **P1-09 MTU and RSSI** — deps: P1-06.
   Android `requestMtu` after discovery (default per Q3; note the Android 14+ behavior in Q3), iOS-derived MTU, `readRssi`.
   **Accept:** `mtu` reflects the negotiated value; `mtuChange` fires on Android; the value requested vs. negotiated is recorded on API 33 and API 34+ devices for Q3.
@@ -1509,3 +1524,4 @@ Submit results (`BluetoothStatusCodes`, API 33+): 1 not enabled → `BLUETOOTH_P
 | v0.21 | 2026-10-02 | P1-06 in progress: discovery, `autoDiscover` and the cache on both platforms; two-timeout reset on Android. Discovery rules in §5.4, the discovery timeout in §4.9 |
 | v0.22 | 2026-10-02 | P1-07 in progress: reads, writes and descriptors on both platforms. Attribute rules in §5.4 (checks, lengths, the CCCD guard, basic write-without-response pacing) |
 | v0.23 | 2026-10-02 | P1-13 done: native port, lazy module, fake adapter, `expo-ble-kit/testing`, and the GATT queue contract shared by the three queues. §4.6 and §5.8 updated (fake rules, `descriptors` in `VirtualPeripheralConfig`, `injectError` op names) |
+| v0.24 | 2026-10-02 | P1-08 in progress: notifications and indications on both platforms and in the fake. Subscription rules in §5.4, the iOS indicate limit in §6, `isNotifying` in §5.8 |

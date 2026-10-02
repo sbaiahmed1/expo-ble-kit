@@ -80,3 +80,11 @@ struct AttributeRequestRecord: Record {
     timeoutMs / 1000
   }
 }
+
+/// Payload of a peripheral's `notification` event (plan §5.4).
+struct NotificationEventRecord: Record {
+  @Field var service: String = ""
+  @Field var characteristic: String = ""
+  @Field var value = Data()
+  @Field var timestamp: Double = 0
+}

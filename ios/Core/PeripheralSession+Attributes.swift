@@ -114,8 +114,13 @@ extension PeripheralSession {
     error: Error?
   ) {
     // CoreBluetooth reports reads and notifications the same way: an update for a characteristic with
-    // a read in flight answers the read. P1-08 delivers the others as notifications.
-    complete(.read, Self.key(characteristic), error, output: .value(value))
+    // a read in flight answers the read; any other update is a notification or indication.
+    let key = Self.key(characteristic)
+    if queue.current?.kind == .read, queue.current?.target == key {
+      complete(.read, key, error, output: .value(value))
+    } else if error == nil, let value {
+      deliverNotification(value, from: characteristic)
+    }
   }
 
   func peripheral(_ peripheral: PeripheralLike, didWriteValueFor characteristic: CharacteristicLike, error: Error?) {
@@ -143,7 +148,7 @@ extension PeripheralSession {
 
   // MARK: Helpers
 
-  private func complete(_ kind: GattOperation.Kind, _ target: String, _ error: Error?, output: GattOperation.Output) {
+  func complete(_ kind: GattOperation.Kind, _ target: String, _ error: Error?, output: GattOperation.Output) {
     let result: Result<GattOperation.Output, CoreError> = error
       .map { .failure(CoreBluetoothErrorMapping.coreError(from: $0)) } ?? .success(output)
     _ = queue.complete(result) { $0.kind == kind && $0.target == target }
@@ -218,7 +223,7 @@ extension PeripheralSession {
   }
 
   /// Callbacks are matched by attribute object, which also tells apart two instances of one UUID.
-  private static func key(_ attribute: AnyObject) -> String {
+  static func key(_ attribute: AnyObject) -> String {
     String(describing: ObjectIdentifier(attribute))
   }
 
@@ -229,7 +234,7 @@ extension PeripheralSession {
     return Data()
   }
 
-  private static func coreError(_ error: Error) -> CoreError {
+  static func coreError(_ error: Error) -> CoreError {
     error as? CoreError ?? CoreError(.internal, error.localizedDescription)
   }
 }

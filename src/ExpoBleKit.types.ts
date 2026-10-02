@@ -21,6 +21,15 @@ export type ConnectionStateEvent = {
   message?: string;
 };
 
+/** One notification or indication; `timestamp` in epoch milliseconds (plan §4.10). */
+export type NotificationEvent = {
+  service: string;
+  characteristic: string;
+  value: Uint8Array;
+  timestamp: number;
+};
+
 export type PeripheralObjectEvents = {
   connectionStateChange: (event: ConnectionStateEvent) => void;
+  notification: (event: NotificationEvent) => void;
 };

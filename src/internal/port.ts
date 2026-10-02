@@ -1,6 +1,7 @@
 import type {
   ConnectionStateEvent,
   ExpoBleKitModuleEvents,
+  NotificationEvent,
   PeripheralObjectEvents,
 } from '../ExpoBleKit.types';
 import type {
@@ -12,7 +13,7 @@ import type {
   Service,
   Subscription,
 } from '../types';
-import type { NativeAttributeRequest } from './attributeRequest';
+import type { NativeAttributeRequest, NativeSubscribeMode } from './attributeRequest';
 import type { NativeConnectOptions } from './connectOptions';
 import type { NativeScanOptions } from './scanOptions';
 
@@ -59,10 +60,21 @@ export interface NativePeripheralPort {
   write(request: NativeAttributeRequest, value: Uint8Array): Promise<void>;
   readDescriptor(request: NativeAttributeRequest): Promise<Uint8Array>;
   writeDescriptor(request: NativeAttributeRequest, value: Uint8Array): Promise<void>;
+  /**
+   * JS numbers its subscriptions. The first on a characteristic enables the CCCD; values then
+   * arrive as `notification` events, once per value whatever the number of subscribers.
+   */
+  subscribe(
+    request: NativeAttributeRequest,
+    subscriptionId: number,
+    mode: NativeSubscribeMode
+  ): Promise<void>;
+  /** The last subscriber of a characteristic disables its CCCD; unknown ids resolve. */
+  unsubscribe(subscriptionId: number, timeoutMs: number): Promise<void>;
   addListener<E extends keyof PeripheralObjectEvents>(
     event: E,
     listener: PeripheralObjectEvents[E]
   ): Subscription;
 }
 
-export type { ConnectionStateEvent };
+export type { ConnectionStateEvent, NotificationEvent };

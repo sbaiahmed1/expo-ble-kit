@@ -138,3 +138,22 @@ export interface Descriptor {
 export interface WriteOptions extends OpOptions {
   withResponse?: boolean; // default true
 }
+
+export interface SubscribeOptions extends OpOptions {
+  mode?: 'auto' | 'notify' | 'indicate'; // default 'auto'
+}
+
+/**
+ * A GATT subscription. Several subscriptions to the same characteristic share one CCCD:
+ * - the first enables it, removing the last disables it;
+ * - batched and unbatched subscribers can share a characteristic (batching is per subscriber);
+ * - a later subscriber that asks for an explicit `mode` different from the active one rejects
+ *   with INVALID_ARGUMENT.
+ */
+export interface CharacteristicSubscription extends Subscription {
+  readonly active: boolean;
+  /** Stops delivery immediately. If this was the last subscriber, disables the CCCD and rejects with a coded error if that write fails. */
+  unsubscribe(options?: OpOptions): Promise<void>;
+  /** Fire-and-forget unsubscribe(). CCCD failures go to the `warning` event and the log. */
+  remove(): void;
+}

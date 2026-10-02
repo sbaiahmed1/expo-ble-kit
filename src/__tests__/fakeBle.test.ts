@@ -1,9 +1,9 @@
-import ExpoBleKit, { BleError, type ScanResult } from '../index';
 import type { ConnectionStateEvent } from '../ExpoBleKit.types';
+import ExpoBleKit, { BleError, type ScanResult } from '../index';
 import { toNativeAttributeRequest } from '../internal/attributeRequest';
 import { toNativeConnectOptions } from '../internal/connectOptions';
-import { toNativeScanOptions } from '../internal/scanOptions';
 import type { NativePeripheralPort } from '../internal/port';
+import { toNativeScanOptions } from '../internal/scanOptions';
 import { installFakeBle, type FakeBle, type VirtualPeripheral } from '../testing';
 
 // P1-13: the fake behaves like the native cores (plan §5.3, §5.4, §5.8), seen through the same
@@ -313,6 +313,77 @@ describe('the fake', () => {
       const value = peripheral.read(request(STATIC_READ));
       await settle();
       expect(await value).toEqual(new Uint8Array([1, 2, 3]));
+    });
+  });
+
+  describe('subscriptions', () => {
+    let peripheral: NativePeripheralPort;
+    let values: number[];
+
+    beforeEach(async () => {
+      ({ peripheral } = await connected());
+      values = [];
+      peripheral.addListener('notification', (event) => values.push(...event.value));
+    });
+
+    /** The outcome code ('ok' or a BleErrorCode); the handler is attached before time moves. */
+    async function subscribe(
+      id: number,
+      mode: 'auto' | 'notify' | 'indicate' = 'auto',
+      characteristic = STREAM
+    ) {
+      const outcome = codeOf(peripheral.subscribe(request(characteristic), id, mode));
+      await settle();
+      return outcome;
+    }
+
+    async function unsubscribe(id: number) {
+      const outcome = codeOf(peripheral.unsubscribe(id, 10_000));
+      await settle();
+      return outcome;
+    }
+
+    it('shares one CCCD, and the last subscriber out disables it on the peripheral', async () => {
+      device.notify(TEST_SERVICE, STREAM, new Uint8Array([1]));
+      expect(values).toEqual([]);
+
+      expect(await subscribe(1)).toBe('ok');
+      expect(await subscribe(2)).toBe('ok');
+      expect(device.isNotifying(TEST_SERVICE, STREAM)).toBe(true);
+      device.notify(TEST_SERVICE, STREAM, new Uint8Array([2]));
+      expect(values).toEqual([2]);
+
+      expect(await unsubscribe(1)).toBe('ok');
+      device.notify(TEST_SERVICE, STREAM, new Uint8Array([3]));
+      expect(values).toEqual([2, 3]);
+      expect(device.isNotifying(TEST_SERVICE, STREAM)).toBe(true);
+
+      expect(await unsubscribe(2)).toBe('ok');
+      expect(device.isNotifying(TEST_SERVICE, STREAM)).toBe(false);
+      device.notify(TEST_SERVICE, STREAM, new Uint8Array([4]));
+      expect(values).toEqual([2, 3]);
+    });
+
+    it('rejects a failed CCCD write, and modes the characteristic lacks', async () => {
+      expect(await subscribe(1, 'indicate')).toBe('NOT_SUPPORTED');
+      expect(await subscribe(2, 'auto', STATIC_READ)).toBe('NOT_SUPPORTED');
+
+      expect(await subscribe(3)).toBe('ok');
+      fake.injectError({ op: 'unsubscribe', characteristic: STREAM }, 'WRITE_NOT_PERMITTED');
+      expect(await unsubscribe(3)).toBe('WRITE_NOT_PERMITTED');
+      device.notify(TEST_SERVICE, STREAM, new Uint8Array([1]));
+      expect(values).toEqual([]);
+
+      fake.injectError({ op: 'subscribe' }, 'INSUFFICIENT_AUTHENTICATION');
+      expect(await subscribe(4)).toBe('INSUFFICIENT_AUTHENTICATION');
+    });
+
+    it('ends with the connection', async () => {
+      expect(await subscribe(1)).toBe('ok');
+      device.disconnect('linkLoss');
+      expect(device.isNotifying(TEST_SERVICE, STREAM)).toBe(false);
+      expect(await unsubscribe(1)).toBe('ok');
+      expect(await subscribe(2)).toBe('DISCONNECTED');
     });
   });
 

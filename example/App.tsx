@@ -14,6 +14,7 @@ import ExpoBleKit, {
 
 const TEST_SERVICE = '0c6c1000-b347-4cfa-9827-1c5a13658519';
 const TEST_NAME = 'BleKit-Test';
+const STREAM = '0c6c1007-b347-4cfa-9827-1c5a13658519';
 // A device that isn't there: a random static address on Android, an unknown id on iOS.
 const ABSENT_ID =
   Platform.OS === 'android' ? 'C0:FF:EE:00:00:99' : '0C6C0000-0000-4000-8000-000000000099';
@@ -159,6 +160,8 @@ export default function App() {
     for (const [name, call] of [
       ['read', () => absent.read(request)],
       ['write', () => absent.write(request, new Uint8Array([1, 2, 3]))],
+      ['subscribe', () => absent.subscribe({ ...request, characteristic: STREAM }, 1, 'auto')],
+      ['unsubscribe', () => absent.unsubscribe(1, 10_000)],
     ] as const) {
       try {
         await call();
@@ -261,7 +264,7 @@ export default function App() {
           <Button testID="discover-absent" title="Discover absent" onPress={discoverAbsent} />
           <Button
             testID="read-write-absent"
-            title="Read + write absent"
+            title="Read, write, subscribe absent"
             onPress={readWriteAbsent}
           />
           <Button testID="diagnostics" title="Diagnostics" onPress={showDiagnostics} />

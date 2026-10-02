@@ -8,6 +8,7 @@ export type {
   BleState,
   Characteristic,
   CharacteristicProperty,
+  CharacteristicSubscription,
   ConnectionState,
   ConnectOptions,
   Diagnostics,
@@ -20,6 +21,7 @@ export type {
   ScanResult,
   ScanSession,
   Service,
+  SubscribeOptions,
   Subscription,
   WriteOptions,
 } from './types';

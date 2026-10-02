@@ -4,7 +4,7 @@ import type {
   PeripheralObjectEvents,
 } from '../ExpoBleKit.types';
 import { BleError, BleErrorCode } from '../errors';
-import type { NativeAttributeRequest } from '../internal/attributeRequest';
+import type { NativeAttributeRequest, NativeSubscribeMode } from '../internal/attributeRequest';
 import type { NativeConnectOptions } from '../internal/connectOptions';
 import { DEFAULT_DISCOVERY_TIMEOUT_MS } from '../internal/connectOptions';
 import { GattQueue, type GattOperationKind, type GattResult } from '../internal/gattQueue';
@@ -54,7 +54,9 @@ export type FakeOperation =
   | 'read'
   | 'write'
   | 'readDescriptor'
-  | 'writeDescriptor';
+  | 'writeDescriptor'
+  | 'subscribe'
+  | 'unsubscribe';
 
 export interface FakeBle {
   addPeripheral(config: VirtualPeripheralConfig): VirtualPeripheral;
@@ -71,8 +73,10 @@ export interface VirtualPeripheral {
   readonly id: string;
   advertise(on: boolean): void;
   setValue(service: UUID, characteristic: UUID, value: Uint8Array): void;
-  /** Delivery to subscribers arrives with notifications (P1-08); until then this throws. */
+  /** Sends a notification or indication, which a connected client receives if it enabled the CCCD. */
   notify(service: UUID, characteristic: UUID, value: Uint8Array): void;
+  /** The peripheral side of the CCCD: whether a client has notifications or indications on. */
+  isNotifying(service: UUID, characteristic: UUID): boolean;
   disconnect(reason?: 'peer' | 'linkLoss'): void;
   readonly writes: readonly { characteristic: UUID; value: Uint8Array; withResponse: boolean }[];
 }
@@ -107,6 +111,8 @@ interface VirtualCharacteristic extends VirtualAttribute {
   uuid: UUID;
   properties: CharacteristicProperty[];
   descriptors: Map<UUID, VirtualAttribute>;
+  /** What the connected client wrote to the CCCD. */
+  cccd: 'off' | 'notify' | 'indicate';
 }
 interface VirtualService {
   uuid: UUID;
@@ -168,6 +174,7 @@ class VirtualDevice implements VirtualPeripheral {
                 properties: characteristic.properties,
                 value: characteristic.value ?? new Uint8Array(),
                 descriptors,
+                cccd: 'off' as const,
               },
             ] as const;
           })
@@ -194,8 +201,33 @@ class VirtualDevice implements VirtualPeripheral {
     target.value = value.slice();
   }
 
-  notify(): void {
-    throw fail(BleErrorCode.NOT_SUPPORTED, 'Notifications arrive with P1-08');
+  notify(service: UUID, characteristic: UUID, value: Uint8Array): void {
+    const target = this.characteristic(service, characteristic);
+    // A peripheral only sends to a client that enabled the CCCD.
+    if (target.cccd !== 'off') {
+      this.adapter
+        .handleFor(this.id)
+        .deliverNotification(target.uuid, normalizeUUID(service), value.slice());
+    }
+  }
+
+  isNotifying(service: UUID, characteristic: UUID): boolean {
+    return this.characteristic(service, characteristic).cccd !== 'off';
+  }
+
+  characteristic(service: UUID, characteristic: UUID): VirtualCharacteristic {
+    const target = this.services
+      .get(normalizeUUID(service))
+      ?.characteristics.get(normalizeUUID(characteristic));
+    if (!target) {
+      throw new Error(`No characteristic ${characteristic} in service ${service}`);
+    }
+    return target;
+  }
+
+  /** A non-bonded client's CCCDs reset when it disconnects. */
+  clientDisconnected(): void {
+    this.services.forEach((service) => service.characteristics.forEach((c) => (c.cccd = 'off')));
   }
 
   disconnect(reason: 'peer' | 'linkLoss' = 'peer'): void {
@@ -247,6 +279,18 @@ class FakePeripheralHandle implements NativePeripheralPort {
   private cancelConnectTimeout: (() => void) | null = null;
   /** Bumped when a connection attempt ends, so its scheduled steps do nothing. */
   private attempt = 0;
+  /** One CCCD per characteristic, shared by its subscribers (plan §5.4). */
+  private subscriptions = new Map<
+    string,
+    {
+      characteristic: VirtualCharacteristic;
+      indicate: boolean;
+      subscribers: Set<number>;
+      waiting: Map<number, { resolve: () => void; reject: (error: BleError) => void }>;
+      enabled: boolean;
+    }
+  >();
+  private subscriptionKeys = new Map<number, string>();
 
   constructor(
     readonly id: string,
@@ -395,7 +439,115 @@ class FakePeripheralHandle implements NativePeripheralPort {
     );
   }
 
+  async subscribe(
+    request: NativeAttributeRequest,
+    subscriptionId: number,
+    mode: NativeSubscribeMode
+  ): Promise<void> {
+    if (this.subscriptionKeys.has(subscriptionId)) {
+      throw fail(BleErrorCode.INVALID_ARGUMENT, `Subscription ${subscriptionId} already exists`);
+    }
+    const characteristic = this.findCharacteristic(
+      request,
+      ['notify', 'indicate'],
+      BleErrorCode.NOT_SUPPORTED
+    );
+    const notifies = characteristic.properties.includes('notify');
+    const indicates = characteristic.properties.includes('indicate');
+    if ((mode === 'notify' && !notifies) || (mode === 'indicate' && !indicates)) {
+      throw fail(
+        BleErrorCode.NOT_SUPPORTED,
+        `Characteristic ${request.characteristic} doesn't support ${mode}`
+      );
+    }
+    const indicate = mode === 'indicate' || (mode === 'auto' && !notifies);
+    const key = `${request.service}/${request.characteristic}`;
+    let entry = this.subscriptions.get(key);
+    if (entry && mode !== 'auto' && entry.indicate !== indicate) {
+      throw fail(
+        BleErrorCode.INVALID_ARGUMENT,
+        `Characteristic ${request.characteristic} is already subscribed`
+      );
+    }
+    this.subscriptionKeys.set(subscriptionId, key);
+    if (entry?.enabled) {
+      entry.subscribers.add(subscriptionId);
+      return;
+    }
+    const isNew = !entry;
+    entry ??= {
+      characteristic,
+      indicate,
+      subscribers: new Set(),
+      waiting: new Map(),
+      enabled: false,
+    };
+    const subscription = entry;
+    const ready = new Promise<void>((resolve, reject) =>
+      subscription.waiting.set(subscriptionId, { resolve, reject })
+    );
+    if (!isNew) {
+      return ready; // The CCCD write is already on its way.
+    }
+    this.subscriptions.set(key, subscription);
+    this.operation('setNotify', 'subscribe', request.characteristic, request.timeoutMs, () => {
+      characteristic.cccd = indicate ? 'indicate' : 'notify';
+    }).then(
+      () => {
+        subscription.enabled = true;
+        subscription.waiting.forEach((waiter, id) => {
+          subscription.subscribers.add(id);
+          waiter.resolve();
+        });
+        subscription.waiting.clear();
+      },
+      (error: BleError) => {
+        subscription.waiting.forEach((waiter, id) => {
+          this.subscriptionKeys.delete(id);
+          waiter.reject(error);
+        });
+        subscription.waiting.clear();
+        if (this.subscriptions.get(key) === subscription && subscription.subscribers.size === 0) {
+          this.subscriptions.delete(key);
+        }
+      }
+    );
+    return ready;
+  }
+
+  async unsubscribe(subscriptionId: number, timeoutMs: number): Promise<void> {
+    const key = this.subscriptionKeys.get(subscriptionId);
+    this.subscriptionKeys.delete(subscriptionId);
+    const entry = key === undefined ? undefined : this.subscriptions.get(key);
+    if (!key || !entry) {
+      return;
+    }
+    entry.subscribers.delete(subscriptionId);
+    entry.waiting
+      .get(subscriptionId)
+      ?.reject(
+        fail(BleErrorCode.OPERATION_CANCELLED, 'unsubscribed before the subscription was ready')
+      );
+    entry.waiting.delete(subscriptionId);
+    if (entry.subscribers.size > 0 || entry.waiting.size > 0) {
+      return;
+    }
+    this.subscriptions.delete(key);
+    if (this.state !== 'connected') {
+      return;
+    }
+    await this.operation('setNotify', 'unsubscribe', entry.characteristic.uuid, timeoutMs, () => {
+      entry.characteristic.cccd = 'off';
+    });
+  }
+
   // Called by the adapter and the virtual device
+
+  deliverNotification(characteristic: UUID, service: UUID, value: Uint8Array): void {
+    if (this.subscriptions.get(`${service}/${characteristic}`)?.enabled) {
+      this.emitter.emit('notification', { service, characteristic, value, timestamp: Date.now() });
+    }
+  }
 
   /** The device started advertising: a pending connect completes. */
   deviceAppeared(): void {
@@ -498,6 +650,10 @@ class FakePeripheralHandle implements NativePeripheralPort {
     this.setState('disconnected', error);
     this.queue.failAll(fail(BleErrorCode.DISCONNECTED, 'Disconnected'));
     this.queue = new GattQueue(this.scheduler);
+    // Subscriptions end with the connection (plan §4.8), and the peripheral forgets the CCCDs.
+    this.subscriptions.clear();
+    this.subscriptionKeys.clear();
+    this.device()?.clientDisconnected();
     const failure =
       connectError ??
       error ??

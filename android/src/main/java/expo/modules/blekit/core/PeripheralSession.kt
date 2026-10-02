@@ -28,6 +28,23 @@ enum class SessionState {
     }
 }
 
+/** JS `SubscribeOptions.mode` (plan §5.4). `AUTO` takes notify when the characteristic has both. */
+enum class SubscribeMode {
+  AUTO,
+  NOTIFY,
+  INDICATE,
+  ;
+
+  companion object {
+    fun of(js: String): SubscribeMode? = when (js) {
+      "auto" -> AUTO
+      "notify" -> NOTIFY
+      "indicate" -> INDICATE
+      else -> null
+    }
+  }
+}
+
 /** Connect options after the TS layer applied its defaults (plan §5.4). */
 class ConnectSpec(
   /** Null: no timeout ("connect when in range"). Only an explicit JS `timeoutMs: null` gets here. */
@@ -68,6 +85,23 @@ class PeripheralSession(
       }
     }
   }
+
+  /** Notifications and indications of subscribed characteristics, on the BLE thread. */
+  var onNotification: ((GattCharacteristicRef, ByteArray) -> Unit)? = null
+
+  /** One CCCD per characteristic, shared by its subscribers (plan §5.4). */
+  private class CharacteristicSubscriptions(val ref: GattCharacteristicRef, val indicate: Boolean) {
+    val subscribers = mutableSetOf<Int>()
+
+    /** Subscribers waiting for the CCCD write that enables delivery. */
+    val waiting = mutableMapOf<Int, (Result<Unit>) -> Unit>()
+    var enabled = false
+  }
+
+  private val subscriptions = mutableMapOf<String, CharacteristicSubscriptions>()
+
+  /** Characteristic key of every active or pending subscription id. */
+  private val subscriptionKeys = mutableMapOf<Int, String>()
 
   /** ATT MTU. 23 until an exchange raises it (P1-09). */
   @Volatile
@@ -279,6 +313,129 @@ class PeripheralSession(
     }
   }
 
+  /**
+   * Subscribes [subscriptionId] to a characteristic (plan §5.4). The first subscriber enables the
+   * CCCD through the queue; later ones share it. An explicit [mode] different from the active one is
+   * INVALID_ARGUMENT.
+   */
+  fun subscribe(
+    service: UUID,
+    characteristic: UUID,
+    mode: SubscribeMode,
+    subscriptionId: Int,
+    timeoutMs: Long?,
+    completion: (Result<Unit>) -> Unit,
+  ) {
+    val entry = try {
+      if (subscriptionId in subscriptionKeys) {
+        throw CoreError(CoreError.Code.INVALID_ARGUMENT, "Subscription $subscriptionId already exists")
+      }
+      val ref = findCharacteristic(
+        service,
+        characteristic,
+        CharacteristicProperties.NOTIFY or CharacteristicProperties.INDICATE,
+        CoreError.Code.NOT_SUPPORTED,
+      )
+      val properties = services.first { it.uuid == service }.characteristics.first { it.ref == ref }
+      if (CCCD !in properties.descriptors) {
+        throw CoreError(CoreError.Code.DESCRIPTOR_NOT_FOUND, "Characteristic $characteristic has no CCCD (0x2902)")
+      }
+      val indicate = resolveIndicate(mode, properties.properties, characteristic)
+      subscriptions[key(ref)]?.also { existing ->
+        if (mode != SubscribeMode.AUTO && existing.indicate != indicate) {
+          throw CoreError(
+            CoreError.Code.INVALID_ARGUMENT,
+            "Characteristic $characteristic is already subscribed with ${if (existing.indicate) "indications" else "notifications"}",
+          )
+        }
+      } ?: CharacteristicSubscriptions(ref, indicate)
+    } catch (error: CoreError) {
+      return completion(Result.failure(error))
+    }
+    val key = key(entry.ref)
+    subscriptionKeys[subscriptionId] = key
+    if (entry.enabled) {
+      entry.subscribers += subscriptionId
+      return completion(Result.success(Unit))
+    }
+    entry.waiting[subscriptionId] = completion
+    if (subscriptions.put(key, entry) != null) {
+      return // The CCCD write is already on its way.
+    }
+    setNotification(entry, enable = true, timeoutMs) { result ->
+      val waiting = entry.waiting.toMap()
+      entry.waiting.clear()
+      result.fold(
+        onSuccess = {
+          entry.enabled = true
+          entry.subscribers += waiting.keys
+        },
+        onFailure = {
+          waiting.keys.forEach(subscriptionKeys::remove)
+          if (subscriptions[key] === entry && entry.subscribers.isEmpty()) subscriptions.remove(key)
+        },
+      )
+      waiting.values.forEach { it(result) }
+    }
+  }
+
+  /**
+   * Ends [subscriptionId]. Delivery to it stops at once; the last subscriber of a characteristic also
+   * disables its CCCD, and a failed write rejects. Unknown ids and lost connections succeed.
+   */
+  fun unsubscribe(subscriptionId: Int, timeoutMs: Long?, completion: (Result<Unit>) -> Unit) {
+    val key = subscriptionKeys.remove(subscriptionId) ?: return completion(Result.success(Unit))
+    val entry = subscriptions[key] ?: return completion(Result.success(Unit))
+    entry.subscribers -= subscriptionId
+    entry.waiting.remove(subscriptionId)?.invoke(
+      Result.failure(CoreError(CoreError.Code.OPERATION_CANCELLED, "unsubscribed before the subscription was ready")),
+    )
+    if (entry.subscribers.isNotEmpty() || entry.waiting.isNotEmpty()) {
+      return completion(Result.success(Unit))
+    }
+    subscriptions.remove(key)
+    if (state != SessionState.READY) {
+      return completion(Result.success(Unit))
+    }
+    setNotification(entry, enable = false, timeoutMs, completion)
+  }
+
+  /** Android needs both the local registration and the CCCD write on the peripheral. */
+  private fun setNotification(
+    entry: CharacteristicSubscriptions,
+    enable: Boolean,
+    timeoutMs: Long?,
+    completion: (Result<Unit>) -> Unit,
+  ) {
+    val value = when {
+      !enable -> CCCD_DISABLE
+      entry.indicate -> CCCD_INDICATE
+      else -> CCCD_NOTIFY
+    }
+    enqueueAttributeOperation(GattOperation.Kind.SET_NOTIFY, key(entry.ref), timeoutMs, completion, valueOf = {}) {
+      if (gatt?.setCharacteristicNotification(entry.ref, enable) != true) {
+        refused(if (enable) "notification registration" else "notification removal")
+      } else {
+        submitWrite(GattOperation.Kind.SET_NOTIFY, "CCCD write") {
+          gatt?.writeDescriptor(GattDescriptorRef(entry.ref, CCCD), value) ?: SubmitStatus.ERROR_UNKNOWN
+        }
+      }
+    }
+  }
+
+  private fun resolveIndicate(mode: SubscribeMode, properties: Int, characteristic: UUID): Boolean {
+    val notifies = properties and CharacteristicProperties.NOTIFY != 0
+    val indicates = properties and CharacteristicProperties.INDICATE != 0
+    return when (mode) {
+      SubscribeMode.AUTO -> !notifies
+      SubscribeMode.NOTIFY -> if (notifies) false else throw notSupported(characteristic, "notifications")
+      SubscribeMode.INDICATE -> if (indicates) true else throw notSupported(characteristic, "indications")
+    }
+  }
+
+  private fun notSupported(characteristic: UUID, what: String) =
+    CoreError(CoreError.Code.NOT_SUPPORTED, "Characteristic $characteristic doesn't support $what")
+
   /** The adapter went away (off, or the module is destroyed): drop everything with [error]. */
   fun forceDisconnected(error: CoreError) {
     if (state == SessionState.DISCONNECTED) {
@@ -327,7 +484,18 @@ class PeripheralSession(
 
     override fun onDescriptorWrite(ref: GattDescriptorRef, status: Int) {
       if (attemptGeneration == generation) {
-        onAttributeResult(GattOperation.Kind.WRITE_DESCRIPTOR, key(ref), status, null, "Descriptor write")
+        if (ref.uuid == CCCD) {
+          onAttributeResult(GattOperation.Kind.SET_NOTIFY, key(ref.characteristic), status, null, "CCCD write")
+        } else {
+          onAttributeResult(GattOperation.Kind.WRITE_DESCRIPTOR, key(ref), status, null, "Descriptor write")
+        }
+      }
+    }
+
+    override fun onCharacteristicChanged(ref: GattCharacteristicRef, value: ByteArray) {
+      // Only subscribed characteristics deliver; a stray value after unsubscribing is dropped.
+      if (attemptGeneration == generation && subscriptions[key(ref)]?.enabled == true) {
+        onNotification?.invoke(ref, value)
       }
     }
 
@@ -554,6 +722,9 @@ class PeripheralSession(
     // The state changes first, so callbacks of the operations failed below see the final state.
     setState(SessionState.DISCONNECTED, error)
     queue.failAll(CoreError(CoreError.Code.DISCONNECTED, "Disconnected from $address"))
+    // Subscriptions end with the connection (plan §4.8); restoring them is P2-01's.
+    subscriptions.clear()
+    subscriptionKeys.clear()
     val connects = connectWaiters.toList()
     connectWaiters.clear()
     connects.forEach { it(connectError) }
@@ -586,6 +757,9 @@ class PeripheralSession(
     const val MAX_ATTRIBUTE_LENGTH = 512
     const val BUSY_RETRY_DELAY_MS = 5L
     val CCCD: UUID = UUID.fromString("00002902-0000-1000-8000-00805f9b34fb")
+    private val CCCD_NOTIFY = byteArrayOf(0x01, 0x00)
+    private val CCCD_INDICATE = byteArrayOf(0x02, 0x00)
+    private val CCCD_DISABLE = byteArrayOf(0x00, 0x00)
 
     private fun key(ref: GattCharacteristicRef) =
       "${ref.serviceUuid}#${ref.serviceInstanceId}/${ref.uuid}#${ref.instanceId}"

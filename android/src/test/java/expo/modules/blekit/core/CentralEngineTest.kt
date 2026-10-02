@@ -8,6 +8,7 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import java.util.UUID
 
 /** P1-03: adapter state as JS sees it. */
 class CentralEngineTest {
@@ -37,6 +38,14 @@ class CentralEngineTest {
         override fun onScanError(sessionId: Int, error: CoreError) = Unit
 
         override fun onWarning(warning: CoreError) = Unit
+
+        override fun onNotification(
+          peripheralId: String,
+          service: UUID,
+          characteristic: UUID,
+          value: ByteArray,
+          timestamp: Double,
+        ) = Unit
 
         override fun onConnectionStateChange(peripheralId: String, state: SessionState, error: CoreError?) {
           connections += "$peripheralId ${state.js}${error?.let { " ${it.code}" } ?: ""}"

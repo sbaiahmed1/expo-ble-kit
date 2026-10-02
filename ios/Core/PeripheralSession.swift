@@ -79,6 +79,12 @@ final class PeripheralSession: PeripheralLikeDelegate {
   /// A write without response waiting for `canSendWriteWithoutResponse` (basic pacing; P2-02 adds
   /// flow control).
   var pendingWriteWithoutResponse: (() -> Void)?
+  /// Subscriptions by characteristic key, one CCCD each (plan §5.4).
+  var subscriptions: [String: CharacteristicSubscriptions] = [:]
+  /// Characteristic key of every active or pending subscription id.
+  var subscriptionKeys: [Int: String] = [:]
+  /// Notifications and indications of subscribed characteristics, on the engine's queue.
+  var onNotification: ((CharacteristicLike, Data) -> Void)?
   private var nextDiscoveryId = 0
 
   static let disconnectTimeout: TimeInterval = 5
@@ -285,6 +291,9 @@ final class PeripheralSession: PeripheralLikeDelegate {
     // The state changes first, so callbacks of the operations failed below see the final state.
     setState(.disconnected, error)
     queue.failAll(CoreError(.disconnected, "Disconnected"))
+    // Subscriptions end with the connection (plan §4.8); restoring them is P2-01's.
+    subscriptions.removeAll()
+    subscriptionKeys.removeAll()
     let connectFailure = connectError ?? error
       ?? CoreError(.disconnected, "Disconnected before the connection was ready")
     let connects = connectWaiters

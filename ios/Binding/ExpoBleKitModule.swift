@@ -18,10 +18,10 @@ typealias Request = AttributeRequestRecord
 
 public class ExpoBleKitModule: Module {
   /// One JS object per peripheral id while JS holds it (plan §4.5). Guarded by `peripheralsLock`.
-  private let peripherals = NSMapTable<NSString, PeripheralObject>.strongToWeakObjects()
-  private let peripheralsLock = NSLock()
+  let peripherals = NSMapTable<NSString, PeripheralObject>.strongToWeakObjects()
+  let peripheralsLock = NSLock()
 
-  private lazy var engine: CentralEngine = {
+  lazy var engine: CentralEngine = {
     let engine = CentralEngine(queue: DispatchQueue(label: "expo.blekit.central"))
     engine.onStateChange = { [weak self] state in
       self?.sendEvent("stateChange", ["state": state.rawValue])
@@ -44,6 +44,17 @@ public class ExpoBleKitModule: Module {
       event.code = error?.code.rawValue
       event.message = error?.jsMessage
       peripheral.emit(event: "connectionStateChange", payload: event)
+    }
+    engine.onNotification = { [weak self] peripheralId, service, characteristic, value, timestamp in
+      guard let peripheral = self?.existingPeripheral(peripheralId) else {
+        return
+      }
+      var event = NotificationEventRecord()
+      event.service = service
+      event.characteristic = characteristic
+      event.value = value
+      event.timestamp = timestamp
+      peripheral.emit(event: "notification", payload: event)
     }
     return engine
   }()
@@ -152,6 +163,17 @@ public class ExpoBleKitModule: Module {
         self.writeDescriptor(ref.id, request, value, promise)
       }
 
+      // JS numbers its subscriptions; one CCCD per characteristic is shared by them (plan §5.4).
+      AsyncFunction("subscribe") { (ref: PeripheralObject, request: Request, id: Int, mode: String, promise: Promise) in
+        self.subscribe(ref.id, request, id, mode, promise)
+      }
+
+      AsyncFunction("unsubscribe") { (ref: PeripheralObject, id: Int, timeoutMs: Double, promise: Promise) in
+        self.attributeOperation(ref.id, promise) { session, done in
+          session.unsubscribe(id, timeout: timeoutMs / 1000) { done($0.map { nil }) }
+        }
+      }
+
       // `services` nil discovers everything; the TS layer always passes a timeout (rule 4).
       AsyncFunction("discover") { (ref: PeripheralObject, services: [String]?, timeoutMs: Double, promise: Promise) in
         self.discover(ref.id, services: services, timeoutMs: timeoutMs, promise: promise)
@@ -166,122 +188,6 @@ public class ExpoBleKitModule: Module {
         engine.queue.async {
           engine.disconnect(ref.id) { promise.resolve() }
         }
-      }
-    }
-  }
-
-  private func connect(_ id: String, options: ConnectOptionsRecord, promise: Promise) {
-    let engine = self.engine
-    engine.queue.async {
-      do {
-        try engine.connect(id, spec: options.spec()) { error in
-          if let error {
-            promise.reject(BleKitException(error))
-          } else {
-            promise.resolve()
-          }
-        }
-      } catch let error as CoreError {
-        promise.reject(BleKitException(error))
-      } catch {
-        promise.reject(error)
-      }
-    }
-  }
-
-  private func read(_ id: String, _ request: Request, _ promise: Promise) {
-    attributeOperation(id, promise) { session, done in
-      session.read(request.path, timeout: request.timeout) { done($0.map { $0 }) }
-    }
-  }
-
-  private func write(_ id: String, _ request: Request, _ value: Data, _ promise: Promise) {
-    attributeOperation(id, promise) { session, done in
-      session.write(request.path, value: value, withResponse: request.withResponse, timeout: request.timeout) {
-        done($0.map { _ in nil })
-      }
-    }
-  }
-
-  private func readDescriptor(_ id: String, _ request: Request, _ promise: Promise) {
-    attributeOperation(id, promise) { session, done in
-      session.readDescriptor(request.path, timeout: request.timeout) { done($0.map { $0 }) }
-    }
-  }
-
-  private func writeDescriptor(_ id: String, _ request: Request, _ value: Data, _ promise: Promise) {
-    attributeOperation(id, promise) { session, done in
-      session.writeDescriptor(request.path, value: value, timeout: request.timeout) { done($0.map { _ in nil }) }
-    }
-  }
-
-  /// Runs an attribute operation on the engine's queue and settles `promise` with its value
-  /// (`Data`, or nil for writes) or its error.
-  private func attributeOperation(
-    _ id: String,
-    _ promise: Promise,
-    _ operation: @escaping (PeripheralSession, @escaping (Result<Data?, CoreError>) -> Void) -> Void
-  ) {
-    let engine = self.engine
-    engine.queue.async {
-      let done: (Result<Data?, CoreError>) -> Void = { result in
-        switch result {
-        case let .success(value):
-          promise.resolve(value)
-        case let .failure(error):
-          promise.reject(BleKitException(error))
-        }
-      }
-      guard let session = engine.session(id, else: done) else {
-        return
-      }
-      operation(session, done)
-    }
-  }
-
-  private func discover(_ id: String, services: [String]?, timeoutMs: Double, promise: Promise) {
-    let engine = self.engine
-    engine.queue.async {
-      engine.discover(id, filter: services, timeout: timeoutMs / 1000) { result in
-        switch result {
-        case let .success(found):
-          promise.resolve(found)
-        case let .failure(error):
-          promise.reject(BleKitException(error))
-        }
-      }
-    }
-  }
-
-  /// iOS ids are UUIDs; the object is keyed by their upper-case form, as CoreBluetooth reports them.
-  private func peripheral(_ id: String) -> PeripheralObject {
-    let key = (UUID(uuidString: id)?.uuidString ?? id) as NSString
-    peripheralsLock.lock()
-    defer { peripheralsLock.unlock() }
-    if let existing = peripherals.object(forKey: key) {
-      return existing
-    }
-    let created = PeripheralObject(id: key as String)
-    peripherals.setObject(created, forKey: key)
-    return created
-  }
-
-  private func existingPeripheral(_ id: String) -> PeripheralObject? {
-    peripheralsLock.lock()
-    defer { peripheralsLock.unlock() }
-    return peripherals.object(forKey: id as NSString)
-  }
-
-  /// Runs `work` on the engine's queue and settles `promise` with its result or error.
-  private func settle(_ promise: Promise, _ work: @escaping (CentralEngine) throws -> Any?) {
-    let engine = self.engine
-    engine.queue.async {
-      do {
-        promise.resolve(try work(engine))
-      } catch let error as CoreError {
-        promise.reject(BleKitException(error))
-      } catch {
-        promise.reject(error)
       }
     }
   }

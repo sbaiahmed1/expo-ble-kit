@@ -32,9 +32,12 @@ final class CentralEngine: CentralManagingDelegate {
   /// Called on `queue` when a peripheral's JS connection state changes; `error` is set when the
   /// connection ended or failed unexpectedly.
   var onConnectionStateChange: ((_ peripheralId: String, SessionState, CoreError?) -> Void)?
+  /// A notification or indication, on `queue`; the timestamp is epoch milliseconds (plan §4.10).
+  var onNotification: ((_ peripheralId: String, _ service: String, _ characteristic: String, Data, Double) -> Void)?
 
   private let environment: Environment
   private let scheduler: Scheduling
+  private let clock: EpochClock
   private var sessions: [UUID: PeripheralSession] = [:]
   /// Connects waiting for a new manager to leave `unknown`.
   private var pendingConnects: [(id: UUID, run: (Result<CentralManaging, CoreError>) -> Void)] = []
@@ -54,6 +57,7 @@ final class CentralEngine: CentralManagingDelegate {
     let scheduler = scheduler ?? QueueScheduler(queue: queue)
     self.scheduler = scheduler
     let clock = EpochClock(wallAtStartMs: Date().timeIntervalSince1970 * 1000, monotonicAtStart: scheduler.now)
+    self.clock = clock
     scanController = ScanController(scheduler: scheduler, clock: clock)
     publishedState = Self.stateWithoutCentral(environment.authorization())
   }
@@ -333,6 +337,18 @@ extension CentralEngine {
     let session = PeripheralSession(peripheral: peripheral, central: central, scheduler: scheduler)
     session.onStateChange = { [weak self] state, error in
       self?.publishConnectionState(identifier.uuidString, state, error)
+    }
+    session.onNotification = { [weak self] characteristic, value in
+      guard let self else {
+        return
+      }
+      onNotification?(
+        identifier.uuidString,
+        characteristic.parentService?.uuid.fullUUIDString ?? "",
+        characteristic.uuid.fullUUIDString,
+        value,
+        clock.epochMs(monotonic: scheduler.now)
+      )
     }
     session.onServicesChange = { [weak self] services in
       guard let self else {

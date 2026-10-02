@@ -23,7 +23,7 @@ class CentralEngine(
   private val adapter: BluetoothAdapterPort,
   val permissionSystem: PermissionSystem,
   private val executor: SerialExecutor,
-  clock: EpochClock,
+  private val clock: EpochClock,
 ) {
   /** Engine events, delivered on the BLE thread. */
   interface Listener : ScanController.Events {
@@ -31,6 +31,9 @@ class CentralEngine(
 
     /** [error] is set when the connection ended or failed unexpectedly. */
     fun onConnectionStateChange(peripheralId: String, state: SessionState, error: CoreError?)
+
+    /** A notification or indication; [timestamp] in epoch milliseconds (plan §4.10). */
+    fun onNotification(peripheralId: String, service: UUID, characteristic: UUID, value: ByteArray, timestamp: Double)
   }
 
   var listener: Listener? = null
@@ -139,6 +142,11 @@ class CentralEngine(
     val session = sessions.getOrPut(address) {
       PeripheralSession(address, { seenDevice(address) ?: adapter.remoteDevice(address) }, executor) { state, error ->
         listener?.onConnectionStateChange(address, state, error)
+      }.also { session ->
+        session.onNotification = { ref, value ->
+          val timestamp = clock.epochMs(executor.nowMs()).toDouble()
+          listener?.onNotification(address, ref.serviceUuid, ref.uuid, value, timestamp)
+        }
       }
     }
     session.connect(spec, completion)
@@ -218,6 +226,30 @@ class CentralEngine(
     completion: (Result<Unit>) -> Unit,
   ) = withSession(peripheralId, completion) {
     it.writeDescriptor(service, characteristic, descriptor, value, timeoutMs, completion)
+  }
+
+  fun subscribe(
+    peripheralId: String,
+    service: UUID,
+    characteristic: UUID,
+    mode: SubscribeMode,
+    subscriptionId: Int,
+    timeoutMs: Long?,
+    completion: (Result<Unit>) -> Unit,
+  ) = withSession(peripheralId, completion) {
+    it.subscribe(service, characteristic, mode, subscriptionId, timeoutMs, completion)
+  }
+
+  /** Unknown peripherals have nothing to unsubscribe: success. */
+  fun unsubscribe(peripheralId: String, subscriptionId: Int, timeoutMs: Long?, completion: (Result<Unit>) -> Unit) {
+    val session = normalizeAddress(peripheralId)?.let { sessions[it] }
+    if (session ==
+      null
+    ) {
+      completion(Result.success(Unit))
+    } else {
+      session.unsubscribe(subscriptionId, timeoutMs, completion)
+    }
   }
 
   fun disconnect(peripheralId: String, completion: () -> Unit) {

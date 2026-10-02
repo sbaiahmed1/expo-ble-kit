@@ -1,5 +1,5 @@
 import { BleError } from '../errors';
-import type { OpOptions, WriteOptions } from '../types';
+import type { OpOptions, SubscribeOptions, WriteOptions } from '../types';
 import { normalizeUUID } from '../uuid';
 
 /** Plan §4.9: every GATT operation has a timeout, 10 s unless the call says otherwise. */
@@ -64,4 +64,15 @@ export function checkValue(value: unknown): Uint8Array {
     );
   }
   return value;
+}
+
+export type NativeSubscribeMode = 'auto' | 'notify' | 'indicate';
+
+/** Validates `SubscribeOptions.mode` (plan §5.4); 'auto' when missing. */
+export function subscribeMode(options: SubscribeOptions = {}): NativeSubscribeMode {
+  const { mode = 'auto' } = options;
+  if (mode !== 'auto' && mode !== 'notify' && mode !== 'indicate') {
+    throw invalid('mode', "expected 'auto', 'notify' or 'indicate'");
+  }
+  return mode;
 }

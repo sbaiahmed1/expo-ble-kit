@@ -1,7 +1,7 @@
 import { NativeModule, requireOptionalNativeModule, SharedObject } from 'expo';
 
 import type { ExpoBleKitModuleEvents, PeripheralObjectEvents } from './ExpoBleKit.types';
-import type { NativeAttributeRequest } from './internal/attributeRequest';
+import type { NativeAttributeRequest, NativeSubscribeMode } from './internal/attributeRequest';
 import type { NativeConnectOptions } from './internal/connectOptions';
 import type { NativeBleKitPort, NativeDiagnostics, NativePeripheralPort } from './internal/port';
 import type { NativeScanOptions } from './internal/scanOptions';
@@ -28,6 +28,12 @@ export declare class NativePeripheral
   write(request: NativeAttributeRequest, value: Uint8Array): Promise<void>;
   readDescriptor(request: NativeAttributeRequest): Promise<Uint8Array>;
   writeDescriptor(request: NativeAttributeRequest, value: Uint8Array): Promise<void>;
+  subscribe(
+    request: NativeAttributeRequest,
+    subscriptionId: number,
+    mode: NativeSubscribeMode
+  ): Promise<void>;
+  unsubscribe(subscriptionId: number, timeoutMs: number): Promise<void>;
 }
 
 /** The native module: the real `NativeBleKitPort` (plan §4.6). */

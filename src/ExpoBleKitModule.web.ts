@@ -38,6 +38,12 @@ class WebPeripheral {
     throw notSupported();
   }
 
+  async subscribe(): Promise<never> {
+    throw notSupported();
+  }
+
+  async unsubscribe(): Promise<void> {}
+
   addListener() {
     return { remove() {} };
   }

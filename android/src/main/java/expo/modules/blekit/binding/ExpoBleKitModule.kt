@@ -14,6 +14,7 @@ import expo.modules.blekit.core.HandlerExecutor
 import expo.modules.blekit.core.PermissionResult
 import expo.modules.blekit.core.PermissionStatus
 import expo.modules.blekit.core.SessionState
+import expo.modules.blekit.core.SubscribeMode
 import expo.modules.blekit.core.normalizeAddress
 import expo.modules.interfaces.permissions.Permissions
 import expo.modules.interfaces.permissions.PermissionsResponse
@@ -176,6 +177,35 @@ class ExpoBleKitModule : Module() {
         }
       }
 
+      // JS numbers its subscriptions; one CCCD per characteristic is shared by them (plan §5.4).
+      AsyncFunction("subscribe") {
+          ref: PeripheralObject,
+          request: AttributeRequestRecord,
+          subscriptionId: Int,
+          mode: String,
+          promise: Promise,
+        ->
+        attributeOperation(promise) {
+          val subscribeMode = SubscribeMode.of(mode)
+            ?: throw CoreError(CoreError.Code.INVALID_ARGUMENT, "Invalid subscribe mode: $mode")
+          engine.subscribe(
+            ref.id,
+            request.serviceUuid(),
+            request.characteristicUuid(),
+            subscribeMode,
+            subscriptionId,
+            request.timeout(),
+            promise.settler(),
+          )
+        }
+      }
+
+      AsyncFunction("unsubscribe") { ref: PeripheralObject, subscriptionId: Int, timeoutMs: Double, promise: Promise ->
+        attributeOperation(promise) {
+          engine.unsubscribe(ref.id, subscriptionId, timeoutMs.toLong(), promise.settler())
+        }
+      }
+
       // `services` null discovers everything; the TS layer always passes a timeout (rule 4).
       AsyncFunction("discover") { ref: PeripheralObject, services: List<String>?, timeoutMs: Double, promise: Promise ->
         executor.execute {
@@ -240,6 +270,25 @@ class ExpoBleKitModule : Module() {
 
     override fun onWarning(warning: CoreError) {
       sendEvent("warning", mapOf("code" to warning.code.value, "message" to warning.jsMessage))
+    }
+
+    override fun onNotification(
+      peripheralId: String,
+      service: UUID,
+      characteristic: UUID,
+      value: ByteArray,
+      timestamp: Double,
+    ) {
+      val peripheral = synchronized(peripherals) { peripherals[peripheralId]?.get() } ?: return
+      peripheral.emit(
+        "notification",
+        mapOf(
+          "service" to service.toString(),
+          "characteristic" to characteristic.toString(),
+          "value" to value,
+          "timestamp" to timestamp,
+        ),
+      )
     }
 
     override fun onConnectionStateChange(peripheralId: String, state: SessionState, error: CoreError?) {
