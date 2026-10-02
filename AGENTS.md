@@ -17,6 +17,7 @@ yarn lint:native             # SwiftLint + ktlint (brew install swiftlint ktlint
 CI=1 yarn test               # Jest, no watch mode
 swift test --package-path ios   # iOS core unit tests (no simulator needed)
 (cd example/android && ./gradlew :expo-ble-kit:testDebugUnitTest)   # Android core unit tests
+yarn check:package           # fail if npm would ship tests, build output, docs or tooling
 yarn changeset               # add a changeset for any user-facing change
 
 cd example && yarn install   # example app dependencies (separate lockfile)

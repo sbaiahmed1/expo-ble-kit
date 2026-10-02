@@ -20,6 +20,7 @@
     "lint:native": "swiftlint lint --strict && ktlint \"android/src/**/*.kt\"",
     "format:check": "prettier --check \"src/**/*.{ts,tsx}\" \"plugin/src/**/*.ts\"",
     "typecheck": "tsc --noEmit && tsc --noEmit -p plugin",
+    "check:package": "node internal/check-package-contents.js",
     "test": "node internal/module_scripts/test.js",
     "prepare": "node internal/module_scripts/prepare.js",
     "changeset": "changeset",
