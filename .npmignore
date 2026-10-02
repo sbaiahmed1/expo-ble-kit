@@ -37,4 +37,5 @@ __tests__
 /docs/
 /AGENTS.md
 /test-peripherals/
+/e2e/
 /eslint.config.cjs
