@@ -42,11 +42,11 @@ extension PeripheralSession {
   }
 
   /// Reads the link's RSSI in dBm through the queue.
-  func readRssi(timeout: TimeInterval?, completion: @escaping IntCompletion) {
+  func readRssi(timeout: TimeInterval?, operationId: Int? = nil, completion: @escaping IntCompletion) {
     guard state == .ready else {
       return completion(.failure(CoreError(.disconnected, "Not connected")))
     }
-    queue.enqueue(.readRSSI, timeout: timeout) { [weak self] in
+    let operation = queue.enqueue(.readRSSI, timeout: timeout) { [weak self] in
       self?.peripheral.readRSSI()
     } completion: { result in
       completion(result.map { output in
@@ -56,6 +56,11 @@ extension PeripheralSession {
         return 0
       })
     }
+    track(operation, operationId)
+  }
+
+  func peripheralDidUpdateName(_ peripheral: PeripheralLike) {
+    onNameChange?(peripheral.name)
   }
 
   func peripheral(_ peripheral: PeripheralLike, didReadRSSI rssi: Int, error: Error?) {

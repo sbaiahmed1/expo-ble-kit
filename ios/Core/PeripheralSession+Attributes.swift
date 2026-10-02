@@ -19,18 +19,24 @@ extension PeripheralSession {
   static let cccd = CBUUID(string: "2902")
 
   /// Reads a characteristic. Long values are read in full by CoreBluetooth.
-  func read(_ path: AttributePath, timeout: TimeInterval?, completion: @escaping ValueCompletion) {
+  func read(
+    _ path: AttributePath,
+    timeout: TimeInterval?,
+    operationId: Int? = nil,
+    completion: @escaping ValueCompletion
+  ) {
     let target: CharacteristicLike
     do {
       target = try findCharacteristic(path, allowing: .read, otherwise: .readNotPermitted)
     } catch {
       return completion(.failure(Self.coreError(error)))
     }
-    queue.enqueue(.read, target: Self.key(target), timeout: timeout) { [weak self] in
+    let operation = queue.enqueue(.read, target: Self.key(target), timeout: timeout) { [weak self] in
       self?.peripheral.readValue(for: target)
     } completion: { result in
       completion(result.map(Self.data))
     }
+    track(operation, operationId)
   }
 
   /// Writes a characteristic: with response up to 512 bytes (long writes by CoreBluetooth), without
@@ -40,6 +46,7 @@ extension PeripheralSession {
     value: Data,
     withResponse: Bool,
     timeout: TimeInterval?,
+    operationId: Int? = nil,
     completion: @escaping WriteCompletion
   ) {
     let target: CharacteristicLike
@@ -57,25 +64,32 @@ extension PeripheralSession {
       return completion(.failure(Self.coreError(error)))
     }
     let kind: GattOperation.Kind = withResponse ? .write : .writeWithoutResponse
-    queue.enqueue(kind, target: Self.key(target), timeout: timeout) { [weak self] in
+    let operation = queue.enqueue(kind, target: Self.key(target), timeout: timeout) { [weak self] in
       self?.startWrite(value, to: target, withResponse: withResponse)
     } completion: { result in
       completion(result.map { _ in () })
     }
+    track(operation, operationId)
   }
 
-  func readDescriptor(_ path: AttributePath, timeout: TimeInterval?, completion: @escaping ValueCompletion) {
+  func readDescriptor(
+    _ path: AttributePath,
+    timeout: TimeInterval?,
+    operationId: Int? = nil,
+    completion: @escaping ValueCompletion
+  ) {
     let target: DescriptorLike
     do {
       target = try findDescriptor(path)
     } catch {
       return completion(.failure(Self.coreError(error)))
     }
-    queue.enqueue(.readDescriptor, target: Self.key(target), timeout: timeout) { [weak self] in
+    let operation = queue.enqueue(.readDescriptor, target: Self.key(target), timeout: timeout) { [weak self] in
       self?.peripheral.readValue(for: target)
     } completion: { result in
       completion(result.map(Self.data))
     }
+    track(operation, operationId)
   }
 
   /// The CCCD is off limits: subscriptions own it (P1-08), and CoreBluetooth throws if it is written.
@@ -83,6 +97,7 @@ extension PeripheralSession {
     _ path: AttributePath,
     value: Data,
     timeout: TimeInterval?,
+    operationId: Int? = nil,
     completion: @escaping WriteCompletion
   ) {
     let target: DescriptorLike
@@ -98,11 +113,12 @@ extension PeripheralSession {
     } catch {
       return completion(.failure(Self.coreError(error)))
     }
-    queue.enqueue(.writeDescriptor, target: Self.key(target), timeout: timeout) { [weak self] in
+    let operation = queue.enqueue(.writeDescriptor, target: Self.key(target), timeout: timeout) { [weak self] in
       self?.peripheral.writeValue(value, for: target)
     } completion: { result in
       completion(result.map { _ in () })
     }
+    track(operation, operationId)
   }
 
   // MARK: PeripheralLikeDelegate (attributes)
@@ -147,6 +163,22 @@ extension PeripheralSession {
   }
 
   // MARK: Helpers
+
+  /// Cancels the operation JS started with `operationId` (plan §4.9): a queued one is removed, a
+  /// running one is answered at once while the radio finishes it. Unknown or finished ids do nothing.
+  func cancel(_ operationId: Int) {
+    if let operation = cancellable[operationId] {
+      queue.cancel(operation)
+    }
+  }
+
+  /// Lets JS cancel `operation` by `operationId`. Answered operations are dropped from the map here.
+  func track(_ operation: GattOperation, _ operationId: Int?) {
+    cancellable = cancellable.filter { !$0.value.isSettled }
+    if let operationId {
+      cancellable[operationId] = operation
+    }
+  }
 
   func complete(_ kind: GattOperation.Kind, _ target: String, _ error: Error?, output: GattOperation.Output) {
     let result: Result<GattOperation.Output, CoreError> = error

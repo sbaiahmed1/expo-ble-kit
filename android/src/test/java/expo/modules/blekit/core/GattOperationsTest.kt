@@ -179,4 +179,28 @@ class GattOperationsTest {
     client.callback.onCharacteristicWrite(ref(echoWrite), GATT_SUCCESS)
     assertTrue(second()!!.isSuccess)
   }
+
+  @Test
+  fun `operations are cancelled by the id JS gave them`() {
+    val running = outcome { session.read(testService, staticRead, null, it, operationId = 1) }
+    val queued = outcome { session.write(testService, echoWrite, byteArrayOf(1), true, null, it, operationId = 2) }
+    session.cancel(2)
+    assertEquals(CoreError.Code.OPERATION_CANCELLED, code(queued()))
+
+    session.cancel(1)
+    assertEquals("answered at once", CoreError.Code.OPERATION_CANCELLED, code(running()))
+    val next = outcome { session.read(testService, staticRead, null, it) }
+    assertEquals("the radio is still busy with the read", 1, client.calls.size)
+    // The radio answers the cancelled read (discarded), then the next read runs.
+    client.callback.onCharacteristicRead(ref(staticRead), byteArrayOf(8), GATT_SUCCESS)
+    executor.runUntilIdle()
+    client.callback.onCharacteristicRead(ref(staticRead), byteArrayOf(9), GATT_SUCCESS)
+    executor.runUntilIdle()
+    assertArrayEquals(byteArrayOf(9), next()?.getOrThrow())
+    assertTrue("the cancelled write never ran", client.calls.none { it is FakeGattClient.Call.Write })
+
+    session.cancel(1)
+    session.cancel(42)
+    assertEquals("finished and unknown ids do nothing", CoreError.Code.OPERATION_CANCELLED, code(running()))
+  }
 }

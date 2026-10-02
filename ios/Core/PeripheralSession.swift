@@ -49,7 +49,7 @@ final class PeripheralSession: PeripheralLikeDelegate {
   typealias DiscoveryCompletion = (Result<[DiscoveredService], CoreError>) -> Void
 
   /// One discovery run: services, then characteristics, then descriptors (plan §4.9).
-  private struct DiscoveryRun {
+  struct DiscoveryRun {
     let id: Int
     let filter: [String]?
     /// Characteristic and descriptor discoveries still outstanding.
@@ -64,13 +64,16 @@ final class PeripheralSession: PeripheralLikeDelegate {
   var onStateChange: ((SessionState, CoreError?) -> Void)?
   private(set) var state = SessionState.disconnected
   /// The discovery cache, by service UUID in discovery order. Empty when disconnected.
-  private(set) var services: [DiscoveredService] = []
+  /// Set by discovery only.
+  var services: [DiscoveredService] = []
   /// Called after the cache changes.
   var onServicesChange: (([DiscoveredService]) -> Void)?
   /// ATT MTU, derived (P1-09). 23 until the connection is ready. Only the session sets it.
   var mtu = PeripheralSession.defaultMtu
   /// A changed MTU on a ready connection.
   var onMtuChange: ((Int) -> Void)?
+  /// The name iOS cached for the peripheral: when the connection is ready, then on each change.
+  var onNameChange: ((String?) -> Void)?
 
   private let central: CentralManaging
   private let scheduler: Scheduling
@@ -79,7 +82,8 @@ final class PeripheralSession: PeripheralLikeDelegate {
   private var connectWaiters: [Completion] = []
   private var disconnectWaiters: [() -> Void] = []
   private var autoDiscover = true
-  private var discovery: DiscoveryRun?
+  /// The discovery in flight, if any. Only the discovery code uses it.
+  var discovery: DiscoveryRun?
   /// A write without response waiting for `canSendWriteWithoutResponse` (basic pacing; P2-02 adds
   /// flow control).
   var pendingWriteWithoutResponse: (() -> Void)?
@@ -87,9 +91,11 @@ final class PeripheralSession: PeripheralLikeDelegate {
   var subscriptions: [String: CharacteristicSubscriptions] = [:]
   /// Characteristic key of every active or pending subscription id.
   var subscriptionKeys: [Int: String] = [:]
+  /// Running and queued operations JS may cancel, by the id JS gave them.
+  var cancellable: [Int: GattOperation] = [:]
   /// Notifications and indications of subscribed characteristics, on the engine's queue.
   var onNotification: ((CharacteristicLike, Data) -> Void)?
-  private var nextDiscoveryId = 0
+  var nextDiscoveryId = 0
 
   static let disconnectTimeout: TimeInterval = 5
   /// Discovery is one queued operation, and slower than the 10 s default (plan §4.9).
@@ -156,34 +162,6 @@ final class PeripheralSession: PeripheralLikeDelegate {
         self?.finishDisconnected(nil)
       }
     }
-  }
-
-  /// Discovers services through the queue (plan §4.9): `filter` (all when nil), then all their
-  /// characteristics and descriptors. The cache gains what was found; an unfiltered run replaces it.
-  func discover(_ filter: [String]?, timeout: TimeInterval?, completion: @escaping DiscoveryCompletion) {
-    guard state == .ready || state == .discovering else {
-      return completion(.failure(CoreError(.disconnected, "Not connected")))
-    }
-    nextDiscoveryId += 1
-    let runId = nextDiscoveryId
-    queue.enqueue(
-      .discoverServices,
-      timeout: timeout ?? Self.discoveryTimeout,
-      start: { [weak self] in
-        self?.discovery = DiscoveryRun(id: runId, filter: filter)
-        self?.peripheral.discoverServices(filter?.map(CBUUID.init(string:)))
-      },
-      completion: { [weak self] result in
-        guard let self else {
-          return
-        }
-        if discovery?.id == runId {
-          // A timeout or a disconnect ended the run; later callbacks are ignored.
-          discovery = nil
-        }
-        completion(result.map { _ in self.updateCache(filter) })
-      }
-    )
   }
 
   /// Bluetooth went away: CoreBluetooth drops every connection without callbacks.
@@ -253,6 +231,7 @@ final class PeripheralSession: PeripheralLikeDelegate {
     connectTimeout?.cancel()
     connectTimeout = nil
     mtu = derivedMtu
+    onNameChange?(peripheral.name)
     setState(.ready, nil)
     // The state listener has seen `connected` before connect() resolves (plan §4.8).
     let waiters = connectWaiters
@@ -316,83 +295,5 @@ final class PeripheralSession: PeripheralLikeDelegate {
     if newState.js != previous.js {
       onStateChange?(newState, error)
     }
-  }
-}
-
-// MARK: - Discovery callbacks
-
-extension PeripheralSession {
-  func peripheralDidDiscoverServices(_ peripheral: PeripheralLike, error: Error?) {
-    guard var run = discovery else {
-      return
-    }
-    if let error {
-      return finishDiscovery(.failure(CoreBluetoothErrorMapping.coreError(from: error)))
-    }
-    let services = peripheral.serviceList.filter { run.filter?.contains($0.uuid.fullUUIDString) ?? true }
-    run.outstanding = services.count
-    discovery = run
-    if services.isEmpty {
-      return finishDiscovery(.success(.none))
-    }
-    services.forEach { peripheral.discoverCharacteristics(nil, for: $0) }
-  }
-
-  func peripheral(_ peripheral: PeripheralLike, didDiscoverCharacteristicsFor service: ServiceLike, error: Error?) {
-    guard discovery != nil else {
-      return
-    }
-    if let error {
-      return finishDiscovery(.failure(CoreBluetoothErrorMapping.coreError(from: error)))
-    }
-    discovery?.outstanding += service.characteristicList.count - 1
-    service.characteristicList.forEach { peripheral.discoverDescriptors(for: $0) }
-    finishDiscoveryIfDone()
-  }
-
-  func peripheral(
-    _ peripheral: PeripheralLike,
-    didDiscoverDescriptorsFor characteristic: CharacteristicLike,
-    error: Error?
-  ) {
-    guard discovery != nil else {
-      return
-    }
-    if let error {
-      return finishDiscovery(.failure(CoreBluetoothErrorMapping.coreError(from: error)))
-    }
-    discovery?.outstanding -= 1
-    finishDiscoveryIfDone()
-  }
-
-  private func finishDiscoveryIfDone() {
-    if let run = discovery, run.outstanding == 0 {
-      finishDiscovery(.success(.none))
-    }
-  }
-
-  private func finishDiscovery(_ result: Result<GattOperation.Output, CoreError>) {
-    discovery = nil
-    queue.complete(result) { $0.kind == .discoverServices }
-  }
-
-  /// Records what the run found and returns the services it asked for.
-  private func updateCache(_ filter: [String]?) -> [DiscoveredService] {
-    let found = peripheral.serviceList
-      .filter { filter?.contains($0.uuid.fullUUIDString) ?? true }
-      .map(DiscoveredService.init)
-    if filter == nil {
-      services = found
-    } else {
-      for service in found {
-        if let index = services.firstIndex(where: { $0.uuid == service.uuid }) {
-          services[index] = service
-        } else {
-          services.append(service)
-        }
-      }
-    }
-    onServicesChange?(services)
-    return found
   }
 }

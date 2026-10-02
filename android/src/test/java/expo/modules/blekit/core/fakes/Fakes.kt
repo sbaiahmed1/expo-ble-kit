@@ -30,6 +30,11 @@ class FakeBluetoothAdapter(override var isAvailable: Boolean = true, override va
 
   override fun remoteDevice(address: String): RemoteDevicePort = devices.getOrPut(address) { FakeRemoteDevice(address) }
 
+  /** What `connectedGattDevices()` reports. */
+  val connectedDevices = mutableListOf<String>()
+
+  override fun connectedGattDevices(): List<String> = connectedDevices.toList()
+
   var stateListener: ((Int) -> Unit)? = null
     private set
 

@@ -116,6 +116,9 @@ class PeripheralSession(
   /** Characteristic key of every active or pending subscription id. */
   private val subscriptionKeys = mutableMapOf<Int, String>()
 
+  /** Running and queued operations JS may cancel, by the id JS gave them. */
+  private val cancellable = mutableMapOf<Int, GattOperation>()
+
   /** ATT MTU. 23 until an exchange raises it (P1-09). */
   @Volatile
   var mtu = DEFAULT_MTU
@@ -211,12 +214,17 @@ class PeripheralSession(
    * Discovers services through the queue (plan §4.9). Android always discovers the whole database,
    * so [filter] narrows the result, not the work. The cache keeps everything found.
    */
-  fun discover(filter: List<UUID>?, timeoutMs: Long?, completion: (Result<List<GattServiceInfo>>) -> Unit) {
+  fun discover(
+    filter: List<UUID>?,
+    timeoutMs: Long?,
+    completion: (Result<List<GattServiceInfo>>) -> Unit,
+    operationId: Int? = null,
+  ) {
     if (state != SessionState.READY && state != SessionState.DISCOVERING) {
       completion(Result.failure(CoreError(CoreError.Code.DISCONNECTED, "Not connected to $address")))
       return
     }
-    queue.enqueue(
+    val operation = queue.enqueue(
       GattOperation.Kind.DISCOVER_SERVICES,
       timeoutMs = timeoutMs ?: DISCOVERY_TIMEOUT_MS,
       start = {
@@ -226,6 +234,7 @@ class PeripheralSession(
         }
       },
       completion = { result ->
+        operationId?.let(cancellable::remove)
         when (result) {
           is GattResult.Failure -> completion(Result.failure(result.error))
 
@@ -236,16 +245,31 @@ class PeripheralSession(
         }
       },
     )
+    operationId?.let { cancellable[it] = operation }
+  }
+
+  /**
+   * Cancels the operation JS started with [operationId] (plan §4.9): a queued one is removed, a
+   * running one is answered at once while the radio finishes it. Unknown or finished ids do nothing.
+   */
+  fun cancel(operationId: Int) {
+    cancellable[operationId]?.let(queue::cancel)
   }
 
   /** Reads a characteristic (plan §5.4). Long values are read in full by the stack. */
-  fun read(service: UUID, characteristic: UUID, timeoutMs: Long?, completion: (Result<ByteArray>) -> Unit) {
+  fun read(
+    service: UUID,
+    characteristic: UUID,
+    timeoutMs: Long?,
+    completion: (Result<ByteArray>) -> Unit,
+    operationId: Int? = null,
+  ) {
     val ref = try {
       findCharacteristic(service, characteristic, CharacteristicProperties.READ, CoreError.Code.READ_NOT_PERMITTED)
     } catch (error: CoreError) {
       return completion(Result.failure(error))
     }
-    enqueueAttributeOperation(GattOperation.Kind.READ, key(ref), timeoutMs, completion, valueOf = {
+    enqueueAttributeOperation(GattOperation.Kind.READ, key(ref), timeoutMs, completion, operationId, valueOf = {
       it.value
         ?: ByteArray(0)
     }) {
@@ -264,6 +288,7 @@ class PeripheralSession(
     withResponse: Boolean,
     timeoutMs: Long?,
     completion: (Result<Unit>) -> Unit,
+    operationId: Int? = null,
   ) {
     val ref = try {
       val property = if (withResponse) CharacteristicProperties.WRITE else CharacteristicProperties.WRITE_NO_RESPONSE
@@ -275,7 +300,7 @@ class PeripheralSession(
     }
     val kind = if (withResponse) GattOperation.Kind.WRITE else GattOperation.Kind.WRITE_WITHOUT_RESPONSE
     val writeType = if (withResponse) WriteTypes.DEFAULT else WriteTypes.NO_RESPONSE
-    enqueueAttributeOperation(kind, key(ref), timeoutMs, completion, valueOf = {}) {
+    enqueueAttributeOperation(kind, key(ref), timeoutMs, completion, operationId, valueOf = {}) {
       submitWrite(kind, "Write") { gatt?.writeCharacteristic(ref, value, writeType) ?: SubmitStatus.ERROR_UNKNOWN }
     }
   }
@@ -286,13 +311,15 @@ class PeripheralSession(
     descriptor: UUID,
     timeoutMs: Long?,
     completion: (Result<ByteArray>) -> Unit,
+    operationId: Int? = null,
   ) {
     val ref = try {
       findDescriptor(service, characteristic, descriptor)
     } catch (error: CoreError) {
       return completion(Result.failure(error))
     }
-    enqueueAttributeOperation(GattOperation.Kind.READ_DESCRIPTOR, key(ref), timeoutMs, completion, valueOf = {
+    val kind = GattOperation.Kind.READ_DESCRIPTOR
+    enqueueAttributeOperation(kind, key(ref), timeoutMs, completion, operationId, valueOf = {
       it.value
         ?: ByteArray(0)
     }) {
@@ -308,6 +335,7 @@ class PeripheralSession(
     value: ByteArray,
     timeoutMs: Long?,
     completion: (Result<Unit>) -> Unit,
+    operationId: Int? = null,
   ) {
     val ref = try {
       if (descriptor == CCCD) {
@@ -321,7 +349,8 @@ class PeripheralSession(
     } catch (error: CoreError) {
       return completion(Result.failure(error))
     }
-    enqueueAttributeOperation(GattOperation.Kind.WRITE_DESCRIPTOR, key(ref), timeoutMs, completion, valueOf = {}) {
+    val kind = GattOperation.Kind.WRITE_DESCRIPTOR
+    enqueueAttributeOperation(kind, key(ref), timeoutMs, completion, operationId, valueOf = {}) {
       submitWrite(GattOperation.Kind.WRITE_DESCRIPTOR, "Descriptor write") {
         gatt?.writeDescriptor(ref, value) ?: SubmitStatus.ERROR_UNKNOWN
       }
@@ -427,7 +456,8 @@ class PeripheralSession(
       entry.indicate -> CCCD_INDICATE
       else -> CCCD_NOTIFY
     }
-    enqueueAttributeOperation(GattOperation.Kind.SET_NOTIFY, key(entry.ref), timeoutMs, completion, valueOf = {}) {
+    val kind = GattOperation.Kind.SET_NOTIFY
+    enqueueAttributeOperation(kind, key(entry.ref), timeoutMs, completion, operationId = null, valueOf = {}) {
       if (gatt?.setCharacteristicNotification(entry.ref, enable) != true) {
         refused(if (enable) "notification registration" else "notification removal")
       } else {
@@ -452,21 +482,21 @@ class PeripheralSession(
     CoreError(CoreError.Code.NOT_SUPPORTED, "Characteristic $characteristic doesn't support $what")
 
   /** Negotiates the ATT MTU (23–517) and resolves the value both sides agreed on (plan §5.4). */
-  fun requestMtu(mtu: Int, timeoutMs: Long?, completion: (Result<Int>) -> Unit) {
+  fun requestMtu(mtu: Int, timeoutMs: Long?, completion: (Result<Int>) -> Unit, operationId: Int? = null) {
     if (mtu !in DEFAULT_MTU..MAX_MTU) {
       val error = CoreError(CoreError.Code.INVALID_ARGUMENT, "MTU $mtu is outside $DEFAULT_MTU–$MAX_MTU")
       return completion(Result.failure(error))
     }
     val kind = GattOperation.Kind.REQUEST_MTU
-    enqueueAttributeOperation(kind, "mtu", timeoutMs, completion, valueOf = { it.number ?: this.mtu }) {
+    enqueueAttributeOperation(kind, "mtu", timeoutMs, completion, operationId, valueOf = { it.number ?: this.mtu }) {
       if (gatt?.requestMtu(mtu) != true) refused("MTU request")
     }
   }
 
   /** Reads the link's RSSI in dBm. */
-  fun readRssi(timeoutMs: Long?, completion: (Result<Int>) -> Unit) {
+  fun readRssi(timeoutMs: Long?, completion: (Result<Int>) -> Unit, operationId: Int? = null) {
     val kind = GattOperation.Kind.READ_RSSI
-    enqueueAttributeOperation(kind, "rssi", timeoutMs, completion, valueOf = { it.number ?: 0 }) {
+    enqueueAttributeOperation(kind, "rssi", timeoutMs, completion, operationId, valueOf = { it.number ?: 0 }) {
       if (gatt?.readRemoteRssi() != true) refused("RSSI read")
     }
   }
@@ -607,18 +637,21 @@ class PeripheralSession(
     target: String,
     timeoutMs: Long?,
     completion: (Result<T>) -> Unit,
+    operationId: Int?,
     valueOf: (GattResult.Success) -> T,
     start: () -> Unit,
   ) {
     if (state != SessionState.READY) {
       return completion(Result.failure(CoreError(CoreError.Code.DISCONNECTED, "Not connected to $address")))
     }
-    queue.enqueue(kind, target, timeoutMs, start) { result ->
+    val operation = queue.enqueue(kind, target, timeoutMs, start) { result ->
+      operationId?.let(cancellable::remove)
       when (result) {
         is GattResult.Success -> completion(Result.success(valueOf(result)))
         is GattResult.Failure -> completion(Result.failure(result.error))
       }
     }
+    operationId?.let { cancellable[it] = operation }
   }
 
   /** The stack refused to start the in-flight operation. */
@@ -707,11 +740,11 @@ class PeripheralSession(
       return
     }
     setState(SessionState.DISCOVERING, null)
-    discover(filter = null, timeoutMs = null) { result ->
+    discover(filter = null, timeoutMs = null, completion = { result ->
       if (state == SessionState.DISCOVERING) {
         result.fold(onSuccess = { exchangeMtu() }, onFailure = { failConnect(it as CoreError) })
       }
-    }
+    })
   }
 
   /**

@@ -163,4 +163,42 @@ class CentralEngineTest {
     engine.disconnect("C0:FF:EE:00:00:03") { disconnected = true }
     assertTrue("unknown peripherals are already disconnected", disconnected)
   }
+
+  @Test
+  fun `names come from scans, then from the device once connected`() {
+    permissions.granted += setOf(AndroidPermissions.BLUETOOTH_CONNECT, AndroidPermissions.BLUETOOTH_SCAN)
+    val engine = engine()
+    val scanned = FakeRemoteDevice("C0:FF:EE:00:00:01", name = "GAP name")
+    assertNull(engine.name("C0:FF:EE:00:00:01"))
+    engine.startScan(1, ScanSpec())
+    adapter.scanner.emit(scanRecord(scanned.address, name = "Advertised", device = scanned))
+    assertEquals("Advertised", engine.name("c0:ff:ee:00:00:01"))
+    adapter.scanner.emit(scanRecord(scanned.address, name = null, device = scanned))
+    assertEquals("a result without a name keeps the last one", "Advertised", engine.name("C0:FF:EE:00:00:01"))
+
+    engine.connect(scanned.address, ConnectSpec(15_000, autoDiscover = false, requestMtu = null)) {}
+    scanned.clients[0].callback.onConnectionStateChange(GATT_SUCCESS, ConnectionStates.CONNECTED)
+    assertEquals("GAP name", engine.name(scanned.address))
+    assertNull(engine.name("not-an-address"))
+  }
+
+  @Test
+  fun `known peripherals keep every valid address`() {
+    val engine = engine()
+    assertEquals(
+      listOf("C0:FF:EE:00:00:01", "C0:FF:EE:00:00:02"),
+      engine.knownPeripherals(listOf("c0:ff:ee:00:00:01", "nope", "C0:FF:EE:00:00:02", "C0:FF:EE:00:00:01")),
+    )
+  }
+
+  @Test
+  fun `system-connected peripherals need the connect permission`() {
+    val engine = engine()
+    adapter.connectedDevices += listOf("aa:bb:cc:dd:ee:ff", "C0:FF:EE:00:00:01")
+    val services = listOf(UUID.fromString("0000180d-0000-1000-8000-00805f9b34fb"))
+    val denied = runCatching { engine.systemConnectedPeripherals(services) }.exceptionOrNull() as CoreError
+    assertEquals(CoreError.Code.PERMISSION_DENIED, denied.code)
+    permissions.granted += AndroidPermissions.BLUETOOTH_CONNECT
+    assertEquals(listOf("AA:BB:CC:DD:EE:FF", "C0:FF:EE:00:00:01"), engine.systemConnectedPeripherals(services))
+  }
 }

@@ -1,8 +1,14 @@
-// The raw native module, resolved on first use (plan §4.6). Temporary: the public API of P1-12
-// (BleManager, Peripheral, hooks) replaces this default export.
-export { lazyNativeModule as default } from './internal/native';
-export * from './ExpoBleKit.types';
+// The public API (plan §5). Everything else is internal.
+export { BleManager } from './BleManager';
+export {
+  useBleState,
+  useBlePermissions,
+  useScan,
+  usePeripheral,
+  useCharacteristicValue,
+} from './hooks';
 export type {
+  BleManagerApi,
   BlePermissionRequest,
   BlePermissions,
   BleState,
@@ -11,10 +17,11 @@ export type {
   CharacteristicSubscription,
   ConnectionState,
   ConnectOptions,
+  Descriptor,
   Diagnostics,
   OpOptions,
+  Peripheral,
   PermissionStatus,
-  Descriptor,
   Phy,
   ReconnectPolicy,
   ScanOptions,

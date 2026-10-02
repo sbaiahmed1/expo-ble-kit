@@ -7,6 +7,7 @@ import type { NativeBleKitPort } from './internal/port';
 import type { BlePermissions, BleState, Diagnostics } from './types';
 
 class WebPeripheral {
+  readonly name = null;
   readonly state = 'disconnected';
   readonly services = [];
   readonly mtu = 23;
@@ -53,6 +54,8 @@ class WebPeripheral {
     throw notSupported();
   }
 
+  async cancelOperation(): Promise<void> {}
+
   addListener() {
     return { remove() {} };
   }
@@ -80,6 +83,14 @@ class ExpoBleKitModule extends NativeModule<ExpoBleKitModuleEvents> {
 
   getPeripheral(id: string): NativePeripheral {
     return new WebPeripheral(id) as unknown as NativePeripheral;
+  }
+
+  async getKnownPeripherals(): Promise<string[]> {
+    throw notSupported();
+  }
+
+  async getSystemConnectedPeripherals(): Promise<string[]> {
+    throw notSupported();
   }
 
   async getDiagnosticsAsync(): Promise<Pick<Diagnostics, 'state' | 'sessions'>> {

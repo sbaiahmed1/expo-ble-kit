@@ -31,6 +31,8 @@ extension CentralEngine {
     advertisementData: [String: Any],
     rssi: Int
   ) {
+    names[peripheral.identifier.uuidString] =
+      advertisementData[CBAdvertisementDataLocalNameKey] as? String ?? peripheral.name
     scanController.deliver(peripheral, advertisementData: advertisementData, rssi: rssi)
   }
 }

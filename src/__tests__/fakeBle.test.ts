@@ -1,13 +1,16 @@
 import type { ConnectionStateEvent } from '../ExpoBleKit.types';
-import ExpoBleKit, { BleError, type ScanResult } from '../index';
+import { BleError } from '../errors';
+import { BleManager } from '../index';
 import { toNativeAttributeRequest } from '../internal/attributeRequest';
 import { toNativeConnectOptions } from '../internal/connectOptions';
+import { lazyNativeModule as ExpoBleKit } from '../internal/native';
 import type { NativePeripheralPort } from '../internal/port';
 import { toNativeScanOptions } from '../internal/scanOptions';
 import { installFakeBle, type FakeBle, type VirtualPeripheral } from '../testing';
+import type { ScanResult } from '../types';
 
-// P1-13: the fake behaves like the native cores (plan §5.3, §5.4, §5.8), seen through the same
-// lazy native module the rest of the TS layer uses.
+// P1-13: the fake behaves like the native cores (plan §5.3, §5.4, §5.8), seen through the raw
+// port (the lazy native module) under the public API.
 
 const TEST_SERVICE = '0c6c1000-b347-4cfa-9827-1c5a13658519';
 const STATIC_READ = '0c6c1001-b347-4cfa-9827-1c5a13658519';
@@ -46,7 +49,7 @@ async function codeOf(promise: Promise<unknown>) {
 
 describe('importing without a native module', () => {
   it('does not throw, and calls say what is missing', () => {
-    expect(() => ExpoBleKit.getState()).toThrow(/native module is missing/);
+    expect(() => BleManager.state).toThrow(/native module is missing/);
   });
 });
 
@@ -307,7 +310,7 @@ describe('the fake', () => {
       await settle();
       await connecting;
       expect(await codeOf(peripheral.read(request(STATIC_READ)))).toBe('SERVICE_NOT_FOUND');
-      const discovery = peripheral.discover([TEST_SERVICE], 30_000);
+      const discovery = peripheral.discover([TEST_SERVICE], 30_000, null);
       await settle();
       expect((await discovery).map((s) => s.uuid)).toEqual([TEST_SERVICE]);
       const value = peripheral.read(request(STATIC_READ));
@@ -416,10 +419,10 @@ describe('the fake', () => {
         await codeOf(peripheral.write(request(ECHO_WRITE, undefined, false), new Uint8Array(21)))
       ).toBe('INVALID_ATTRIBUTE_LENGTH');
 
-      const negotiated = peripheral.requestMtu(517, 10_000);
+      const negotiated = peripheral.requestMtu(517, 10_000, null);
       await settle();
       expect(await negotiated).toBe(247);
-      const again = peripheral.requestMtu(517, 10_000);
+      const again = peripheral.requestMtu(517, 10_000, null);
       await settle();
       expect(await again).toBe(247);
       expect(seen.filter((event) => event.startsWith('mtu'))).toEqual(['mtu 247']);
@@ -427,7 +430,7 @@ describe('the fake', () => {
       const write = peripheral.write(request(ECHO_WRITE, undefined, false), new Uint8Array(244));
       await settle();
       expect(await codeOf(write)).toBe('ok');
-      expect(await codeOf(peripheral.requestMtu(22, 10_000))).toBe('INVALID_ARGUMENT');
+      expect(await codeOf(peripheral.requestMtu(22, 10_000, null))).toBe('INVALID_ARGUMENT');
     });
 
     it('turns a failed exchange while connecting into a warning', async () => {
@@ -444,12 +447,12 @@ describe('the fake', () => {
       const { peripheral } = await connect({});
       device.setRssi(-80);
       const other = await connected();
-      const rssi = other.peripheral.readRssi(10_000);
+      const rssi = other.peripheral.readRssi(10_000, null);
       await settle();
       expect(await rssi).toBe(-80);
 
       fake.injectError({ op: 'readRssi' }, 'GATT_ERROR');
-      const failed = codeOf(other.peripheral.readRssi(10_000));
+      const failed = codeOf(other.peripheral.readRssi(10_000, null));
       await settle();
       expect(await failed).toBe('GATT_ERROR');
 
@@ -457,7 +460,7 @@ describe('the fake', () => {
       await settle();
       await disconnecting;
       expect(peripheral.mtu).toBe(23);
-      expect(await codeOf(peripheral.readRssi(10_000))).toBe('DISCONNECTED');
+      expect(await codeOf(peripheral.readRssi(10_000, null))).toBe('DISCONNECTED');
     });
   });
 

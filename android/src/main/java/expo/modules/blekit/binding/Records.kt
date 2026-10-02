@@ -132,4 +132,7 @@ class AttributeRequestRecord : Record {
   @Field val withResponse: Boolean = true
 
   @Field val timeoutMs: Double = 10_000.0
+
+  /** Set when JS may cancel the operation (an `AbortSignal`); see `cancelOperation`. */
+  @Field val operationId: Int? = null
 }

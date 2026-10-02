@@ -71,6 +71,8 @@ struct AttributeRequestRecord: Record {
   @Field var descriptor: String?
   @Field var withResponse: Bool = true
   @Field var timeoutMs: Double = 10_000
+  /// Set when JS may cancel the operation (an `AbortSignal`); see `cancelOperation`.
+  @Field var operationId: Int?
 
   var path: AttributePath {
     AttributePath(service: service, characteristic: characteristic, descriptor: descriptor)

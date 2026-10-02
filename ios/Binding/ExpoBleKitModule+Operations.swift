@@ -24,13 +24,19 @@ extension ExpoBleKitModule {
 
   func read(_ id: String, _ request: Request, _ promise: Promise) {
     attributeOperation(id, promise) { session, done in
-      session.read(request.path, timeout: request.timeout) { done($0.map { $0 }) }
+      session.read(request.path, timeout: request.timeout, operationId: request.operationId) { done($0.map { $0 }) }
     }
   }
 
   func write(_ id: String, _ request: Request, _ value: Data, _ promise: Promise) {
     attributeOperation(id, promise) { session, done in
-      session.write(request.path, value: value, withResponse: request.withResponse, timeout: request.timeout) {
+      session.write(
+        request.path,
+        value: value,
+        withResponse: request.withResponse,
+        timeout: request.timeout,
+        operationId: request.operationId
+      ) {
         done($0.map { _ in nil })
       }
     }
@@ -38,13 +44,22 @@ extension ExpoBleKitModule {
 
   func readDescriptor(_ id: String, _ request: Request, _ promise: Promise) {
     attributeOperation(id, promise) { session, done in
-      session.readDescriptor(request.path, timeout: request.timeout) { done($0.map { $0 }) }
+      session.readDescriptor(request.path, timeout: request.timeout, operationId: request.operationId) {
+        done($0.map { $0 })
+      }
     }
   }
 
   func writeDescriptor(_ id: String, _ request: Request, _ value: Data, _ promise: Promise) {
     attributeOperation(id, promise) { session, done in
-      session.writeDescriptor(request.path, value: value, timeout: request.timeout) { done($0.map { _ in nil }) }
+      session.writeDescriptor(
+        request.path,
+        value: value,
+        timeout: request.timeout,
+        operationId: request.operationId
+      ) {
+        done($0.map { _ in nil })
+      }
     }
   }
 
@@ -79,10 +94,17 @@ extension ExpoBleKitModule {
     }
   }
 
-  func readRssi(_ id: String, _ timeoutMs: Double, _ promise: Promise) {
+  func readRssi(_ id: String, _ timeoutMs: Double, _ operationId: Int?, _ promise: Promise) {
     attributeOperation(id, promise) { session, done in
-      session.readRssi(timeout: timeoutMs / 1000) { done($0.map { $0 }) }
+      session.readRssi(timeout: timeoutMs / 1000, operationId: operationId) { done($0.map { $0 }) }
     }
+  }
+
+  /// Calls run in order on Expo's queue and then on the engine's queue, so a cancel never overtakes
+  /// the operation it cancels.
+  func cancelOperation(_ id: String, _ operationId: Int) {
+    let engine = self.engine
+    engine.queue.async { engine.cancelOperation(id, operationId: operationId) }
   }
 
   /// Runs an attribute operation on the engine's queue and settles `promise` with its value
@@ -109,10 +131,10 @@ extension ExpoBleKitModule {
     }
   }
 
-  func discover(_ id: String, services: [String]?, timeoutMs: Double, promise: Promise) {
+  func discover(_ id: String, services: [String]?, timeoutMs: Double, operationId: Int?, promise: Promise) {
     let engine = self.engine
     engine.queue.async {
-      engine.discover(id, filter: services, timeout: timeoutMs / 1000) { result in
+      engine.discover(id, filter: services, timeout: timeoutMs / 1000, operationId: operationId) { result in
         switch result {
         case let .success(found):
           promise.resolve(found)
@@ -140,6 +162,44 @@ extension ExpoBleKitModule {
     peripheralsLock.lock()
     defer { peripheralsLock.unlock() }
     return peripherals.object(forKey: id as NSString)
+  }
+
+  func requestPermissions(_ promise: Promise) {
+    let engine = self.engine
+    engine.queue.async {
+      engine.requestPermissions { result in
+        switch result {
+        case let .success(permissions):
+          promise.resolve(permissions.dictionary)
+        case let .failure(error):
+          promise.reject(BleKitException(error))
+        }
+      }
+    }
+  }
+
+  /// Runs a lookup that answers with peripheral ids on the engine's queue, and settles `promise`.
+  func peripheralIds(
+    _ promise: Promise,
+    _ lookup: @escaping (CentralEngine, @escaping (Result<[String], CoreError>) -> Void) throws -> Void
+  ) {
+    let engine = self.engine
+    engine.queue.async {
+      do {
+        try lookup(engine) { result in
+          switch result {
+          case let .success(ids):
+            promise.resolve(ids)
+          case let .failure(error):
+            promise.reject(BleKitException(error))
+          }
+        }
+      } catch let error as CoreError {
+        promise.reject(BleKitException(error))
+      } catch {
+        promise.reject(error)
+      }
+    }
   }
 
   /// Runs `work` on the engine's queue and settles `promise` with its result or error.

@@ -219,7 +219,7 @@ class PeripheralSessionTest {
 
   private fun discoverResult(filter: List<java.util.UUID>? = null): MutableList<Result<List<GattServiceInfo>>> {
     val results = mutableListOf<Result<List<GattServiceInfo>>>()
-    session.discover(filter, timeoutMs = null) { results += it }
+    session.discover(filter, timeoutMs = null, completion = { results += it })
     executor.runUntilIdle()
     return results
   }

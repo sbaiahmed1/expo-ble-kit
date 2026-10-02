@@ -32,8 +32,8 @@ export function setNativeModuleOverride(port: NativeBleKitPort | null): void {
 }
 
 /**
- * The raw native module as a lazy stand-in, for the example app until the public API (P1-12)
- * replaces it. Every property access resolves the current module.
+ * The raw native module as a lazy stand-in, for tests of the port itself (the fake, the contract).
+ * Every property access resolves the current module.
  */
 export const lazyNativeModule = new Proxy({} as NativeBleKitPort, {
   get(_, property) {

@@ -15,6 +15,8 @@ final class BleKitException: Exception, @unchecked Sendable {
 
 /// Attribute operations take one request: where, how, and the timeout.
 typealias Request = AttributeRequestRecord
+/// Peripheral functions take their JS object first.
+typealias Handle = PeripheralObject
 
 public class ExpoBleKitModule: Module {
   /// One JS object per peripheral id while JS holds it (plan §4.5). Guarded by `peripheralsLock`.
@@ -109,25 +111,25 @@ public class ExpoBleKitModule: Module {
 
     peripheralClass()
 
+    // Ids only: JS turns them into peripherals with getPeripheral().
+    AsyncFunction("getKnownPeripherals") { (ids: [String], promise: Promise) in
+      self.peripheralIds(promise) { engine, done in try engine.knownPeripherals(ids, completion: done) }
+    }
+
+    AsyncFunction("getSystemConnectedPeripherals") { (services: [String], promise: Promise) in
+      self.peripheralIds(promise) { engine, done in try engine.systemConnectedPeripherals(services, completion: done) }
+    }
+
     AsyncFunction("getDiagnosticsAsync") { (promise: Promise) in
       self.settle(promise) { engine in engine.diagnostics() }
     }
 
     // The request flags don't matter on iOS: one authorization covers every capability.
     AsyncFunction("requestPermissionsAsync") { (_: [String: Bool]?, promise: Promise) in
-      let engine = self.engine
-      engine.queue.async {
-        engine.requestPermissions { result in
-          switch result {
-          case let .success(permissions):
-            promise.resolve(permissions.dictionary)
-          case let .failure(error):
-            promise.reject(BleKitException(error))
-          }
-        }
-      }
+      self.requestPermissions(promise)
     }
   }
+
   private func peripheralClass() -> ClassDefinition {
     Class(PeripheralObject.self) {
       // Peripherals only come from getPeripheral(), one object per id.
@@ -144,6 +146,7 @@ public class ExpoBleKitModule: Module {
       Property("state") { (ref: PeripheralObject) in self.engine.connectionState(ref.id) }
       Property("services") { (ref: PeripheralObject) in self.engine.services(ref.id) }
       Property("mtu") { (ref: PeripheralObject) in self.engine.mtu(ref.id) }
+      Property("name") { (ref: PeripheralObject) in self.engine.name(ref.id) }
 
       // UUIDs arrive normalized and timeouts always set: the TS layer applies the defaults (rule 4).
       AsyncFunction("read") { (ref: PeripheralObject, request: Request, promise: Promise) in
@@ -171,17 +174,22 @@ public class ExpoBleKitModule: Module {
         self.unsubscribe(ref.id, id, timeoutMs, promise)
       }
 
-      AsyncFunction("requestMtu") { (ref: PeripheralObject, mtu: Int, _: Double, promise: Promise) in
+      // iOS answers at once: there is nothing to time out or cancel.
+      AsyncFunction("requestMtu") { (ref: PeripheralObject, mtu: Int, _: Double, _: Int?, promise: Promise) in
         self.requestMtu(ref.id, mtu, promise)
       }
 
-      AsyncFunction("readRssi") { (ref: PeripheralObject, timeoutMs: Double, promise: Promise) in
-        self.readRssi(ref.id, timeoutMs, promise)
+      AsyncFunction("readRssi") { (ref: PeripheralObject, timeoutMs: Double, operationId: Int?, promise: Promise) in
+        self.readRssi(ref.id, timeoutMs, operationId, promise)
+      }
+
+      AsyncFunction("cancelOperation") { (ref: PeripheralObject, operationId: Int) in
+        self.cancelOperation(ref.id, operationId)
       }
 
       // `services` nil discovers everything; the TS layer always passes a timeout (rule 4).
-      AsyncFunction("discover") { (ref: PeripheralObject, services: [String]?, timeoutMs: Double, promise: Promise) in
-        self.discover(ref.id, services: services, timeoutMs: timeoutMs, promise: promise)
+      AsyncFunction("discover") { (ref: Handle, filter: [String]?, timeoutMs: Double, opId: Int?, promise: Promise) in
+        self.discover(ref.id, services: filter, timeoutMs: timeoutMs, operationId: opId, promise: promise)
       }
 
       AsyncFunction("connect") { (ref: PeripheralObject, options: ConnectOptionsRecord, promise: Promise) in

@@ -49,6 +49,9 @@ class CentralEngine(
   /** By normalized address. Read from any thread for the synchronous state getters. */
   private val sessions = ConcurrentHashMap<String, PeripheralSession>()
 
+  /** Advertised names from scans, then the device name once connected (plan §4.7). */
+  private val names = PeripheralNames()
+
   private val scanController =
     ScanController(
       adapter,
@@ -56,6 +59,7 @@ class CentralEngine(
       clock,
       object : ScanController.Events {
         override fun onScanResults(sessionId: Int, results: List<Map<String, Any?>>) {
+          results.forEach { result -> names[result["id"] as String] = result["name"] as String? }
           listener?.onScanResults(sessionId, results)
         }
 
@@ -144,6 +148,10 @@ class CentralEngine(
     adapterError(adapter.state)?.let { throw it }
     val session = sessions.getOrPut(address) {
       PeripheralSession(address, { seenDevice(address) ?: adapter.remoteDevice(address) }, executor) { state, error ->
+        if (state == SessionState.READY) {
+          // The name the device reports about itself; connecting needs the permission to read it.
+          names[address] = runCatching { (seenDevice(address) ?: adapter.remoteDevice(address)).name }.getOrNull()
+        }
         listener?.onConnectionStateChange(address, state, error)
       }.also { session ->
         session.onNotification = { ref, value ->
@@ -155,6 +163,31 @@ class CentralEngine(
       }
     }
     session.connect(spec, completion)
+  }
+
+  /** The latest name seen for [peripheralId], or null. Safe to read from any thread. */
+  fun name(peripheralId: String): String? = normalizeAddress(peripheralId)?.let { names[it] }
+
+  /** Android can't tell whether an address exists, so every valid one is kept (plan §4.12). */
+  fun knownPeripherals(ids: List<String>): List<String> = ids.mapNotNull(::normalizeAddress).distinct()
+
+  /**
+   * LE devices connected at the OS level, possibly by another app. Android can't see their services
+   * without connecting, so [services] doesn't filter them (plan §6).
+   */
+  @Suppress("UNUSED_PARAMETER")
+  fun systemConnectedPeripherals(services: List<UUID>): List<String> {
+    val policy = permissionPolicy()
+    policy.checkDeclared(listOf(BleCapability.CONNECT))
+    val missing = policy.runtimePermissions(BleCapability.CONNECT).filterNot(permissionSystem::isGranted)
+    if (missing.isNotEmpty()) {
+      throw CoreError(
+        CoreError.Code.PERMISSION_DENIED,
+        "Listing connected devices needs ${missing.joinToString()}. Call requestPermissionsAsync() first.",
+      )
+    }
+    adapterError(adapter.state)?.let { throw it }
+    return adapter.connectedGattDevices().mapNotNull(::normalizeAddress)
   }
 
   /** ATT MTU of [peripheralId]; 23 when not connected. Safe to read from any thread. */
@@ -171,13 +204,17 @@ class CentralEngine(
     filter: List<UUID>?,
     timeoutMs: Long?,
     completion: (Result<List<Map<String, Any?>>>) -> Unit,
+    operationId: Int? = null,
   ) {
     val session = normalizeAddress(peripheralId)?.let { sessions[it] }
     if (session == null) {
       completion(Result.failure(CoreError(CoreError.Code.DISCONNECTED, "Not connected to $peripheralId")))
       return
     }
-    session.discover(filter, timeoutMs) { result -> completion(result.map { found -> found.map { it.toJs() } }) }
+    val done: (Result<List<GattServiceInfo>>) -> Unit = { result ->
+      completion(result.map { found -> found.map { it.toJs() } })
+    }
+    session.discover(filter, timeoutMs, done, operationId)
   }
 
   /** The ready session of [peripheralId], or DISCONNECTED through [completion]. */
@@ -200,7 +237,8 @@ class CentralEngine(
     characteristic: UUID,
     timeoutMs: Long?,
     completion: (Result<ByteArray>) -> Unit,
-  ) = withSession(peripheralId, completion) { it.read(service, characteristic, timeoutMs, completion) }
+    operationId: Int? = null,
+  ) = withSession(peripheralId, completion) { it.read(service, characteristic, timeoutMs, completion, operationId) }
 
   fun write(
     peripheralId: String,
@@ -210,8 +248,9 @@ class CentralEngine(
     withResponse: Boolean,
     timeoutMs: Long?,
     completion: (Result<Unit>) -> Unit,
+    operationId: Int? = null,
   ) = withSession(peripheralId, completion) {
-    it.write(service, characteristic, value, withResponse, timeoutMs, completion)
+    it.write(service, characteristic, value, withResponse, timeoutMs, completion, operationId)
   }
 
   fun readDescriptor(
@@ -221,8 +260,9 @@ class CentralEngine(
     descriptor: UUID,
     timeoutMs: Long?,
     completion: (Result<ByteArray>) -> Unit,
+    operationId: Int? = null,
   ) = withSession(peripheralId, completion) {
-    it.readDescriptor(service, characteristic, descriptor, timeoutMs, completion)
+    it.readDescriptor(service, characteristic, descriptor, timeoutMs, completion, operationId)
   }
 
   fun writeDescriptor(
@@ -233,8 +273,9 @@ class CentralEngine(
     value: ByteArray,
     timeoutMs: Long?,
     completion: (Result<Unit>) -> Unit,
+    operationId: Int? = null,
   ) = withSession(peripheralId, completion) {
-    it.writeDescriptor(service, characteristic, descriptor, value, timeoutMs, completion)
+    it.writeDescriptor(service, characteristic, descriptor, value, timeoutMs, completion, operationId)
   }
 
   fun subscribe(
@@ -249,11 +290,21 @@ class CentralEngine(
     it.subscribe(service, characteristic, mode, subscriptionId, timeoutMs, completion)
   }
 
-  fun requestMtu(peripheralId: String, mtu: Int, timeoutMs: Long?, completion: (Result<Int>) -> Unit) =
-    withSession(peripheralId, completion) { it.requestMtu(mtu, timeoutMs, completion) }
+  fun requestMtu(
+    peripheralId: String,
+    mtu: Int,
+    timeoutMs: Long?,
+    completion: (Result<Int>) -> Unit,
+    operationId: Int? = null,
+  ) = withSession(peripheralId, completion) { it.requestMtu(mtu, timeoutMs, completion, operationId) }
 
-  fun readRssi(peripheralId: String, timeoutMs: Long?, completion: (Result<Int>) -> Unit) =
-    withSession(peripheralId, completion) { it.readRssi(timeoutMs, completion) }
+  fun readRssi(peripheralId: String, timeoutMs: Long?, completion: (Result<Int>) -> Unit, operationId: Int? = null) =
+    withSession(peripheralId, completion) { it.readRssi(timeoutMs, completion, operationId) }
+
+  /** Cancels an operation started with [operationId] (plan §4.9); unknown ids do nothing. */
+  fun cancelOperation(peripheralId: String, operationId: Int) {
+    normalizeAddress(peripheralId)?.let { sessions[it] }?.cancel(operationId)
+  }
 
   /** Unknown peripherals have nothing to unsubscribe: success. */
   fun unsubscribe(peripheralId: String, subscriptionId: Int, timeoutMs: Long?, completion: (Result<Unit>) -> Unit) {

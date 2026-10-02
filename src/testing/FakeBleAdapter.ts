@@ -7,7 +7,12 @@ import { BleError, BleErrorCode } from '../errors';
 import type { NativeAttributeRequest, NativeSubscribeMode } from '../internal/attributeRequest';
 import type { NativeConnectOptions } from '../internal/connectOptions';
 import { DEFAULT_DISCOVERY_TIMEOUT_MS } from '../internal/connectOptions';
-import { GattQueue, type GattOperationKind, type GattResult } from '../internal/gattQueue';
+import {
+  GattQueue,
+  type GattOperation,
+  type GattOperationKind,
+  type GattResult,
+} from '../internal/gattQueue';
 import type { NativeBleKitPort, NativeDiagnostics, NativePeripheralPort } from '../internal/port';
 import type { NativeScanOptions } from '../internal/scanOptions';
 import { timerScheduler, type Scheduler } from '../internal/scheduler';
@@ -304,6 +309,8 @@ class FakePeripheralHandle implements NativePeripheralPort {
     }
   >();
   private subscriptionKeys = new Map<number, string>();
+  /** Running and queued operations JS may cancel, by the id JS gave them. */
+  private cancellable = new Map<number, GattOperation>();
 
   constructor(
     readonly id: string,
@@ -370,8 +377,12 @@ class FakePeripheralHandle implements NativePeripheralPort {
     });
   }
 
-  discover(services: string[] | null, timeoutMs: number): Promise<Service[]> {
-    return this.operation('discoverServices', 'discover', undefined, timeoutMs, () => {
+  discover(
+    services: string[] | null,
+    timeoutMs: number,
+    operationId: number | null
+  ): Promise<Service[]> {
+    return this.operation('discoverServices', 'discover', { timeoutMs, operationId }, () => {
       const all = this.device()?.serviceList() ?? [];
       const found = all.filter((service) => !services || services.includes(service.uuid));
       if (!services) {
@@ -389,9 +400,7 @@ class FakePeripheralHandle implements NativePeripheralPort {
       ['read'],
       BleErrorCode.READ_NOT_PERMITTED
     );
-    return this.operation('read', 'read', request.characteristic, request.timeoutMs, () =>
-      characteristic.value.slice()
-    );
+    return this.operation('read', 'read', request, () => characteristic.value.slice());
   }
 
   async write(request: NativeAttributeRequest, value: Uint8Array): Promise<void> {
@@ -410,7 +419,7 @@ class FakePeripheralHandle implements NativePeripheralPort {
       );
     }
     const kind = request.withResponse ? 'write' : 'writeWithoutResponse';
-    return this.operation(kind, 'write', request.characteristic, request.timeoutMs, () => {
+    return this.operation(kind, 'write', request, () => {
       characteristic.value = value.slice();
       this.device()?.writes.push({
         characteristic: request.characteristic,
@@ -422,12 +431,8 @@ class FakePeripheralHandle implements NativePeripheralPort {
 
   async readDescriptor(request: NativeAttributeRequest): Promise<Uint8Array> {
     const descriptor = this.findDescriptor(request);
-    return this.operation(
-      'readDescriptor',
-      'readDescriptor',
-      request.characteristic,
-      request.timeoutMs,
-      () => descriptor.value.slice()
+    return this.operation('readDescriptor', 'readDescriptor', request, () =>
+      descriptor.value.slice()
     );
   }
 
@@ -442,15 +447,9 @@ class FakePeripheralHandle implements NativePeripheralPort {
       throw fail(BleErrorCode.INVALID_ATTRIBUTE_LENGTH, `${value.length} bytes is more than 512`);
     }
     const descriptor = this.findDescriptor(request);
-    return this.operation(
-      'writeDescriptor',
-      'writeDescriptor',
-      request.characteristic,
-      request.timeoutMs,
-      () => {
-        descriptor.value = value.slice();
-      }
-    );
+    return this.operation('writeDescriptor', 'writeDescriptor', request, () => {
+      descriptor.value = value.slice();
+    });
   }
 
   async subscribe(
@@ -504,7 +503,7 @@ class FakePeripheralHandle implements NativePeripheralPort {
       return ready; // The CCCD write is already on its way.
     }
     this.subscriptions.set(key, subscription);
-    this.operation('setNotify', 'subscribe', request.characteristic, request.timeoutMs, () => {
+    this.operation('setNotify', 'subscribe', request, () => {
       characteristic.cccd = indicate ? 'indicate' : 'notify';
     }).then(
       () => {
@@ -550,31 +549,45 @@ class FakePeripheralHandle implements NativePeripheralPort {
     if (this.state !== 'connected') {
       return;
     }
-    await this.operation('setNotify', 'unsubscribe', entry.characteristic.uuid, timeoutMs, () => {
+    const target = { characteristic: entry.characteristic.uuid, timeoutMs };
+    await this.operation('setNotify', 'unsubscribe', target, () => {
       entry.characteristic.cccd = 'off';
     });
   }
 
   /** Negotiates like Android: the smaller of the request and what the peripheral accepts. */
-  async requestMtu(mtu: number, timeoutMs: number): Promise<number> {
+  async requestMtu(mtu: number, timeoutMs: number, operationId: number | null): Promise<number> {
     if (!Number.isInteger(mtu) || mtu < MIN_MTU || mtu > MAX_MTU) {
       throw fail(BleErrorCode.INVALID_ARGUMENT, `MTU ${mtu} is outside ${MIN_MTU}–${MAX_MTU}`);
     }
-    const negotiated = await this.operation('requestMtu', 'requestMtu', undefined, timeoutMs, () =>
-      Math.min(mtu, this.device()?.mtu ?? MIN_MTU)
+    const negotiated = await this.operation(
+      'requestMtu',
+      'requestMtu',
+      { timeoutMs, operationId },
+      () => Math.min(mtu, this.device()?.mtu ?? MIN_MTU)
     );
     this.updateMtu(negotiated);
     return negotiated;
   }
 
-  readRssi(timeoutMs: number): Promise<number> {
+  readRssi(timeoutMs: number, operationId: number | null): Promise<number> {
     return this.operation(
       'readRssi',
       'readRssi',
-      undefined,
-      timeoutMs,
+      { timeoutMs, operationId },
       () => this.device()?.rssi ?? 0
     );
+  }
+
+  async cancelOperation(operationId: number): Promise<void> {
+    const operation = this.cancellable.get(operationId);
+    if (operation) {
+      this.queue.cancel(operation);
+    }
+  }
+
+  get name(): string | null {
+    return this.adapter.nameOf(this.id);
   }
 
   // Called by the adapter and the virtual device
@@ -714,6 +727,8 @@ class FakePeripheralHandle implements NativePeripheralPort {
   private becomeReady(): void {
     this.cancelConnectTimeout?.();
     this.cancelConnectTimeout = null;
+    // Once connected, the name the device reports about itself is known.
+    this.adapter.recordName(this.id, this.device()?.name ?? null);
     this.setState('connected');
     // The state listener has seen `connected` before connect() resolves (plan §4.8).
     const waiters = this.connectWaiters;
@@ -759,31 +774,40 @@ class FakePeripheralHandle implements NativePeripheralPort {
     this.emitter.emit('connectionStateChange', event);
   }
 
-  /** Queues an operation answered on a later tick, like a radio (plan §4.9). */
+  /**
+   * Queues an operation answered on a later tick, like a radio (plan §4.9). `operationId` lets
+   * `cancelOperation` cancel it.
+   */
   private operation<T>(
     kind: GattOperationKind,
     op: FakeOperation,
-    characteristic: string | undefined,
-    timeoutMs: number,
+    target: { characteristic?: string; timeoutMs: number; operationId?: number | null },
     perform: () => T
   ): Promise<T> {
     if (this.state !== 'connected') {
       return Promise.reject(fail(BleErrorCode.DISCONNECTED, `Not connected to ${this.id}`));
     }
+    const { characteristic, timeoutMs, operationId } = target;
     return new Promise((resolve, reject) => {
       const operation = this.queue.enqueue<T>(
         kind,
         { target: characteristic, timeoutMs },
         () =>
           this.scheduler.schedule(() => {
+            // A running operation that was cancelled still finishes at the radio; the queue then
+            // moves on (its caller was already answered).
             const error = this.adapter.takeError(op, this.id, characteristic);
             const result: GattResult<T> = error
               ? { ok: false, error }
               : { ok: true, value: perform() };
             this.queue.complete(result, (current) => current === operation);
           }),
-        (result) => (result.ok ? resolve(result.value) : reject(result.error))
+        (result) => {
+          if (operationId != null) this.cancellable.delete(operationId);
+          return result.ok ? resolve(result.value) : reject(result.error);
+        }
       );
+      if (operationId != null) this.cancellable.set(operationId, operation);
     });
   }
 
@@ -852,6 +876,8 @@ export class FakeBleAdapter implements NativeBleKitPort {
   private readonly devices = new Map<string, VirtualDevice>();
   private readonly handles = new Map<string, FakePeripheralHandle>();
   private readonly sessions = new Map<number, { options: NativeScanOptions; seen: Set<string> }>();
+  /** Names seen in scans or once connected, like the native cores (plan §4.7). */
+  private readonly names = new Map<string, string>();
   private errors: {
     match: { op: string; peripheralId?: string; characteristic?: UUID };
     code: BleErrorCode;
@@ -903,6 +929,23 @@ export class FakeBleAdapter implements NativeBleKitPort {
 
   getPeripheral(id: string): NativePeripheralPort {
     return this.handleFor(id);
+  }
+
+  /** Like iOS: unknown ids (no virtual peripheral) are dropped. */
+  async getKnownPeripherals(ids: string[]): Promise<string[]> {
+    const precondition = adapterError(this.state);
+    if (precondition) throw precondition;
+    return [...new Set(ids)].filter((id) => this.devices.has(id));
+  }
+
+  /** Peripherals this app connected, with one of `services`. */
+  async getSystemConnectedPeripherals(services: string[]): Promise<string[]> {
+    const precondition = adapterError(this.state) ?? this.permissionError('connect');
+    if (precondition) throw precondition;
+    return [...this.handles.values()]
+      .filter((handle) => handle.state === 'connected')
+      .filter((handle) => services.some((uuid) => this.devices.get(handle.id)?.services.has(uuid)))
+      .map((handle) => handle.id);
   }
 
   async getDiagnosticsAsync(): Promise<NativeDiagnostics> {
@@ -965,6 +1008,7 @@ export class FakeBleAdapter implements NativeBleKitPort {
     this.handles.clear();
     this.devices.clear();
     this.sessions.clear();
+    this.names.clear();
     this.errors = [];
     this.state = this.initial.state;
     this.permissions = { ...this.initial.permissions };
@@ -1010,6 +1054,14 @@ export class FakeBleAdapter implements NativeBleKitPort {
     this.emitter.emit('warning', { code, message });
   }
 
+  nameOf(id: string): string | null {
+    return this.names.get(id) ?? null;
+  }
+
+  recordName(id: string, name: string | null): void {
+    if (name) this.names.set(id, name);
+  }
+
   permissionError(capability: 'scan' | 'connect'): BleError | null {
     return this.permissions[capability] === 'granted'
       ? null
@@ -1027,6 +1079,7 @@ export class FakeBleAdapter implements NativeBleKitPort {
       session.seen.add(device.id);
     }
     const results = [device.scanResult()];
+    this.recordName(device.id, device.name);
     if (session.options.reportIntervalMs > 0) {
       this.scheduler.scheduleAfter(session.options.reportIntervalMs, () => {
         if (this.sessions.get(sessionId) === session) {

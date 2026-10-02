@@ -9,6 +9,7 @@ import android.bluetooth.BluetoothGattCharacteristic
 import android.bluetooth.BluetoothGattDescriptor
 import android.bluetooth.BluetoothGattService
 import android.bluetooth.BluetoothManager
+import android.bluetooth.BluetoothProfile
 import android.bluetooth.le.ScanCallback
 import android.bluetooth.le.ScanFilter
 import android.bluetooth.le.ScanResult
@@ -68,6 +69,11 @@ class AndroidBluetoothAdapterPort(private val context: Context, private val hand
     val adapter = checkNotNull(adapter) { "No Bluetooth adapter" }
     return AndroidRemoteDevice(context, adapter.getRemoteDevice(address), handler)
   }
+
+  override fun connectedGattDevices(): List<String> = context.getSystemService(BluetoothManager::class.java)
+    ?.getConnectedDevices(BluetoothProfile.GATT)
+    .orEmpty()
+    .map { it.address }
 }
 
 @SuppressLint("MissingPermission")

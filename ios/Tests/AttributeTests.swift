@@ -161,4 +161,28 @@ final class AttributeTests: XCTestCase {
     peripheral.completeWrite(peripheral.characteristic(echoWrite)!)
     XCTAssertNoThrow(try second()?.get())
   }
+
+  func testOperationsAreCancelledByTheIdJsGaveThem() {
+    let running = outcome { session.read(path(staticRead), timeout: nil, operationId: 1, completion: $0) }
+    let queued: Outcome<Void> = outcome {
+      session.write(path(echoWrite), value: Data([1]), withResponse: true, timeout: nil, operationId: 2, completion: $0)
+    }
+    session.cancel(2)
+    XCTAssertEqual(code(queued()), .operationCancelled)
+
+    session.cancel(1)
+    XCTAssertEqual(code(running()), .operationCancelled, "answered at once")
+    let next = read(staticRead)
+    XCTAssertEqual(peripheral.calls.filter { $0 == .read(CBUUID(string: staticRead)) }.count, 1, "the radio is busy")
+    // The radio answers the cancelled read (discarded), then the next read runs.
+    peripheral.completeRead(peripheral.characteristic(staticRead)!)
+    scheduler.runUntilIdle()
+    peripheral.completeRead(peripheral.characteristic(staticRead)!)
+    XCTAssertEqual(try next()?.get(), Data(0..<20))
+    XCTAssertFalse(written(echoWrite, Data([1]), withResponse: true), "the cancelled write never ran")
+
+    session.cancel(1)
+    session.cancel(42)
+    XCTAssertEqual(code(running()), .operationCancelled, "finished and unknown ids do nothing")
+  }
 }

@@ -12,6 +12,8 @@ export interface NativeAttributeRequest {
   descriptor?: string;
   withResponse: boolean;
   timeoutMs: number;
+  /** Set when an `AbortSignal` may cancel the operation; see `cancelOperation`. */
+  operationId?: number;
 }
 
 function invalid(option: string, problem: string): BleError {

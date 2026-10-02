@@ -121,10 +121,19 @@ class ExpoBleKitModule : Module() {
 
       Property("mtu") { ref: PeripheralObject -> engine.mtu(ref.id) }
 
+      Property("name") { ref: PeripheralObject -> engine.name(ref.id) }
+
       // UUIDs arrive normalized and timeouts always set: the TS layer applies the defaults (rule 4).
       AsyncFunction("read") { ref: PeripheralObject, request: AttributeRequestRecord, promise: Promise ->
         attributeOperation(promise) {
-          engine.read(ref.id, request.serviceUuid(), request.characteristicUuid(), request.timeout(), promise.settler())
+          engine.read(
+            ref.id,
+            request.serviceUuid(),
+            request.characteristicUuid(),
+            request.timeout(),
+            promise.settler(),
+            request.operationId,
+          )
         }
       }
 
@@ -143,6 +152,7 @@ class ExpoBleKitModule : Module() {
             request.withResponse,
             request.timeout(),
             promise.settler(),
+            request.operationId,
           )
         }
       }
@@ -156,6 +166,7 @@ class ExpoBleKitModule : Module() {
             request.descriptorUuid(),
             request.timeout(),
             promise.settler(),
+            request.operationId,
           )
         }
       }
@@ -175,6 +186,7 @@ class ExpoBleKitModule : Module() {
             value,
             request.timeout(),
             promise.settler(),
+            request.operationId,
           )
         }
       }
@@ -208,25 +220,40 @@ class ExpoBleKitModule : Module() {
         }
       }
 
-      AsyncFunction("requestMtu") { ref: PeripheralObject, mtu: Int, timeoutMs: Double, promise: Promise ->
-        attributeOperation(promise) { engine.requestMtu(ref.id, mtu, timeoutMs.toLong(), promise.settler()) }
+      AsyncFunction("requestMtu") {
+          ref: PeripheralObject,
+          mtu: Int,
+          timeoutMs: Double,
+          operationId: Int?,
+          promise: Promise,
+        ->
+        attributeOperation(promise) {
+          engine.requestMtu(ref.id, mtu, timeoutMs.toLong(), promise.settler(), operationId)
+        }
       }
 
-      AsyncFunction("readRssi") { ref: PeripheralObject, timeoutMs: Double, promise: Promise ->
-        attributeOperation(promise) { engine.readRssi(ref.id, timeoutMs.toLong(), promise.settler()) }
+      AsyncFunction("readRssi") { ref: PeripheralObject, timeoutMs: Double, operationId: Int?, promise: Promise ->
+        attributeOperation(promise) { engine.readRssi(ref.id, timeoutMs.toLong(), promise.settler(), operationId) }
+      }
+
+      // Calls run in order on Expo's queue and then on the BLE thread, so a cancel never overtakes
+      // the operation it cancels.
+      AsyncFunction("cancelOperation") { ref: PeripheralObject, operationId: Int ->
+        executor.execute { engine.cancelOperation(ref.id, operationId) }
       }
 
       // `services` null discovers everything; the TS layer always passes a timeout (rule 4).
-      AsyncFunction("discover") { ref: PeripheralObject, services: List<String>?, timeoutMs: Double, promise: Promise ->
+      AsyncFunction("discover") {
+          ref: PeripheralObject,
+          services: List<String>?,
+          timeoutMs: Double,
+          operationId: Int?,
+          promise: Promise,
+        ->
         executor.execute {
           settle(promise) {
             val filter = services?.map(::uuidArgument)
-            engine.discover(ref.id, filter, timeoutMs.toLong()) { result ->
-              result.fold(
-                onSuccess = { promise.resolve(it) },
-                onFailure = { promise.reject(BleKitException(it as CoreError)) },
-              )
-            }
+            engine.discover(ref.id, filter, timeoutMs.toLong(), promise.settler(), operationId)
           }
         }
       }
@@ -243,6 +270,17 @@ class ExpoBleKitModule : Module() {
 
       AsyncFunction("disconnect") { ref: PeripheralObject, promise: Promise ->
         executor.execute { engine.disconnect(ref.id) { promise.resolve(null) } }
+      }
+    }
+
+    // Ids only: JS turns them into peripherals with getPeripheral().
+    AsyncFunction("getKnownPeripherals") { ids: List<String> ->
+      engine.knownPeripherals(ids)
+    }
+
+    AsyncFunction("getSystemConnectedPeripherals") { services: List<String>, promise: Promise ->
+      executor.execute {
+        settle(promise) { promise.resolve(engine.systemConnectedPeripherals(services.map(::uuidArgument))) }
       }
     }
 

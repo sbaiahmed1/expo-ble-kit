@@ -58,6 +58,7 @@
     "@babel/core": "^7.26.0",
     "@changesets/cli": "^3.0.3",
     "@react-native/jest-preset": "0.86.3",
+    "@testing-library/react-native": "^14.0.1",
     "@types/jest": "^29.2.1",
     "@types/node": "^24.18.0",
     "@types/react": "~19.2.2",
@@ -70,6 +71,7 @@
     "prettier": "^3.0.0",
     "react": "19.2.3",
     "react-native": "0.86.3",
+    "test-renderer": "~1.2.0",
     "typescript": "~6.0.3"
   },
   "jest": {

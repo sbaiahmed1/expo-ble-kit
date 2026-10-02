@@ -1,3 +1,5 @@
+import { Platform } from 'react-native';
+
 import { BleError } from '../errors';
 import type { ConnectOptions } from '../types';
 
@@ -38,10 +40,42 @@ export function validateMtu(option: string, value: unknown): number {
   return value;
 }
 
+function notYet(option: string): BleError {
+  return new BleError('NOT_SUPPORTED', `Connect option ${option} isn't supported yet`);
+}
+
 /**
- * Validates the connect options implemented so far (plan §5.4). Throws a BleError with code
- * INVALID_ARGUMENT. `reconnect`, `keepAliveInBackground`, `android.phy` and
- * `ios.enableAutoReconnect` land with P2-01 and P3.
+ * Options of later tasks (plan §7): `reconnect` and `ios.enableAutoReconnect` (P2-01),
+ * `keepAliveInBackground` (P3-03), `android.phy` (P5-02). Setting one rejects with NOT_SUPPORTED
+ * rather than being ignored; platform options only on their platform.
+ */
+function checkImplemented(options: ConnectOptions): void {
+  if (options.reconnect !== undefined && options.reconnect !== false) {
+    throw notYet('reconnect');
+  }
+  optionalBoolean('restoreSubscriptionsOnReconnect', options.restoreSubscriptionsOnReconnect);
+  if (optionalBoolean('keepAliveInBackground', options.keepAliveInBackground)) {
+    throw notYet('keepAliveInBackground');
+  }
+  const phy: unknown = options.android?.phy;
+  if (phy !== undefined && !Array.isArray(phy)) {
+    throw invalid('android.phy', 'expected an array');
+  }
+  if (Platform.OS === 'android' && Array.isArray(phy) && phy.length > 0) {
+    throw notYet('android.phy');
+  }
+  const autoReconnect = optionalBoolean(
+    'ios.enableAutoReconnect',
+    options.ios?.enableAutoReconnect
+  );
+  if (Platform.OS === 'ios' && autoReconnect) {
+    throw notYet('ios.enableAutoReconnect');
+  }
+}
+
+/**
+ * Validates connect options (plan §5.4) and applies the defaults. Throws a BleError with code
+ * INVALID_ARGUMENT, or NOT_SUPPORTED for an option a later task implements.
  */
 export function toNativeConnectOptions(options: ConnectOptions = {}): NativeConnectOptions {
   if (typeof options !== 'object' || options === null) {
@@ -55,6 +89,7 @@ export function toNativeConnectOptions(options: ConnectOptions = {}): NativeConn
   ) {
     throw invalid('timeoutMs', 'expected a number of milliseconds above 0, or null for no timeout');
   }
+  checkImplemented(options);
   const autoConnect = optionalBoolean('android.autoConnect', options.android?.autoConnect);
   const requestMtu = options.android?.requestMtu;
   return {

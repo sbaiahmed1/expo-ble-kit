@@ -34,6 +34,10 @@ export interface NativeBleKitPort {
   stopScan(sessionId: number): Promise<void>;
   /** No I/O; never creates a manager (plan §5.2). The same object for the same id. */
   getPeripheral(id: string): NativePeripheralPort;
+  /** The ids the system knows: iOS drops unknown ones, Android keeps every valid address. */
+  getKnownPeripherals(ids: string[]): Promise<string[]>;
+  /** Ids of peripherals connected at the OS level. Android can't filter by `services` (plan §6). */
+  getSystemConnectedPeripherals(services: string[]): Promise<string[]>;
   /** So far: state, sessions and, on Android, open GATT clients. The rest lands with P2-07. */
   getDiagnosticsAsync(): Promise<NativeDiagnostics>;
   addListener<E extends keyof ExpoBleKitModuleEvents>(
@@ -44,9 +48,14 @@ export interface NativeBleKitPort {
 
 export type NativeDiagnostics = Pick<Diagnostics, 'state' | 'sessions' | 'android'>;
 
-/** One peripheral's native handle (plan §4.5). */
+/**
+ * One peripheral's native handle (plan §4.5). Operations JS may cancel (an `AbortSignal`) take an
+ * `operationId`, which `cancelOperation` uses; null when nothing can cancel them.
+ */
 export interface NativePeripheralPort {
   readonly id: string;
+  /** The latest advertised name, or the name the device reports once connected. */
+  readonly name: string | null;
   readonly state: ConnectionState;
   /** The discovery cache; empty before discovery and after a disconnect. */
   readonly services: Service[];
@@ -57,7 +66,11 @@ export interface NativePeripheralPort {
   /** During a connect, cancels it: the connect rejects with OPERATION_CANCELLED. */
   disconnect(): Promise<void>;
   /** `services` null discovers everything. */
-  discover(services: string[] | null, timeoutMs: number): Promise<Service[]>;
+  discover(
+    services: string[] | null,
+    timeoutMs: number,
+    operationId: number | null
+  ): Promise<Service[]>;
   read(request: NativeAttributeRequest): Promise<Uint8Array>;
   write(request: NativeAttributeRequest, value: Uint8Array): Promise<void>;
   readDescriptor(request: NativeAttributeRequest): Promise<Uint8Array>;
@@ -77,9 +90,14 @@ export interface NativePeripheralPort {
    * `mtu` is 23–517. Android negotiates and resolves the agreed MTU; iOS can't negotiate and
    * resolves the current one (`timeoutMs` unused).
    */
-  requestMtu(mtu: number, timeoutMs: number): Promise<number>;
+  requestMtu(mtu: number, timeoutMs: number, operationId: number | null): Promise<number>;
   /** The link's RSSI in dBm. */
-  readRssi(timeoutMs: number): Promise<number>;
+  readRssi(timeoutMs: number, operationId: number | null): Promise<number>;
+  /**
+   * A queued operation is removed; a running one rejects at once with OPERATION_CANCELLED while
+   * the radio finishes it. Unknown or finished ids do nothing.
+   */
+  cancelOperation(operationId: number): Promise<void>;
   addListener<E extends keyof PeripheralObjectEvents>(
     event: E,
     listener: PeripheralObjectEvents[E]

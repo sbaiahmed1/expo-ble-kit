@@ -169,6 +169,9 @@ interface BluetoothAdapterPort {
 
   /** Never fails, even for unknown addresses (plan §4.12). */
   fun remoteDevice(address: String): RemoteDevicePort
+
+  /** Addresses of the LE devices connected at the OS level, by any app. Needs BLUETOOTH_CONNECT (API 31+). */
+  fun connectedGattDevices(): List<String>
 }
 
 interface RemoteDevicePort {

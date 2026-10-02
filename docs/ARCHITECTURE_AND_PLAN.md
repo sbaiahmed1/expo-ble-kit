@@ -1,6 +1,6 @@
 # Expo BLE (`expo-ble-kit`) — Architecture & Implementation Plan
 
-> **Status:** Draft v0.25 · **Date:** 2026-10-02 · **Scope:** proposition #3, an Expo-first Bluetooth Low Energy module · **Changes:** Appendix D
+> **Status:** Draft v0.26 · **Date:** 2026-10-02 · **Scope:** proposition #3, an Expo-first Bluetooth Low Energy module · **Changes:** Appendix D
 >
 > **Package name:** `expo-ble-kit` (D0a, decided 2026-10-02) · native module `ExpoBleKit` · Android package `expo.modules.blekit`.
 >
@@ -246,6 +246,8 @@ iOS platform rules:
   - `L2CAPChannelObject`, with events `data`, `close`.
 - Identity: the binding keeps an `id → weak SharedObject` map, so one native peripheral always maps to the same JS object. `getPeripheral(id)` is the only way to get one (the JS constructor throws; Expo's Android `Class` requires a constructor, and a missing one crashes the app at start). Ids are normalized first: upper-case addresses on Android, upper-case UUIDs on iOS. The object holds no BLE state; `state` reads the core's published snapshot.
 - Errors: core errors become coded exceptions carrying `code` (§4.11) plus `nativeDomain`, `nativeCode`, `gattStatus`.
+- Cancellation (P1-12): operations an `AbortSignal` may cancel carry a JS-assigned `operationId` (in the attribute request record, or as the last argument of `discover`, `requestMtu` and `readRssi`), and `cancelOperation(operationId)` on the peripheral object cancels it in the session's queue. Calls run in order, so a cancel never overtakes its operation.
+- Lookups (P1-12): `getKnownPeripherals(ids)` and `getSystemConnectedPeripherals(services)` resolve with ids, which the TS layer turns into peripherals with `getPeripheral`. `name` is a synchronous snapshot: the latest advertised name seen in a scan, then the name the device reports once connected (iOS: `CBPeripheral.name`, also on `peripheralDidUpdateName`), kept for the 1,000 most recent peripherals.
 - Lifecycle: an iOS app-delegate subscriber (declared in `expo-module.config.json`) creates engines early when restoration is enabled. An Android application lifecycle listener wires receivers and the service. Under SDK 58's scene life cycle, Expo forwards app-delegate events to subscribers; the background relaunch path is confirmed in spike P0-05.
 - TaskManager consumer for headless background delivery on both platforms ⚠️ VERIFY that third-party consumers are supported on the target SDK (the interfaces live in `expo-modules-core`).
 
@@ -253,7 +255,7 @@ iOS platform rules:
 
 - The public surface is exactly §5, exported from `src/index.ts`. Everything else is internal.
 - An internal port interface, `NativeBleKitPort`, is implemented by the real native module and by `FakeBleAdapter`. Tests inject the fake through the public `expo-ble-kit/testing` entry.
-- `src/internal/native.ts` resolves the native module lazily, on first use, with `requireOptionalNativeModule`. It also exposes an internal setter that `installFakeBle` uses. So importing `expo-ble-kit` in Jest, where no native module exists, doesn't throw; a call without a native module or a fake rejects with `NOT_SUPPORTED`, saying the app needs a rebuild. Until P1-12, the package's default export is this lazy module (a proxy), which the example uses.
+- `src/internal/native.ts` resolves the native module lazily, on first use, with `requireOptionalNativeModule`. It also exposes an internal setter that `installFakeBle` uses. So importing `expo-ble-kit` in Jest, where no native module exists, doesn't throw; a call without a native module or a fake rejects with `NOT_SUPPORTED`, saying the app needs a rebuild. The package has no default export: the public API (§5) is `BleManager`, the hooks and the utilities, built on this port (P1-12).
 - The port (`src/internal/port.ts`) covers what the native bindings implement; P1-08 and P1-09 extend it. `FakeBleAdapter` runs its operations through a TypeScript twin of the native `GattQueue`, and one set of contract cases, `test-contracts/gatt-queue.json`, runs against all three queues (Jest, XCTest, JUnit), so the fake orders, times out, cancels and fails operations exactly like the native cores.
 - `package.json` declares an `exports` map (`.`, `./testing`, `./app.plugin.js`, `./package.json`) so that `expo-ble-kit/testing` resolves in Metro, Jest and TypeScript.
 - Web: until D3 is decided, the web build exports the same API with `state === 'unsupported'`, and every call rejects with `NOT_SUPPORTED`.
@@ -318,7 +320,7 @@ Invariants:
 - One FIFO per `PeripheralSession`, exactly one op in flight.
 - Op kinds: discover (services, characteristics, descriptors), read, write with response, write without response, descriptor read/write (including CCCD), set notify/indicate, read RSSI, request MTU, connection priority, PHY, bond.
 - **Timeouts:** default 10 s per op, configurable globally and per call. On Android, two consecutive timeouts force a disconnect + `close()` (configurable; the switch lands with P2-06). Discovery counts as one op with a 30 s default: on iOS it chains services, then characteristics, then descriptors.
-- **Cancellation:** `AbortSignal` removes queued ops. An in-flight op can't be aborted at the radio, so its result is discarded and its promise rejects with `OPERATION_CANCELLED`.
+- **Cancellation:** `AbortSignal` removes queued ops. An in-flight op can't be aborted at the radio, so its result is discarded and its promise rejects with `OPERATION_CANCELLED`. An already aborted signal rejects at once without starting anything. A `connect()` signal cancels the attempt like `disconnect()`; a `subscribe()` signal removes that subscriber (the pending subscribe rejects); an `unsubscribe()` signal only stops the wait, because abandoning the CCCD write would leave notifications on.
 - **Write without response** (no acknowledgement from the peer): on iOS, wait for `canSendWriteWithoutResponse`. On Android 33+, honor the status returned by `writeCharacteristic` (busy → retry after the next write callback or a short delay). Older Android: pace on `onCharacteristicWrite` ⚠️ VERIFY legacy semantics.
 - **Long values:** writes with response larger than MTU − 3 rely on the platform's long-write support, up to the 512-byte ATT maximum ⚠️ VERIFY on both platforms. Larger payloads use `writeStream()` (chunked, flow-controlled, progress callback, abortable).
 - **Ordering:** for a given peripheral, completion order equals submission order. There is no ordering across peripherals.
@@ -492,6 +494,8 @@ Bare apps follow `docs/guides/bare-setup.md`, which lists exactly the entries th
 ## 5. Public API (v1 specification)
 
 This section is the contract. Changing it requires updating `src/types.ts`, docs and tests in the same PR (Appendix B, rule 8).
+
+Members owned by later tasks are added to the exported types when those tasks land; until then they are absent, not stubs: `writeStream` (P2-03), `subscribeBatched` (P2-04), `addServicesChangedListener` (P2-06), `Peripheral.android` (P5-01, P5-02, P2-06), `openL2CAPChannel` (P5-03), `setLogLevel` and `setLogHandler` (P2-07), the peripheral role (P4), background tasks (P3), and `BleManager.ios` / `BleManager.android` (P5-04, P5-05). `src/__tests__/publicApi.test.ts` compares every §5 interface with `src/types.ts` and the testing entry, member by member, with this list as the only exception, and checks the exported values.
 
 ### 5.1 Common types
 
@@ -785,6 +789,14 @@ MTU and RSSI rules (decided in P1-09):
 - `readRssi()` needs a ready connection and reads the link RSSI in dBm through the queue (10 s default timeout).
 - The native `connect` takes `android.requestMtu` as a number or null; the TS layer applies the default and checks the range (`src/internal/connectOptions.ts`, `validateMtu` for P1-12).
 
+API rules (decided in P1-12):
+
+- Connect options of later tasks reject with `NOT_SUPPORTED` instead of being ignored: `reconnect` (other than `false`) and `ios.enableAutoReconnect: true` on iOS (P2-01), `keepAliveInBackground: true` (P3-03), a non-empty `android.phy` on Android (P5-02). `restoreSubscriptionsOnReconnect` is accepted and has no effect without `reconnect`.
+- Every rejection is a `BleError`. Peripheral calls carry `peripheralId`, and attribute calls `serviceUUID` and `characteristicUUID`. Invalid input rejects with `INVALID_ARGUMENT` before any native call; synchronous calls (`startScan`, `getPeripheral`, listeners) throw it.
+- Notifications are fanned out in JS: each subscriber gets every value of its characteristic. A subscriber callback that throws doesn't stop the others; the error is rethrown asynchronously. A disconnect marks every subscription inactive.
+- `getPeripheral(id)` returns the same object for the same id while it is in use. `getKnownPeripherals` and `getSystemConnectedPeripherals` resolve with those objects; both use the manager without showing a prompt, so they reject like `connect()` when it can't be used. Android keeps every valid address in `getKnownPeripherals` (§4.12).
+- `getDiagnostics()` combines the native snapshot with the permissions (all `undetermined` when they can't be read, the error then being among the recent errors) and the last 100 errors the API returned (`recentErrors`, kept in JS).
+
 ### 5.5 Peripheral role (P4)
 
 ```ts
@@ -891,6 +903,13 @@ export interface Diagnostics {
 }
 ```
 
+Hook rules (decided in P1-12; all built on `useSyncExternalStore` or effects over the API above):
+
+- `useBlePermissions` reads the permissions on mount, again on every adapter state change and whenever the app returns to the foreground. Reading never prompts; a failed read keeps the last value.
+- `useScan` scans while `enabled` (default `true`). It keeps the latest result per device in order of first sighting, at most `maxResults` (default 100), dropping the least recently seen device. `start()` and `stop()` override `enabled` until it changes. Options are compared by value, so an inline object doesn't restart the scan; changing them does. A scan that ended because Bluetooth went off or wasn't allowed starts again when the state is back to `poweredOn`. Invalid options are reported as `error` without scanning.
+- `usePeripheral` never connects by itself. `error` is the error that ended or failed the last connection, cleared when it connects again; an invalid id is reported as `error`.
+- `useCharacteristicValue` acts while the peripheral is `connected`: `mode: 'subscribe'` (default) follows notifications, `mode: 'read'` reads once per connection. It subscribes or reads again after a reconnect, keeps the last value across disconnects, and unsubscribes on unmount. `batchMs` limits renders to one per window with the latest value (JS-side; native batching is P2-04).
+
 ### 5.8 Testing entry (`expo-ble-kit/testing`)
 
 ```ts
@@ -933,7 +952,7 @@ export interface VirtualPeripheral {
 }
 ```
 
-Fake rules (P1-13): Bluetooth is on and every permission granted unless `installFakeBle` says otherwise; a peripheral advertises from `addPeripheral` until `advertise(false)`; a connect to a peripheral that isn't advertising waits (times out, or completes when it advertises), like a real absent device; writes store the value, so a later read returns it; writes without response take at most MTU − 3 bytes (20 at the default MTU); the MTU is negotiated like on Android, during the connect and in `requestMtu()`, as the smaller of the request and the peripheral's `mtu` (23 unless its config says more), and a failed setup exchange (`injectError` op `requestMtu`) is a `warning`; results and operation answers arrive on later timer ticks, so tests advance timers (Jest fake timers work). `notify()` reaches a connected client only while it has the CCCD enabled, as on a real peripheral, and a disconnect resets the CCCDs; `mode: 'indicate'` follows Android (allowed on a characteristic that also notifies).
+Fake rules (P1-13): Bluetooth is on and every permission granted unless `installFakeBle` says otherwise; a peripheral advertises from `addPeripheral` until `advertise(false)`; a connect to a peripheral that isn't advertising waits (times out, or completes when it advertises), like a real absent device; writes store the value, so a later read returns it; writes without response take at most MTU − 3 bytes (20 at the default MTU); the MTU is negotiated like on Android, during the connect and in `requestMtu()`, as the smaller of the request and the peripheral's `mtu` (23 unless its config says more), and a failed setup exchange (`injectError` op `requestMtu`) is a `warning`; results and operation answers arrive on later timer ticks, so tests advance timers (Jest fake timers work). `notify()` reaches a connected client only while it has the CCCD enabled, as on a real peripheral, and a disconnect resets the CCCDs; `mode: 'indicate'` follows Android (allowed on a characteristic that also notifies). A peripheral's `name` is known once a scan delivered it or a connection reached `connected`. `getKnownPeripherals` drops ids without a virtual peripheral (like iOS); `getSystemConnectedPeripherals` lists the connected ones that have one of the services. Cancelled operations behave like the native queues: a queued one never runs, a running one finishes at the radio after its caller was answered.
 
 ### 5.9 Usage examples
 
@@ -981,6 +1000,7 @@ hrm.notify(GattServices.HeartRate, GattCharacteristics.HeartRateMeasurement, Uin
 | Raw advertisement bytes | ❌ (parsed fields only) | ✅ | ❌ |
 | Connect / GATT client | ✅ | ✅ | ✅ Chromium browsers |
 | MTU negotiation | ❌ automatic | ✅ up to 517 | ❌ |
+| `getSystemConnectedPeripherals(services)` | ✅ filtered by services | Every LE device connected at the OS level: services can't be read without connecting, so they don't filter | ❌ |
 | Write-without-response flow control | ✅ | ✅ (API 33+ status codes, legacy pacing below) | Partial |
 | Connection priority / PHY | ❌ | ✅ | ❌ |
 | Explicit bonding | ❌ implicit | ✅ | ❌ |
@@ -1147,9 +1167,12 @@ Parallelism: P0-06/P0-07 can run alongside P0-03/P0-04. With two people, P4 can 
   - Accept: a Jest test resolves `expo-ble-kit/testing` from a consumer that links the package, through the exports map, and TypeScript resolves its types with both `bundler` and `node10` resolution; importing the package in Jest doesn't throw; the contract cases pass on all three queues, and breaking one expectation on purpose fails all three. 16 Jest tests cover the fake (scanning, connecting, operations, errors, ordering).
   - Found on the way: Gradle reused an up-to-date result after the contract file changed, because the file wasn't a task input; it is now (`android/build.gradle`). The npm package check now also fails when a file named by `main`, `types`, `exports` or `typesVersions` is missing.
   - The example (now on the lazy default export) still works on the Galaxy A52.
-- [ ] **P1-12 TS API and hooks** — deps: P1-03 … P1-10, P1-13.
+- [x] **P1-12 TS API and hooks** — deps: P1-03 … P1-10, P1-13.
   `BleManager`, `Peripheral`, `useBleState`, `useBlePermissions`, `useScan`, `usePeripheral`, `useCharacteristicValue`.
   **Accept:** exported types match §5 exactly; hooks tested with the fake adapter.
+  **Done 2026-10-02:** `src/BleManager.ts`, `src/Peripheral.ts`, `src/hooks/`, `src/internal/operations.ts` (errors with context, the recent-errors buffer, `AbortSignal` wiring), and the §5.2 / §5.4 types. The members of §5 no task owned are native now: `Peripheral.name`, `getKnownPeripherals` and `getSystemConnectedPeripherals` on both platforms, plus operation ids and `cancelOperation` for `AbortSignal` (§4.5, §4.9). The package's default export (the raw module) is gone. Rules in §5.4, §5.7, §5.8 and §6.
+  - Accept: `publicApi.test.ts` compares every §5 interface with the exported types (later-task members listed, §5), and breaking one member fails it; 59 new Jest tests over the fake (manager, peripheral, hooks with `@testing-library/react-native` 14 and `test-renderer` 1.2, the release line that matches React 19.2). Native: 4 Android and 3 iOS tests (cancel by id, names, lookups).
+  - Verified on the Galaxy A52 (example rewritten on the public API): operations on an absent device reject with `DISCONNECTED`, an invalid UUID with `INVALID_ARGUMENT`, `reconnect` with `NOT_SUPPORTED`; a connect aborted by a signal after 2 s rejects with `OPERATION_CANCELLED` (2,058 ms); 100 connect/cancel cycles leave 0 open GATT clients; `getKnownPeripherals` keeps the address and `getSystemConnectedPeripherals` works with the permission; `startScan` sessions multiplex (all: 45 devices, Apple 0x004C: 18, name `BleKit`: 0); `scanFor` resolves null after 10 s; `useScan` keeps 5 devices, reports `BLUETOOTH_POWERED_OFF` when Bluetooth goes off and resumes by itself when it comes back; `useBleState` and `useBlePermissions` follow. The iOS binding compiles; iOS on a device is pending a physical iPhone.
 - [x] **P1-14 Config plugin v1** — deps: P0-03.
   Base iOS/Android declarations from §4.13 and §4.15 (no background or peripheral-role options yet), the `minSdkVersion` raise, and `docs/guides/bare-setup.md`.
   **Accept:** snapshot tests, including the `expo-location` and `expo-build-properties` ordering cases (§4.15); an app left on Expo's default `minSdk` builds after adding the plugin; running `npx expo prebuild --clean` twice gives identical native projects; a test checks that the bare-setup guide lists exactly what the plugin writes.
@@ -1541,3 +1564,4 @@ Submit results (`BluetoothStatusCodes`, API 33+): 1 not enabled → `BLUETOOTH_P
 | v0.23 | 2026-10-02 | P1-13 done: native port, lazy module, fake adapter, `expo-ble-kit/testing`, and the GATT queue contract shared by the three queues. §4.6 and §5.8 updated (fake rules, `descriptors` in `VirtualPeripheralConfig`, `injectError` op names) |
 | v0.24 | 2026-10-02 | P1-08 in progress: notifications and indications on both platforms and in the fake. Subscription rules in §5.4, the iOS indicate limit in §6, `isNotifying` in §5.8 |
 | v0.25 | 2026-10-02 | P1-09 in progress: MTU and RSSI on both platforms and in the fake. MTU and RSSI rules in §5.4 (`mtuChange` only on ready connections, a failed setup exchange is a warning), `mtu` and `setRssi` in §5.8 |
+| v0.26 | 2026-10-02 | P1-12 done: `BleManager`, `Peripheral` and the hooks; §5 says which members later tasks add, and a test holds the types to it. Native `name`, `getKnownPeripherals`, `getSystemConnectedPeripherals` and `AbortSignal` cancellation (§4.5, §4.9). API rules in §5.4, hook rules in §5.7, fake rules in §5.8, the Android `getSystemConnectedPeripherals` difference in §6. The default export is gone (§4.6) |

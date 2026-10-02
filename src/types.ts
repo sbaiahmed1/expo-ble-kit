@@ -1,8 +1,9 @@
 import type { BleError } from './errors';
 import type { UUID } from './uuid';
 
-// Public types of plan §5.1 and §5.3. Changing them requires updating the plan, docs and tests
-// together (Appendix B, rule 8). The rest of §5 lands with the tasks that use it.
+// Public types of plan §5 (central role). Changing them requires updating the plan, docs and tests
+// together (Appendix B, rule 8). Members owned by later tasks (writeStream, batching, logging, the
+// peripheral role, background, onboarding, Android-only peripheral calls) land with those tasks.
 
 export type BleState =
   'unknown' | 'resetting' | 'unsupported' | 'unauthorized' | 'poweredOff' | 'poweredOn';
@@ -156,4 +157,92 @@ export interface CharacteristicSubscription extends Subscription {
   unsubscribe(options?: OpOptions): Promise<void>;
   /** Fire-and-forget unsubscribe(). CCCD failures go to the `warning` event and the log. */
   remove(): void;
+}
+
+export interface Peripheral {
+  readonly id: string;
+  /** The latest advertised name, or the name the device reports once connected; null if unseen. */
+  readonly name: string | null;
+  readonly state: ConnectionState;
+  /** ATT MTU. On iOS derived from maximumWriteValueLength(.withoutResponse) + 3. */
+  readonly mtu: number;
+  /** Discovery cache; empty before discovery. */
+  readonly services: Service[];
+
+  connect(options?: ConnectOptions): Promise<void>;
+  disconnect(): Promise<void>;
+  discover(services?: UUID[], options?: OpOptions): Promise<Service[]>;
+
+  read(service: UUID, characteristic: UUID, options?: OpOptions): Promise<Uint8Array>;
+  write(
+    service: UUID,
+    characteristic: UUID,
+    value: Uint8Array,
+    options?: WriteOptions
+  ): Promise<void>;
+  readDescriptor(
+    service: UUID,
+    characteristic: UUID,
+    descriptor: UUID,
+    options?: OpOptions
+  ): Promise<Uint8Array>;
+  writeDescriptor(
+    service: UUID,
+    characteristic: UUID,
+    descriptor: UUID,
+    value: Uint8Array,
+    options?: OpOptions
+  ): Promise<void>;
+
+  subscribe(
+    service: UUID,
+    characteristic: UUID,
+    onValue: (value: Uint8Array, timestamp: number) => void,
+    options?: SubscribeOptions
+  ): Promise<CharacteristicSubscription>;
+
+  readRssi(options?: OpOptions): Promise<number>;
+  /** Android: negotiates. iOS: resolves the current MTU (not negotiable). */
+  requestMtu(mtu: number, options?: OpOptions): Promise<number>;
+
+  addConnectionStateListener(
+    listener: (state: ConnectionState, error?: BleError) => void
+  ): Subscription;
+}
+
+export interface BleManagerApi {
+  readonly state: BleState;
+  addStateListener(listener: (state: BleState) => void): Subscription;
+
+  getPermissionsAsync(): Promise<BlePermissions>;
+  requestPermissionsAsync(request?: BlePermissionRequest): Promise<BlePermissions>;
+
+  /** Sessions may overlap; the core multiplexes them (§5.3). */
+  startScan(
+    options: ScanOptions,
+    onResults: (results: ScanResult[]) => void,
+    onError?: (error: BleError) => void
+  ): ScanSession;
+  /** Scans until the first match or the timeout. Resolves null on timeout. */
+  scanFor(
+    options: ScanOptions & {
+      timeoutMs: number;
+      match?: (r: ScanResult) => boolean;
+      signal?: AbortSignal;
+    }
+  ): Promise<ScanResult | null>;
+
+  /**
+   * No I/O. Returns the cached native-backed object for this id (same object for the same id).
+   * Never touches CoreBluetooth and never creates a manager (no permission prompt). The native
+   * peripheral is resolved on the first async call, which rejects with PERIPHERAL_NOT_FOUND
+   * when iOS can't retrieve the id.
+   */
+  getPeripheral(id: string): Peripheral;
+  /** iOS: retrievePeripherals(withIdentifiers:), drops unknown ids. Android: getRemoteDevice(address), never drops ids (§4.12). */
+  getKnownPeripherals(ids: string[]): Promise<Peripheral[]>;
+  /** Peripherals connected at the OS level, possibly by another app. */
+  getSystemConnectedPeripherals(services: UUID[]): Promise<Peripheral[]>;
+
+  getDiagnostics(): Promise<Diagnostics>;
 }

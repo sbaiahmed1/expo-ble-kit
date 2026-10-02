@@ -19,12 +19,17 @@ export declare class NativePeripheral
   implements NativePeripheralPort
 {
   readonly id: string;
+  readonly name: string | null;
   readonly state: ConnectionState;
   readonly services: Service[];
   readonly mtu: number;
   connect(options: NativeConnectOptions): Promise<void>;
   disconnect(): Promise<void>;
-  discover(services: string[] | null, timeoutMs: number): Promise<Service[]>;
+  discover(
+    services: string[] | null,
+    timeoutMs: number,
+    operationId: number | null
+  ): Promise<Service[]>;
   read(request: NativeAttributeRequest): Promise<Uint8Array>;
   write(request: NativeAttributeRequest, value: Uint8Array): Promise<void>;
   readDescriptor(request: NativeAttributeRequest): Promise<Uint8Array>;
@@ -35,8 +40,9 @@ export declare class NativePeripheral
     mode: NativeSubscribeMode
   ): Promise<void>;
   unsubscribe(subscriptionId: number, timeoutMs: number): Promise<void>;
-  requestMtu(mtu: number, timeoutMs: number): Promise<number>;
-  readRssi(timeoutMs: number): Promise<number>;
+  requestMtu(mtu: number, timeoutMs: number, operationId: number | null): Promise<number>;
+  readRssi(timeoutMs: number, operationId: number | null): Promise<number>;
+  cancelOperation(operationId: number): Promise<void>;
 }
 
 /** The native module: the real `NativeBleKitPort` (plan §4.6). */
@@ -50,6 +56,8 @@ export declare class ExpoBleKitModule
   startScan(sessionId: number, options: NativeScanOptions): Promise<void>;
   stopScan(sessionId: number): Promise<void>;
   getPeripheral(id: string): NativePeripheral;
+  getKnownPeripherals(ids: string[]): Promise<string[]>;
+  getSystemConnectedPeripherals(services: string[]): Promise<string[]>;
   getDiagnosticsAsync(): Promise<NativeDiagnostics>;
 }
 

@@ -40,8 +40,10 @@ final class CentralEngine: CentralManagingDelegate {
   private let environment: Environment
   private let scheduler: Scheduling
   private let clock: EpochClock
-  private var sessions: [UUID: PeripheralSession] = [:]
-  /// Connects waiting for a new manager to leave `unknown`.
+  private(set) var sessions: [UUID: PeripheralSession] = [:]
+  /// Advertised names from scans, then the names iOS caches for connected peripherals (plan §4.7).
+  let names = PeripheralNames()
+  /// Work waiting for a new manager to leave `unknown`, by peripheral (connects) or a random id.
   private var pendingConnects: [(id: UUID, run: (Result<CentralManaging, CoreError>) -> Void)] = []
   /// JS connection states by peripheral id, for synchronous reads. Guarded by `stateLock`.
   private var connectionStates: [String: String] = [:]
@@ -218,11 +220,7 @@ extension CentralEngine {
     guard let identifier = UUID(uuidString: peripheralId) else {
       throw CoreError(.invalidArgument, "Not a peripheral id: \(peripheralId)")
     }
-    let central = try authorizedCentral()
-    if let error = Self.adapterError(central.state) {
-      throw error
-    }
-    let run: (Result<CentralManaging, CoreError>) -> Void = { [weak self] result in
+    try withCentral(for: identifier) { [weak self] result in
       switch result {
       case let .success(central):
         self?.startConnect(identifier, central: central, spec: spec, completion: completion)
@@ -230,10 +228,22 @@ extension CentralEngine {
         completion(error)
       }
     }
+  }
+
+  /// Runs `work` with the manager once it reports a real state: at once, or after `unknown`. Throws
+  /// when the manager can't be used: a missing declaration, no authorization, or Bluetooth off.
+  func withCentral(for id: UUID = UUID(), _ work: @escaping (Result<CentralManaging, CoreError>) -> Void) throws {
+    if let error = missingDeclaration() {
+      throw error
+    }
+    let central = try authorizedCentral()
+    if let error = Self.adapterError(central.state) {
+      throw error
+    }
     if central.state == .unknown {
-      pendingConnects.append((identifier, run))
+      pendingConnects.append((id, work))
     } else {
-      run(.success(central))
+      work(.success(central))
     }
   }
 
@@ -256,12 +266,13 @@ extension CentralEngine {
     _ peripheralId: String,
     filter: [String]?,
     timeout: TimeInterval?,
+    operationId: Int? = nil,
     completion: @escaping (Result<[[String: Any]], CoreError>) -> Void
   ) {
     guard let identifier = UUID(uuidString: peripheralId), let session = sessions[identifier] else {
       return completion(.failure(CoreError(.disconnected, "Not connected to \(peripheralId)")))
     }
-    session.discover(filter, timeout: timeout) { result in
+    session.discover(filter, timeout: timeout, operationId: operationId) { result in
       completion(result.map { $0.map(\.dictionary) })
     }
   }
@@ -290,21 +301,6 @@ extension CentralEngine {
     }
   }
 
-  /// JS `Diagnostics` so far (plan §5.7): the rest lands with P2-07.
-  func diagnostics() -> [String: Any] {
-    [
-      "state": state.rawValue,
-      "sessions": sessions.values.map { session in
-        [
-          "id": session.peripheral.identifier.uuidString,
-          "state": session.state.js,
-          "queueDepth": session.queue.depth,
-          "subscriptions": 0
-        ] as [String: Any]
-      }
-    ]
-  }
-
   private func startConnect(
     _ identifier: UUID,
     central: CentralManaging,
@@ -324,6 +320,9 @@ extension CentralEngine {
     let session = PeripheralSession(peripheral: peripheral, central: central, scheduler: scheduler)
     session.onStateChange = { [weak self, weak session] state, error in
       self?.publishConnectionState(identifier.uuidString, state, error, mtu: session?.mtu)
+    }
+    session.onNameChange = { [weak self] name in
+      self?.names[identifier.uuidString] = name
     }
     session.onMtuChange = { [weak self] mtu in
       guard let self else {

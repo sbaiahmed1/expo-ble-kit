@@ -2,7 +2,7 @@ import CoreBluetooth
 import XCTest
 @testable import BleKitCore
 
-/// P1-09: the derived MTU, requestMtu() and readRssi() on iOS.
+/// P1-09: the derived MTU, requestMtu() and readRssi() on iOS. P1-12: names and peripheral lookups.
 final class LinkTests: XCTestCase {
   private var scheduler: TestScheduler!
   private var central: FakeCentralManager!
@@ -93,6 +93,36 @@ final class LinkTests: XCTestCase {
     let failed = readRssi(session)
     session.peripheral(peripheral, didReadRSSI: 0, error: NSError(domain: CBErrorDomain, code: 0))
     XCTAssertNotNil(code(failed()))
+  }
+
+  func testNamesComeFromScansThenFromTheCachedNameWhenConnected() throws {
+    XCTAssertNil(engine.name(id))
+    central.simulateDiscovery(of: peripheral, advertisementData: [CBAdvertisementDataLocalNameKey: "Advertised"])
+    XCTAssertEqual(engine.name(id.lowercased()), "Advertised")
+    peripheral.name = "GAP name"
+    _ = try connect()
+    XCTAssertEqual(engine.name(id), "GAP name")
+    peripheral.name = "Renamed"
+    peripheral.delegate?.peripheralDidUpdateName(peripheral)
+    XCTAssertEqual(engine.name(id), "Renamed")
+  }
+
+  func testKnownAndSystemConnectedPeripherals() throws {
+    let other = FakePeripheral(name: "Other", services: [FakeService(uuid: "180f", characteristics: [])])
+    other.discoveredServices = other.services
+    other.state = .connected
+    central.knownPeripherals[other.identifier] = other
+    var known: Result<[String], CoreError>?
+    try engine.knownPeripherals([id, "not-a-uuid", UUID().uuidString]) { known = $0 }
+    XCTAssertEqual(try known?.get(), [id], "unknown ids are dropped")
+
+    var connected: Result<[String], CoreError>?
+    try engine.systemConnectedPeripherals(["0000180f-0000-1000-8000-00805f9b34fb"]) { connected = $0 }
+    XCTAssertEqual(try connected?.get(), [other.identifier.uuidString])
+    XCTAssertEqual(engine.name(other.identifier.uuidString), "Other")
+
+    central.simulateState(.poweredOff)
+    XCTAssertThrowsError(try engine.knownPeripherals([id]) { _ in })
   }
 
   func testMtuAndRssiNeedAConnection() throws {
