@@ -4,6 +4,7 @@ import expo.modules.blekit.core.BleCapability
 import expo.modules.blekit.core.ConnectSpec
 import expo.modules.blekit.core.CoreError
 import expo.modules.blekit.core.ManufacturerFilter
+import expo.modules.blekit.core.PeripheralSession
 import expo.modules.blekit.core.ScanOptionValues
 import expo.modules.blekit.core.ScanSettingsSpec
 import expo.modules.blekit.core.ScanSpec
@@ -93,6 +94,9 @@ class ScanOptionsRecord : Record {
 
 class AndroidConnectOptionsRecord : Record {
   @Field val autoConnect: Boolean? = null
+
+  /** Null asks for no MTU exchange (JS `requestMtu: false`). */
+  @Field val requestMtu: Int? = ConnectSpec.DEFAULT_REQUESTED_MTU
 }
 
 /** JS `ConnectOptions` (plan §5.4) after the TS layer applied defaults: `timeoutMs` null means none. */
@@ -108,7 +112,12 @@ class ConnectOptionsRecord : Record {
       if (!(it > 0)) throw CoreError(CoreError.Code.INVALID_ARGUMENT, "Invalid connect option timeoutMs: $it")
       it.toLong()
     }
-    return ConnectSpec(timeoutMs, android.autoConnect ?: (timeoutMs == null), autoDiscover)
+    val requestMtu = android.requestMtu?.also {
+      if (it !in PeripheralSession.DEFAULT_MTU..PeripheralSession.MAX_MTU) {
+        throw CoreError(CoreError.Code.INVALID_ARGUMENT, "Invalid connect option android.requestMtu: $it")
+      }
+    }
+    return ConnectSpec(timeoutMs, android.autoConnect ?: (timeoutMs == null), autoDiscover, requestMtu)
   }
 }
 

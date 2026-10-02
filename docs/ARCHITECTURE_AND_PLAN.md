@@ -1,6 +1,6 @@
 # Expo BLE (`expo-ble-kit`) — Architecture & Implementation Plan
 
-> **Status:** Draft v0.24 · **Date:** 2026-10-02 · **Scope:** proposition #3, an Expo-first Bluetooth Low Energy module · **Changes:** Appendix D
+> **Status:** Draft v0.25 · **Date:** 2026-10-02 · **Scope:** proposition #3, an Expo-first Bluetooth Low Energy module · **Changes:** Appendix D
 >
 > **Package name:** `expo-ble-kit` (D0a, decided 2026-10-02) · native module `ExpoBleKit` · Android package `expo.modules.blekit`.
 >
@@ -776,6 +776,15 @@ Subscription rules (decided in P1-08):
 - Indications are acknowledged by the stack on both platforms.
 - A disconnect ends every subscription without writing (the link is gone); restoring them on reconnect is P2-01's (`restoreSubscriptionsOnReconnect`).
 
+MTU and RSSI rules (decided in P1-09):
+
+- `mtu` is 23 until the connection is ready and again after a disconnect. It holds the setup value when `connected` is emitted: on Android the result of the setup exchange, on iOS `maximumWriteValueLength(for: .withoutResponse) + 3`.
+- Android setup: after discovery (or after link-up when `autoDiscover` is off), the connect asks for `android.requestMtu` through the queue, inside the connect timeout. The default is 517; `false` skips the exchange. A refused, failed or timed-out exchange isn't fatal: the connection becomes ready with the MTU it has, and a module `warning` says why. A link drop during the exchange fails the connect.
+- `requestMtu(mtu)` takes an integer from 23 to 517 (`INVALID_ARGUMENT` otherwise) and needs a ready connection (`DISCONNECTED`). Android negotiates through the queue and resolves the agreed MTU. iOS can't negotiate: it reads the derived MTU again, because iOS may finish its own exchange after `connected`, and resolves it.
+- `mtuChange { mtu }` fires on the peripheral object when the MTU of a ready connection changes: after `requestMtu()`, or an exchange the peer or the stack started (Android); on iOS, when `requestMtu()` reads a new value. It never fires during setup, nor for the reset to 23 at a disconnect.
+- `readRssi()` needs a ready connection and reads the link RSSI in dBm through the queue (10 s default timeout).
+- The native `connect` takes `android.requestMtu` as a number or null; the TS layer applies the default and checks the range (`src/internal/connectOptions.ts`, `validateMtu` for P1-12).
+
 ### 5.5 Peripheral role (P4)
 
 ```ts
@@ -891,6 +900,7 @@ export interface VirtualPeripheralConfig {
   id?: string;   // generated when omitted
   name?: string;
   rssi?: number; // default -60
+  mtu?: number;  // the largest ATT MTU the peripheral accepts; default 23
   services: Array<{
     uuid: UUID;
     characteristics: Array<{
@@ -904,7 +914,7 @@ export interface VirtualPeripheralConfig {
 export interface FakeBle {
   addPeripheral(config: VirtualPeripheralConfig): VirtualPeripheral;
   setState(state: BleState): void;
-  /** Make the next matching op fail with this code. Ops: requestPermissions, startScan, connect, discover, read, write, readDescriptor, writeDescriptor, subscribe, unsubscribe. */
+  /** Make the next matching op fail with this code. Ops: requestPermissions, startScan, connect, discover, read, write, readDescriptor, writeDescriptor, subscribe, unsubscribe, requestMtu, readRssi. */
   injectError(match: { op: string; peripheralId?: string; characteristic?: UUID }, code: BleErrorCode): void;
   reset(): void;
 }
@@ -916,12 +926,14 @@ export interface VirtualPeripheral {
   notify(service: UUID, characteristic: UUID, value: Uint8Array): void;
   /** The peripheral side of the CCCD: whether a client has notifications or indications on. */
   isNotifying(service: UUID, characteristic: UUID): boolean;
+  /** What advertising and readRssi() report from now on. */
+  setRssi(rssi: number): void;
   disconnect(reason?: 'peer' | 'linkLoss'): void;
   readonly writes: ReadonlyArray<{ characteristic: UUID; value: Uint8Array; withResponse: boolean }>;
 }
 ```
 
-Fake rules (P1-13): Bluetooth is on and every permission granted unless `installFakeBle` says otherwise; a peripheral advertises from `addPeripheral` until `advertise(false)`; a connect to a peripheral that isn't advertising waits (times out, or completes when it advertises), like a real absent device; writes store the value, so a later read returns it; writes without response take at most 20 bytes (one packet at the default MTU); results and operation answers arrive on later timer ticks, so tests advance timers (Jest fake timers work). `notify()` reaches a connected client only while it has the CCCD enabled, as on a real peripheral, and a disconnect resets the CCCDs; `mode: 'indicate'` follows Android (allowed on a characteristic that also notifies).
+Fake rules (P1-13): Bluetooth is on and every permission granted unless `installFakeBle` says otherwise; a peripheral advertises from `addPeripheral` until `advertise(false)`; a connect to a peripheral that isn't advertising waits (times out, or completes when it advertises), like a real absent device; writes store the value, so a later read returns it; writes without response take at most MTU − 3 bytes (20 at the default MTU); the MTU is negotiated like on Android, during the connect and in `requestMtu()`, as the smaller of the request and the peripheral's `mtu` (23 unless its config says more), and a failed setup exchange (`injectError` op `requestMtu`) is a `warning`; results and operation answers arrive on later timer ticks, so tests advance timers (Jest fake timers work). `notify()` reaches a connected client only while it has the CCCD enabled, as on a real peripheral, and a disconnect resets the CCCDs; `mode: 'indicate'` follows Android (allowed on a characteristic that also notifies).
 
 ### 5.9 Usage examples
 
@@ -1090,7 +1102,7 @@ Parallelism: P0-06/P0-07 can run alongside P0-03/P0-04. With two people, P4 can 
   - Connecting to an absent device fails with `CONNECTION_TIMEOUT` within timeout + 1 s.
   - `connect({ timeoutMs: null })` stays pending until the device appears, and `disconnect()` or `signal` cancels it.
   - `connect()` resolves at the same moment the state listener sees `connected`.
-  **Progress 2026-10-02 (open):** `PeripheralSession` on both platforms (§4.8 states, timeouts, cancel, link loss; Android 133 retry and close-once), connections in `CentralEngine`, the `PeripheralObject` binding (`getPeripheral`, `connect`, `disconnect`, `state`, `connectionStateChange`), `getDiagnosticsAsync` (state, sessions, Android open GATT clients), connect-option validation for P1-12 (`src/internal/connectOptions.ts`), and connection controls in the example. Tests: 14 Android, 9 iOS, and Jest tests for the options and the connection-state values. Rules in §4.5 and §5.4. P1-12 must reject or document the connect options that aren't implemented yet (`autoDiscover` P1-06, `android.requestMtu` P1-09, `reconnect` and `ios.enableAutoReconnect` P2-01, `keepAliveInBackground` P3).
+  **Progress 2026-10-02 (open):** `PeripheralSession` on both platforms (§4.8 states, timeouts, cancel, link loss; Android 133 retry and close-once), connections in `CentralEngine`, the `PeripheralObject` binding (`getPeripheral`, `connect`, `disconnect`, `state`, `connectionStateChange`), `getDiagnosticsAsync` (state, sessions, Android open GATT clients), connect-option validation for P1-12 (`src/internal/connectOptions.ts`), and connection controls in the example. Tests: 14 Android, 9 iOS, and Jest tests for the options and the connection-state values. Rules in §4.5 and §5.4. P1-12 must reject or document the connect options that aren't implemented yet (`autoDiscover` P1-06, `android.requestMtu` P1-09, `reconnect` and `ios.enableAutoReconnect` P2-01, `keepAliveInBackground` P3); `autoDiscover` and `android.requestMtu` have since landed.
   - Verified on the Galaxy A52 (Android 14): a connect to an absent device with `timeoutMs: 5000` rejected with `CONNECTION_TIMEOUT` after 5,059 ms, the `disconnected` event a millisecond before; `timeoutMs: null` stayed pending for 10 s and `disconnect()` cancelled it with `OPERATION_CANCELLED`; 100 connect/cancel cycles left 0 open GATT clients, and the stack log showed 100 `registerClient` and 100 `unregisterClient`, all on the same client slot. In 22 of those cycles `close()` ran before Android finished registering the client (`unregisterApp() - mClientIf=0`); Samsung's stack still unregistered them. Other vendors: P2-06.
   - Found on the device: Expo's Android `Class` needs a constructor, or the app crashes at start; fixed with a constructor that throws.
   - Pending real hardware: 100 connect/disconnect cycles with a real peripheral, a `timeoutMs: null` connect that completes when the device appears, and `connect()` resolving with `connected` on a live link; all of iOS on a physical iPhone.
@@ -1118,6 +1130,9 @@ Parallelism: P0-06/P0-07 can run alongside P0-03/P0-04. With two people, P4 can 
 - [ ] **P1-09 MTU and RSSI** — deps: P1-06.
   Android `requestMtu` after discovery (default per Q3; note the Android 14+ behavior in Q3), iOS-derived MTU, `readRssi`.
   **Accept:** `mtu` reflects the negotiated value; `mtuChange` fires on Android; the value requested vs. negotiated is recorded on API 33 and API 34+ devices for Q3.
+  **Progress 2026-10-02 (open):** the Android setup exchange after discovery (`android.requestMtu`, default 517, `false` skips it; a failure is a `warning`), `requestMtu()` and `readRssi()` through the queue on both platforms, the iOS-derived MTU, `mtuChange` on ready connections, the binding (`mtu`, `requestMtu`, `readRssi`, `mtuChange`), connect-option and MTU validation for P1-12, and MTU and RSSI in the fake (`mtu` in `VirtualPeripheralConfig`, `setRssi`). Tests: 12 Android, 4 iOS, 9 Jest. Rules in §5.4.
+  - Verified on the Galaxy A52: `requestMtu()` and `readRssi()` without a connection reject with `DISCONNECTED`, `mtu` reads 23, and a connect with `android.requestMtu` still times out on an absent device (5,071 ms). The iOS binding compiles.
+  - Pending real hardware: the negotiated MTU and `mtuChange` against a peripheral, the requested vs. negotiated values on API 33 and API 34+ for Q3, and `readRssi()` on a live link, on both platforms.
 - [x] **P1-10 Error model** — deps: P1-02.
   `BleError`, codes, iOS and Android mapping tables (Appendix A).
   **Accept:** every native failure path maps to a code; unit tests cover the mapping tables.
@@ -1525,3 +1540,4 @@ Submit results (`BluetoothStatusCodes`, API 33+): 1 not enabled → `BLUETOOTH_P
 | v0.22 | 2026-10-02 | P1-07 in progress: reads, writes and descriptors on both platforms. Attribute rules in §5.4 (checks, lengths, the CCCD guard, basic write-without-response pacing) |
 | v0.23 | 2026-10-02 | P1-13 done: native port, lazy module, fake adapter, `expo-ble-kit/testing`, and the GATT queue contract shared by the three queues. §4.6 and §5.8 updated (fake rules, `descriptors` in `VirtualPeripheralConfig`, `injectError` op names) |
 | v0.24 | 2026-10-02 | P1-08 in progress: notifications and indications on both platforms and in the fake. Subscription rules in §5.4, the iOS indicate limit in §6, `isNotifying` in §5.8 |
+| v0.25 | 2026-10-02 | P1-09 in progress: MTU and RSSI on both platforms and in the fake. MTU and RSSI rules in §5.4 (`mtuChange` only on ready connections, a failed setup exchange is a warning), `mtu` and `setRssi` in §5.8 |

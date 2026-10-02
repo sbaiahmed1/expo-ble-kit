@@ -29,7 +29,11 @@ export type NotificationEvent = {
   timestamp: number;
 };
 
+/** The ATT MTU of a ready connection changed (Android; iOS when a refresh sees a new value). */
+export type MtuChangeEvent = { mtu: number };
+
 export type PeripheralObjectEvents = {
   connectionStateChange: (event: ConnectionStateEvent) => void;
   notification: (event: NotificationEvent) => void;
+  mtuChange: (event: MtuChangeEvent) => void;
 };

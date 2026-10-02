@@ -47,6 +47,8 @@ class CentralEngineTest {
           timestamp: Double,
         ) = Unit
 
+        override fun onMtuChange(peripheralId: String, mtu: Int) = Unit
+
         override fun onConnectionStateChange(peripheralId: String, state: SessionState, error: CoreError?) {
           connections += "$peripheralId ${state.js}${error?.let { " ${it.code}" } ?: ""}"
         }
@@ -139,7 +141,7 @@ class CentralEngineTest {
     adapter.scanner.emit(scanRecord(scanned.address, device = scanned))
 
     var result: CoreError? = CoreError(CoreError.Code.INTERNAL, "pending")
-    engine.connect("c0:ff:ee:00:00:01", ConnectSpec(15_000, autoDiscover = false)) { result = it }
+    engine.connect("c0:ff:ee:00:00:01", ConnectSpec(15_000, autoDiscover = false, requestMtu = null)) { result = it }
     assertEquals("the scanned handle, not getRemoteDevice", 1, scanned.clients.size)
     assertTrue(adapter.devices.isEmpty())
     scanned.clients[0].callback.onConnectionStateChange(GATT_SUCCESS, ConnectionStates.CONNECTED)

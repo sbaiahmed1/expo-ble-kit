@@ -387,6 +387,80 @@ describe('the fake', () => {
     });
   });
 
+  describe('MTU and RSSI', () => {
+    async function connect(options: Parameters<typeof toNativeConnectOptions>[0], mtu = 247) {
+      const id = fake.addPeripheral({ ...profile, mtu }).id;
+      await settle();
+      const peripheral = ExpoBleKit.getPeripheral(id);
+      const seen: string[] = [];
+      peripheral.addListener('connectionStateChange', ({ state }: ConnectionStateEvent) =>
+        seen.push(`${state} ${peripheral.mtu}`)
+      );
+      peripheral.addListener('mtuChange', ({ mtu }: { mtu: number }) => seen.push(`mtu ${mtu}`));
+      const connecting = peripheral.connect(toNativeConnectOptions(options));
+      await settle();
+      await connecting;
+      return { peripheral, seen };
+    }
+
+    it('negotiates while connecting, like Android, and the MTU is set at connected', async () => {
+      expect((await connect({})).seen).toEqual(['connecting 23', 'connected 247']);
+      expect((await connect({ android: { requestMtu: 185 } })).peripheral.mtu).toBe(185);
+      expect((await connect({ android: { requestMtu: false } })).peripheral.mtu).toBe(23);
+      expect((await connect({ autoDiscover: false }, 23)).peripheral.mtu).toBe(23);
+    });
+
+    it('requestMtu negotiates, emits mtuChange, and sets the packet size', async () => {
+      const { peripheral, seen } = await connect({ android: { requestMtu: false } });
+      expect(
+        await codeOf(peripheral.write(request(ECHO_WRITE, undefined, false), new Uint8Array(21)))
+      ).toBe('INVALID_ATTRIBUTE_LENGTH');
+
+      const negotiated = peripheral.requestMtu(517, 10_000);
+      await settle();
+      expect(await negotiated).toBe(247);
+      const again = peripheral.requestMtu(517, 10_000);
+      await settle();
+      expect(await again).toBe(247);
+      expect(seen.filter((event) => event.startsWith('mtu'))).toEqual(['mtu 247']);
+
+      const write = peripheral.write(request(ECHO_WRITE, undefined, false), new Uint8Array(244));
+      await settle();
+      expect(await codeOf(write)).toBe('ok');
+      expect(await codeOf(peripheral.requestMtu(22, 10_000))).toBe('INVALID_ARGUMENT');
+    });
+
+    it('turns a failed exchange while connecting into a warning', async () => {
+      const warnings: string[] = [];
+      ExpoBleKit.addListener('warning', ({ code }) => warnings.push(code));
+      fake.injectError({ op: 'requestMtu' }, 'GATT_ERROR');
+      const { peripheral } = await connect({});
+      expect(peripheral.state).toBe('connected');
+      expect(peripheral.mtu).toBe(23);
+      expect(warnings).toEqual(['GATT_ERROR']);
+    });
+
+    it('reads the RSSI, and resets the MTU on disconnect', async () => {
+      const { peripheral } = await connect({});
+      device.setRssi(-80);
+      const other = await connected();
+      const rssi = other.peripheral.readRssi(10_000);
+      await settle();
+      expect(await rssi).toBe(-80);
+
+      fake.injectError({ op: 'readRssi' }, 'GATT_ERROR');
+      const failed = codeOf(other.peripheral.readRssi(10_000));
+      await settle();
+      expect(await failed).toBe('GATT_ERROR');
+
+      const disconnecting = peripheral.disconnect();
+      await settle();
+      await disconnecting;
+      expect(peripheral.mtu).toBe(23);
+      expect(await codeOf(peripheral.readRssi(10_000))).toBe('DISCONNECTED');
+    });
+  });
+
   it('reset forgets everything', async () => {
     const { peripheral } = await connected();
     fake.reset();

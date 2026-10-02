@@ -71,3 +71,31 @@ struct BlePermissions: Equatable {
     ]
   }
 }
+
+// MARK: - Adapter state of the engine
+
+extension CentralEngine {
+  /// Why scanning or connecting can't run in `state`; nil for `poweredOn` and for `unknown`, which
+  /// resolves shortly.
+  static func adapterError(_ state: CBManagerState) -> CoreError? {
+    switch state {
+    case .poweredOn, .unknown:
+      return nil
+    case .resetting:
+      return CoreError(.bluetoothResetting, "Bluetooth is resetting")
+    case .unsupported:
+      return CoreError(.bluetoothUnsupported, "This device doesn't support Bluetooth LE")
+    case .unauthorized:
+      return CoreError(.bluetoothUnauthorized, "Bluetooth permission is denied. The user can allow it in Settings.")
+    case .poweredOff:
+      return CoreError(.bluetoothPoweredOff, "Bluetooth is off")
+    @unknown default:
+      return CoreError(.internal, "Unknown Bluetooth state \(state.rawValue)")
+    }
+  }
+
+  /// Before the manager exists, the authorization is all that can be read without the prompt.
+  static func stateWithoutCentral(_ authorization: CBManagerAuthorization) -> BleState {
+    authorization == .denied || authorization == .restricted ? .unauthorized : .unknown
+  }
+}

@@ -59,16 +59,42 @@ extension ExpoBleKitModule {
     }
   }
 
+  func unsubscribe(_ id: String, _ subscriptionId: Int, _ timeoutMs: Double, _ promise: Promise) {
+    attributeOperation(id, promise) { session, done in
+      session.unsubscribe(subscriptionId, timeout: timeoutMs / 1000) { done($0.map { nil }) }
+    }
+  }
+
+  func disconnect(_ id: String, _ promise: Promise) {
+    let engine = self.engine
+    engine.queue.async {
+      engine.disconnect(id) { promise.resolve() }
+    }
+  }
+
+  /// iOS can't negotiate: resolves the current MTU after checking `mtu` (plan §5.4).
+  func requestMtu(_ id: String, _ mtu: Int, _ promise: Promise) {
+    attributeOperation(id, promise) { session, done in
+      session.requestMtu(mtu) { done($0.map { $0 }) }
+    }
+  }
+
+  func readRssi(_ id: String, _ timeoutMs: Double, _ promise: Promise) {
+    attributeOperation(id, promise) { session, done in
+      session.readRssi(timeout: timeoutMs / 1000) { done($0.map { $0 }) }
+    }
+  }
+
   /// Runs an attribute operation on the engine's queue and settles `promise` with its value
-  /// (`Data`, or nil for writes) or its error.
+  /// (`Data` or a number, nil for writes) or its error.
   func attributeOperation(
     _ id: String,
     _ promise: Promise,
-    _ operation: @escaping (PeripheralSession, @escaping (Result<Data?, CoreError>) -> Void) -> Void
+    _ operation: @escaping (PeripheralSession, @escaping (Result<Any?, CoreError>) -> Void) -> Void
   ) {
     let engine = self.engine
     engine.queue.async {
-      let done: (Result<Data?, CoreError>) -> Void = { result in
+      let done: (Result<Any?, CoreError>) -> Void = { result in
         switch result {
         case let .success(value):
           promise.resolve(value)

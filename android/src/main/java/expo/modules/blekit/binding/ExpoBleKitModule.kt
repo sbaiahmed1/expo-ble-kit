@@ -119,6 +119,8 @@ class ExpoBleKitModule : Module() {
 
       Property("services") { ref: PeripheralObject -> engine.services(ref.id) }
 
+      Property("mtu") { ref: PeripheralObject -> engine.mtu(ref.id) }
+
       // UUIDs arrive normalized and timeouts always set: the TS layer applies the defaults (rule 4).
       AsyncFunction("read") { ref: PeripheralObject, request: AttributeRequestRecord, promise: Promise ->
         attributeOperation(promise) {
@@ -206,6 +208,14 @@ class ExpoBleKitModule : Module() {
         }
       }
 
+      AsyncFunction("requestMtu") { ref: PeripheralObject, mtu: Int, timeoutMs: Double, promise: Promise ->
+        attributeOperation(promise) { engine.requestMtu(ref.id, mtu, timeoutMs.toLong(), promise.settler()) }
+      }
+
+      AsyncFunction("readRssi") { ref: PeripheralObject, timeoutMs: Double, promise: Promise ->
+        attributeOperation(promise) { engine.readRssi(ref.id, timeoutMs.toLong(), promise.settler()) }
+      }
+
       // `services` null discovers everything; the TS layer always passes a timeout (rule 4).
       AsyncFunction("discover") { ref: PeripheralObject, services: List<String>?, timeoutMs: Double, promise: Promise ->
         executor.execute {
@@ -289,6 +299,11 @@ class ExpoBleKitModule : Module() {
           "timestamp" to timestamp,
         ),
       )
+    }
+
+    override fun onMtuChange(peripheralId: String, mtu: Int) {
+      val peripheral = synchronized(peripherals) { peripherals[peripheralId]?.get() } ?: return
+      peripheral.emit("mtuChange", mapOf("mtu" to mtu))
     }
 
     override fun onConnectionStateChange(peripheralId: String, state: SessionState, error: CoreError?) {

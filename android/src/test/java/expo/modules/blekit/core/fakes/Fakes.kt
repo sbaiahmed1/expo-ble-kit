@@ -77,6 +77,10 @@ class FakeRemoteDevice(
   val clients = mutableListOf<FakeGattClient>()
   var refuseConnections = false
 
+  /** What an MTU exchange settles on, whatever is requested (null: the requested value). */
+  var negotiatedMtu: Int? = null
+  var rssi = -55
+
   override fun connectGatt(autoConnect: Boolean, callback: GattClientCallback): GattClientPort? {
     if (refuseConnections) return null
     return FakeGattClient(this, autoConnect, callback).also { clients.add(it) }
@@ -164,12 +168,13 @@ class FakeGattClient(
 
   override fun requestMtu(mtu: Int): Boolean {
     calls.add(Call.RequestMtu(mtu))
-    if (respondsAutomatically) callback.onMtuChanged(mtu, GATT_SUCCESS)
+    if (respondsAutomatically) callback.onMtuChanged(device.negotiatedMtu ?: mtu, GATT_SUCCESS)
     return true
   }
 
   override fun readRemoteRssi(): Boolean {
     calls.add(Call.ReadRssi)
+    if (respondsAutomatically) callback.onReadRemoteRssi(device.rssi, GATT_SUCCESS)
     return true
   }
 

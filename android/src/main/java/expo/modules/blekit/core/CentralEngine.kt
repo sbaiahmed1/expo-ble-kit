@@ -34,6 +34,9 @@ class CentralEngine(
 
     /** A notification or indication; [timestamp] in epoch milliseconds (plan §4.10). */
     fun onNotification(peripheralId: String, service: UUID, characteristic: UUID, value: ByteArray, timestamp: Double)
+
+    /** The ATT MTU of a ready connection changed (P1-09). */
+    fun onMtuChange(peripheralId: String, mtu: Int)
   }
 
   var listener: Listener? = null
@@ -147,10 +150,16 @@ class CentralEngine(
           val timestamp = clock.epochMs(executor.nowMs()).toDouble()
           listener?.onNotification(address, ref.serviceUuid, ref.uuid, value, timestamp)
         }
+        session.onMtuChange = { mtu -> listener?.onMtuChange(address, mtu) }
+        session.onWarning = { warning -> listener?.onWarning(warning) }
       }
     }
     session.connect(spec, completion)
   }
+
+  /** ATT MTU of [peripheralId]; 23 when not connected. Safe to read from any thread. */
+  fun mtu(peripheralId: String): Int =
+    normalizeAddress(peripheralId)?.let { sessions[it]?.mtu } ?: PeripheralSession.DEFAULT_MTU
 
   /** The discovery cache of [peripheralId] as JS `Service[]`. Safe to read from any thread. */
   fun services(peripheralId: String): List<Map<String, Any?>> =
@@ -239,6 +248,12 @@ class CentralEngine(
   ) = withSession(peripheralId, completion) {
     it.subscribe(service, characteristic, mode, subscriptionId, timeoutMs, completion)
   }
+
+  fun requestMtu(peripheralId: String, mtu: Int, timeoutMs: Long?, completion: (Result<Int>) -> Unit) =
+    withSession(peripheralId, completion) { it.requestMtu(mtu, timeoutMs, completion) }
+
+  fun readRssi(peripheralId: String, timeoutMs: Long?, completion: (Result<Int>) -> Unit) =
+    withSession(peripheralId, completion) { it.readRssi(timeoutMs, completion) }
 
   /** Unknown peripherals have nothing to unsubscribe: success. */
   fun unsubscribe(peripheralId: String, subscriptionId: Int, timeoutMs: Long?, completion: (Result<Unit>) -> Unit) {

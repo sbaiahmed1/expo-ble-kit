@@ -1,5 +1,9 @@
 import { BleError } from '../errors';
-import { DEFAULT_CONNECT_TIMEOUT_MS, toNativeConnectOptions } from '../internal/connectOptions';
+import {
+  DEFAULT_CONNECT_TIMEOUT_MS,
+  toNativeConnectOptions,
+  validateMtu,
+} from '../internal/connectOptions';
 import type { ConnectOptions } from '../types';
 
 describe('toNativeConnectOptions', () => {
@@ -7,7 +11,7 @@ describe('toNativeConnectOptions', () => {
     expect(toNativeConnectOptions()).toEqual({
       timeoutMs: DEFAULT_CONNECT_TIMEOUT_MS,
       autoDiscover: true,
-      android: {},
+      android: { requestMtu: 517 },
       ios: { notifyOnDisconnection: false },
     });
     expect(toNativeConnectOptions({ timeoutMs: null }).timeoutMs).toBeNull();
@@ -16,6 +20,21 @@ describe('toNativeConnectOptions', () => {
 
   it('keeps autoDiscover false', () => {
     expect(toNativeConnectOptions({ autoDiscover: false }).autoDiscover).toBe(false);
+  });
+
+  it('asks for 517 by default, nothing with false, or the given MTU', () => {
+    expect(
+      toNativeConnectOptions({ android: { requestMtu: false } }).android.requestMtu
+    ).toBeNull();
+    expect(toNativeConnectOptions({ android: { requestMtu: 185 } }).android.requestMtu).toBe(185);
+    expect(toNativeConnectOptions({ android: { requestMtu: 23 } }).android.requestMtu).toBe(23);
+  });
+
+  it('checks an MTU', () => {
+    expect(validateMtu('mtu', 517)).toBe(517);
+    for (const value of [22, 518, 100.5, '185', NaN, true]) {
+      expect(() => validateMtu('mtu', value)).toThrow(BleError);
+    }
   });
 
   it('passes the platform options', () => {
@@ -33,6 +52,9 @@ describe('toNativeConnectOptions', () => {
     ['timeoutMs NaN', { timeoutMs: NaN }],
     ['timeoutMs string', { timeoutMs: '100' }],
     ['android.autoConnect', { android: { autoConnect: 'yes' } }],
+    ['android.requestMtu too small', { android: { requestMtu: 22 } }],
+    ['android.requestMtu too large', { android: { requestMtu: 518 } }],
+    ['android.requestMtu true', { android: { requestMtu: true } }],
     ['autoDiscover', { autoDiscover: 'no' }],
     ['ios.notifyOnDisconnection', { ios: { notifyOnDisconnection: 1 } }],
   ])('rejects %s', (_, options) => {

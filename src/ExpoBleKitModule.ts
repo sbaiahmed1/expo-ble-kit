@@ -21,6 +21,7 @@ export declare class NativePeripheral
   readonly id: string;
   readonly state: ConnectionState;
   readonly services: Service[];
+  readonly mtu: number;
   connect(options: NativeConnectOptions): Promise<void>;
   disconnect(): Promise<void>;
   discover(services: string[] | null, timeoutMs: number): Promise<Service[]>;
@@ -34,6 +35,8 @@ export declare class NativePeripheral
     mode: NativeSubscribeMode
   ): Promise<void>;
   unsubscribe(subscriptionId: number, timeoutMs: number): Promise<void>;
+  requestMtu(mtu: number, timeoutMs: number): Promise<number>;
+  readRssi(timeoutMs: number): Promise<number>;
 }
 
 /** The native module: the real `NativeBleKitPort` (plan §4.6). */

@@ -9,6 +9,7 @@ import type { BlePermissions, BleState, Diagnostics } from './types';
 class WebPeripheral {
   readonly state = 'disconnected';
   readonly services = [];
+  readonly mtu = 23;
 
   constructor(readonly id: string) {}
 
@@ -43,6 +44,14 @@ class WebPeripheral {
   }
 
   async unsubscribe(): Promise<void> {}
+
+  async requestMtu(): Promise<never> {
+    throw notSupported();
+  }
+
+  async readRssi(): Promise<never> {
+    throw notSupported();
+  }
 
   addListener() {
     return { remove() {} };

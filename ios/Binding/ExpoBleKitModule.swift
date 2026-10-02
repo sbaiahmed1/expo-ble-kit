@@ -56,6 +56,11 @@ public class ExpoBleKitModule: Module {
       event.timestamp = timestamp
       peripheral.emit(event: "notification", payload: event)
     }
+    engine.onMtuChange = { [weak self] peripheralId, mtu in
+      var event = MtuChangeEventRecord()
+      event.mtu = mtu
+      self?.existingPeripheral(peripheralId)?.emit(event: "mtuChange", payload: event)
+    }
     return engine
   }()
 
@@ -134,17 +139,11 @@ public class ExpoBleKitModule: Module {
         )
       }
 
-      Property("id") { (ref: PeripheralObject) in
-        ref.id
-      }
-
-      Property("state") { (ref: PeripheralObject) in
-        self.engine.connectionState(ref.id)
-      }
-
-      Property("services") { (ref: PeripheralObject) in
-        self.engine.services(ref.id)
-      }
+      // Synchronous reads of the engine's snapshots (plan §4.7).
+      Property("id") { (ref: PeripheralObject) in ref.id }
+      Property("state") { (ref: PeripheralObject) in self.engine.connectionState(ref.id) }
+      Property("services") { (ref: PeripheralObject) in self.engine.services(ref.id) }
+      Property("mtu") { (ref: PeripheralObject) in self.engine.mtu(ref.id) }
 
       // UUIDs arrive normalized and timeouts always set: the TS layer applies the defaults (rule 4).
       AsyncFunction("read") { (ref: PeripheralObject, request: Request, promise: Promise) in
@@ -169,9 +168,15 @@ public class ExpoBleKitModule: Module {
       }
 
       AsyncFunction("unsubscribe") { (ref: PeripheralObject, id: Int, timeoutMs: Double, promise: Promise) in
-        self.attributeOperation(ref.id, promise) { session, done in
-          session.unsubscribe(id, timeout: timeoutMs / 1000) { done($0.map { nil }) }
-        }
+        self.unsubscribe(ref.id, id, timeoutMs, promise)
+      }
+
+      AsyncFunction("requestMtu") { (ref: PeripheralObject, mtu: Int, _: Double, promise: Promise) in
+        self.requestMtu(ref.id, mtu, promise)
+      }
+
+      AsyncFunction("readRssi") { (ref: PeripheralObject, timeoutMs: Double, promise: Promise) in
+        self.readRssi(ref.id, timeoutMs, promise)
       }
 
       // `services` nil discovers everything; the TS layer always passes a timeout (rule 4).
@@ -184,10 +189,7 @@ public class ExpoBleKitModule: Module {
       }
 
       AsyncFunction("disconnect") { (ref: PeripheralObject, promise: Promise) in
-        let engine = self.engine
-        engine.queue.async {
-          engine.disconnect(ref.id) { promise.resolve() }
-        }
+        self.disconnect(ref.id, promise)
       }
     }
   }

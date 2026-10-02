@@ -88,3 +88,8 @@ struct NotificationEventRecord: Record {
   @Field var value = Data()
   @Field var timestamp: Double = 0
 }
+
+/// Payload of a peripheral's `mtuChange` event (P1-09).
+struct MtuChangeEventRecord: Record {
+  @Field var mtu: Int = 23
+}

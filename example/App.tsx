@@ -128,7 +128,7 @@ export default function App() {
       await absent.connect({
         timeoutMs,
         autoDiscover: true,
-        android: {},
+        android: { requestMtu: 517 },
         ios: { notifyOnDisconnection: false },
       });
       addConnectLog(`connected after ${Date.now() - started} ms`);
@@ -149,7 +149,7 @@ export default function App() {
     }
   }
 
-  // Not connected: both reject with DISCONNECTED, through the native request and byte conversions.
+  // Not connected: each rejects with DISCONNECTED, through the native request and byte conversions.
   async function readWriteAbsent() {
     const request = {
       service: TEST_SERVICE,
@@ -162,6 +162,8 @@ export default function App() {
       ['write', () => absent.write(request, new Uint8Array([1, 2, 3]))],
       ['subscribe', () => absent.subscribe({ ...request, characteristic: STREAM }, 1, 'auto')],
       ['unsubscribe', () => absent.unsubscribe(1, 10_000)],
+      ['requestMtu', () => absent.requestMtu(517, 10_000)],
+      ['readRssi', () => absent.readRssi(10_000)],
     ] as const) {
       try {
         await call();
@@ -170,6 +172,7 @@ export default function App() {
         addConnectLog(`${name}: ${BleError.fromNative(error).code}`);
       }
     }
+    addConnectLog(`mtu: ${absent.mtu}`);
   }
 
   // Every cancelled attempt must close its GATT client: open clients stay at 0 (Android).
@@ -180,7 +183,7 @@ export default function App() {
         .connect({
           timeoutMs: null,
           autoDiscover: true,
-          android: {},
+          android: { requestMtu: 517 },
           ios: { notifyOnDisconnection: false },
         })
         .catch(() => {});
@@ -264,7 +267,7 @@ export default function App() {
           <Button testID="discover-absent" title="Discover absent" onPress={discoverAbsent} />
           <Button
             testID="read-write-absent"
-            title="Read, write, subscribe absent"
+            title="Operations on absent"
             onPress={readWriteAbsent}
           />
           <Button testID="diagnostics" title="Diagnostics" onPress={showDiagnostics} />

@@ -1,6 +1,7 @@
 import type {
   ConnectionStateEvent,
   ExpoBleKitModuleEvents,
+  MtuChangeEvent,
   NotificationEvent,
   PeripheralObjectEvents,
 } from '../ExpoBleKit.types';
@@ -19,8 +20,7 @@ import type { NativeScanOptions } from './scanOptions';
 
 /**
  * What the TS layer needs from the native side (plan §4.6). The native module implements it, and so
- * does `FakeBleAdapter` for tests. Native binding tasks extend it as they land (P1-08
- * notifications, P1-09 MTU and RSSI).
+ * does `FakeBleAdapter` for tests. Native binding tasks extend it as they land.
  *
  * Inputs are already validated and normalized by the TS layer (`src/internal/*Options.ts`,
  * `attributeRequest.ts`); rejections carry a BleErrorCode `code` for `BleError.fromNative`.
@@ -50,6 +50,8 @@ export interface NativePeripheralPort {
   readonly state: ConnectionState;
   /** The discovery cache; empty before discovery and after a disconnect. */
   readonly services: Service[];
+  /** ATT MTU: 23 until connected; set when `connected` is emitted, then changes come as `mtuChange`. */
+  readonly mtu: number;
   /** Resolves when the connection is ready; the `connected` event comes first. */
   connect(options: NativeConnectOptions): Promise<void>;
   /** During a connect, cancels it: the connect rejects with OPERATION_CANCELLED. */
@@ -71,10 +73,17 @@ export interface NativePeripheralPort {
   ): Promise<void>;
   /** The last subscriber of a characteristic disables its CCCD; unknown ids resolve. */
   unsubscribe(subscriptionId: number, timeoutMs: number): Promise<void>;
+  /**
+   * `mtu` is 23–517. Android negotiates and resolves the agreed MTU; iOS can't negotiate and
+   * resolves the current one (`timeoutMs` unused).
+   */
+  requestMtu(mtu: number, timeoutMs: number): Promise<number>;
+  /** The link's RSSI in dBm. */
+  readRssi(timeoutMs: number): Promise<number>;
   addListener<E extends keyof PeripheralObjectEvents>(
     event: E,
     listener: PeripheralObjectEvents[E]
   ): Subscription;
 }
 
-export type { ConnectionStateEvent, NotificationEvent };
+export type { ConnectionStateEvent, MtuChangeEvent, NotificationEvent };

@@ -67,6 +67,10 @@ final class PeripheralSession: PeripheralLikeDelegate {
   private(set) var services: [DiscoveredService] = []
   /// Called after the cache changes.
   var onServicesChange: (([DiscoveredService]) -> Void)?
+  /// ATT MTU, derived (P1-09). 23 until the connection is ready. Only the session sets it.
+  var mtu = PeripheralSession.defaultMtu
+  /// A changed MTU on a ready connection.
+  var onMtuChange: ((Int) -> Void)?
 
   private let central: CentralManaging
   private let scheduler: Scheduling
@@ -248,6 +252,7 @@ final class PeripheralSession: PeripheralLikeDelegate {
   private func becomeReady() {
     connectTimeout?.cancel()
     connectTimeout = nil
+    mtu = derivedMtu
     setState(.ready, nil)
     // The state listener has seen `connected` before connect() resolves (plan §4.8).
     let waiters = connectWaiters
@@ -283,7 +288,8 @@ final class PeripheralSession: PeripheralLikeDelegate {
     disconnectTimeout?.cancel()
     disconnectTimeout = nil
     pendingWriteWithoutResponse = nil
-    // Handles and the database can differ on the next connection.
+    // Handles, the database and the MTU can differ on the next connection.
+    mtu = Self.defaultMtu
     if !services.isEmpty {
       services = []
       onServicesChange?([])

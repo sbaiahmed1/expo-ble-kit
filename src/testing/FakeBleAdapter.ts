@@ -33,6 +33,8 @@ export interface VirtualPeripheralConfig {
   id?: string; // generated when omitted
   name?: string;
   rssi?: number; // default -60
+  /** The largest ATT MTU the peripheral accepts. Default 23, so nothing above 23 is negotiated. */
+  mtu?: number;
   services: {
     uuid: UUID;
     characteristics: {
@@ -56,7 +58,9 @@ export type FakeOperation =
   | 'readDescriptor'
   | 'writeDescriptor'
   | 'subscribe'
-  | 'unsubscribe';
+  | 'unsubscribe'
+  | 'requestMtu'
+  | 'readRssi';
 
 export interface FakeBle {
   addPeripheral(config: VirtualPeripheralConfig): VirtualPeripheral;
@@ -77,14 +81,16 @@ export interface VirtualPeripheral {
   notify(service: UUID, characteristic: UUID, value: Uint8Array): void;
   /** The peripheral side of the CCCD: whether a client has notifications or indications on. */
   isNotifying(service: UUID, characteristic: UUID): boolean;
+  /** What advertising and `readRssi()` report from now on. */
+  setRssi(rssi: number): void;
   disconnect(reason?: 'peer' | 'linkLoss'): void;
   readonly writes: readonly { characteristic: UUID; value: Uint8Array; withResponse: boolean }[];
 }
 
 const CCCD = normalizeUUID('2902');
 const MAX_ATTRIBUTE_LENGTH = 512;
-/** One packet at the default ATT MTU of 23 (Android); iOS reports 20 too until a larger MTU. */
-const MAX_WITHOUT_RESPONSE = 20;
+const MIN_MTU = 23;
+const MAX_MTU = 517;
 
 const fail = (code: BleErrorCode, message: string) => new BleError(code, message);
 
@@ -140,7 +146,8 @@ class VirtualDevice implements VirtualPeripheral {
   readonly services: Map<UUID, VirtualService>;
   readonly writes: { characteristic: UUID; value: Uint8Array; withResponse: boolean }[] = [];
   readonly name: string | null;
-  readonly rssi: number;
+  rssi: number;
+  readonly mtu: number;
   advertising = true;
 
   constructor(
@@ -150,6 +157,7 @@ class VirtualDevice implements VirtualPeripheral {
   ) {
     this.name = config.name ?? null;
     this.rssi = config.rssi ?? -60;
+    this.mtu = Math.min(Math.max(config.mtu ?? MIN_MTU, MIN_MTU), MAX_MTU);
     this.services = new Map(
       config.services.map((service) => {
         const uuid = normalizeUUID(service.uuid);
@@ -215,6 +223,10 @@ class VirtualDevice implements VirtualPeripheral {
     return this.characteristic(service, characteristic).cccd !== 'off';
   }
 
+  setRssi(rssi: number): void {
+    this.rssi = rssi;
+  }
+
   characteristic(service: UUID, characteristic: UUID): VirtualCharacteristic {
     const target = this.services
       .get(normalizeUUID(service))
@@ -271,6 +283,7 @@ class VirtualDevice implements VirtualPeripheral {
 class FakePeripheralHandle implements NativePeripheralPort {
   state: ConnectionState = 'disconnected';
   services: Service[] = [];
+  mtu = MIN_MTU;
   private readonly emitter = new Emitter<PeripheralObjectEvents>();
   private queue: GattQueue;
   private connectWaiters: { resolve: () => void; reject: (error: BleError) => void }[] = [];
@@ -388,7 +401,8 @@ class FakePeripheralHandle implements NativePeripheralPort {
       [property],
       BleErrorCode.WRITE_NOT_PERMITTED
     );
-    const max = request.withResponse ? MAX_ATTRIBUTE_LENGTH : MAX_WITHOUT_RESPONSE;
+    // Without response, one packet: MTU − 3.
+    const max = request.withResponse ? MAX_ATTRIBUTE_LENGTH : this.mtu - 3;
     if (value.length > max) {
       throw fail(
         BleErrorCode.INVALID_ATTRIBUTE_LENGTH,
@@ -541,6 +555,28 @@ class FakePeripheralHandle implements NativePeripheralPort {
     });
   }
 
+  /** Negotiates like Android: the smaller of the request and what the peripheral accepts. */
+  async requestMtu(mtu: number, timeoutMs: number): Promise<number> {
+    if (!Number.isInteger(mtu) || mtu < MIN_MTU || mtu > MAX_MTU) {
+      throw fail(BleErrorCode.INVALID_ARGUMENT, `MTU ${mtu} is outside ${MIN_MTU}–${MAX_MTU}`);
+    }
+    const negotiated = await this.operation('requestMtu', 'requestMtu', undefined, timeoutMs, () =>
+      Math.min(mtu, this.device()?.mtu ?? MIN_MTU)
+    );
+    this.updateMtu(negotiated);
+    return negotiated;
+  }
+
+  readRssi(timeoutMs: number): Promise<number> {
+    return this.operation(
+      'readRssi',
+      'readRssi',
+      undefined,
+      timeoutMs,
+      () => this.device()?.rssi ?? 0
+    );
+  }
+
   // Called by the adapter and the virtual device
 
   deliverNotification(characteristic: UUID, service: UUID, value: Uint8Array): void {
@@ -606,7 +642,7 @@ class FakePeripheralHandle implements NativePeripheralPort {
         return this.finish(injected);
       }
       if (!this.connectOptions?.autoDiscover) {
-        return this.becomeReady();
+        return this.exchangeMtu(attempt);
       }
       // autoDiscover runs through the queue before `connected`, inside the connect timeout.
       this.queue.enqueue<Service[]>(
@@ -624,10 +660,55 @@ class FakePeripheralHandle implements NativePeripheralPort {
           if (attempt !== this.attempt || this.state !== 'connecting') return;
           if (!result.ok) return this.finish(result.error);
           this.services = this.device()?.serviceList() ?? [];
-          this.becomeReady();
+          this.exchangeMtu(attempt);
         }
       );
     });
+  }
+
+  /**
+   * The last setup step, like Android (plan §4.8): ask for `android.requestMtu`. A failure is a
+   * `warning`, not a failed connect. The value is in `mtu` when `connected` is emitted.
+   */
+  private exchangeMtu(attempt: number): void {
+    const requested = this.connectOptions?.android.requestMtu ?? null;
+    if (requested === null) {
+      return this.becomeReady();
+    }
+    this.queue.enqueue<number>(
+      'requestMtu',
+      {},
+      () =>
+        this.scheduler.schedule(() => {
+          const error = this.adapter.takeError('requestMtu', this.id);
+          const value = Math.min(requested, this.device()?.mtu ?? MIN_MTU);
+          this.queue.complete(
+            error ? { ok: false, error } : { ok: true, value },
+            (op) => op.kind === 'requestMtu'
+          );
+        }),
+      (result) => {
+        if (attempt !== this.attempt || this.state !== 'connecting') return;
+        if (result.ok) {
+          this.mtu = result.value;
+        } else {
+          this.adapter.warn(
+            result.error.code,
+            `${this.id}: the MTU request after connecting failed, so the MTU stays ${this.mtu}`
+          );
+        }
+        this.becomeReady();
+      }
+    );
+  }
+
+  private updateMtu(mtu: number): void {
+    if (mtu !== this.mtu) {
+      this.mtu = mtu;
+      if (this.state === 'connected') {
+        this.emitter.emit('mtuChange', { mtu });
+      }
+    }
   }
 
   private becomeReady(): void {
@@ -646,6 +727,7 @@ class FakePeripheralHandle implements NativePeripheralPort {
     this.cancelConnectTimeout?.();
     this.cancelConnectTimeout = null;
     this.services = [];
+    this.mtu = MIN_MTU;
     // The state changes first, so callbacks of the operations failed below see the final state.
     this.setState('disconnected', error);
     this.queue.failAll(fail(BleErrorCode.DISCONNECTED, 'Disconnected'));
@@ -922,6 +1004,10 @@ export class FakeBleAdapter implements NativeBleKitPort {
     if (index < 0) return null;
     const [{ code }] = this.errors.splice(index, 1);
     return fail(code, `Injected ${code} for ${op}`);
+  }
+
+  warn(code: BleErrorCode, message: string): void {
+    this.emitter.emit('warning', { code, message });
   }
 
   permissionError(capability: 'scan' | 'connect'): BleError | null {

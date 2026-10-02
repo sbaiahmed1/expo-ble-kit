@@ -26,7 +26,7 @@ class PeripheralSessionTest {
   private var connectError: CoreError? = null
 
   private fun connect(timeoutMs: Long? = 15_000, autoDiscover: Boolean = false) {
-    session.connect(ConnectSpec(timeoutMs, autoDiscover = autoDiscover)) { error ->
+    session.connect(ConnectSpec(timeoutMs, autoDiscover = autoDiscover, requestMtu = null)) { error ->
       connectError = error
       log += "connect ${error?.code ?: "ok"}"
     }

@@ -34,6 +34,8 @@ final class CentralEngine: CentralManagingDelegate {
   var onConnectionStateChange: ((_ peripheralId: String, SessionState, CoreError?) -> Void)?
   /// A notification or indication, on `queue`; the timestamp is epoch milliseconds (plan §4.10).
   var onNotification: ((_ peripheralId: String, _ service: String, _ characteristic: String, Data, Double) -> Void)?
+  /// The MTU of a ready connection changed (P1-09), on `queue`.
+  var onMtuChange: ((_ peripheralId: String, Int) -> Void)?
 
   private let environment: Environment
   private let scheduler: Scheduling
@@ -45,6 +47,8 @@ final class CentralEngine: CentralManagingDelegate {
   private var connectionStates: [String: String] = [:]
   /// Discovery caches by peripheral id, for synchronous reads. Guarded by `stateLock`.
   private var discoveredServices: [String: [DiscoveredService]] = [:]
+  /// MTUs by peripheral id, for synchronous reads. Guarded by `stateLock`.
+  private var mtus: [String: Int] = [:]
   private(set) var central: CentralManaging?
   private var pendingPermissionRequests: [PermissionsCompletion] = []
 
@@ -136,25 +140,6 @@ final class CentralEngine: CentralManagingDelegate {
     return central
   }
 
-  /// Why scanning or connecting can't run in `state`; nil for `poweredOn` and for `unknown`, which
-  /// resolves shortly.
-  static func adapterError(_ state: CBManagerState) -> CoreError? {
-    switch state {
-    case .poweredOn, .unknown:
-      return nil
-    case .resetting:
-      return CoreError(.bluetoothResetting, "Bluetooth is resetting")
-    case .unsupported:
-      return CoreError(.bluetoothUnsupported, "This device doesn't support Bluetooth LE")
-    case .unauthorized:
-      return CoreError(.bluetoothUnauthorized, "Bluetooth permission is denied. The user can allow it in Settings.")
-    case .poweredOff:
-      return CoreError(.bluetoothPoweredOff, "Bluetooth is off")
-    @unknown default:
-      return CoreError(.internal, "Unknown Bluetooth state \(state.rawValue)")
-    }
-  }
-
   // MARK: CentralManagingDelegate
 
   func centralDidUpdateState(_ central: CentralManaging) {
@@ -210,11 +195,6 @@ final class CentralEngine: CentralManagingDelegate {
         + "(\(CoreError.setupGuide))."
     )
   }
-
-  /// Before the manager exists, the authorization is all that can be read without the prompt.
-  static func stateWithoutCentral(_ authorization: CBManagerAuthorization) -> BleState {
-    authorization == .denied || authorization == .restricted ? .unauthorized : .unknown
-  }
 }
 
 // MARK: - Connections (P1-05)
@@ -262,6 +242,13 @@ extension CentralEngine {
     stateLock.lock()
     defer { stateLock.unlock() }
     return (discoveredServices[peripheralId.uppercased()] ?? []).map(\.dictionary)
+  }
+
+  /// ATT MTU of `peripheralId`; 23 when not connected. Safe from any thread.
+  func mtu(_ peripheralId: String) -> Int {
+    stateLock.lock()
+    defer { stateLock.unlock() }
+    return mtus[peripheralId.uppercased()] ?? PeripheralSession.defaultMtu
   }
 
   /// Discovers `filter` (all when nil) on a ready connection; DISCONNECTED otherwise.
@@ -335,8 +322,17 @@ extension CentralEngine {
       ))
     }
     let session = PeripheralSession(peripheral: peripheral, central: central, scheduler: scheduler)
-    session.onStateChange = { [weak self] state, error in
-      self?.publishConnectionState(identifier.uuidString, state, error)
+    session.onStateChange = { [weak self, weak session] state, error in
+      self?.publishConnectionState(identifier.uuidString, state, error, mtu: session?.mtu)
+    }
+    session.onMtuChange = { [weak self] mtu in
+      guard let self else {
+        return
+      }
+      stateLock.lock()
+      mtus[identifier.uuidString] = mtu
+      stateLock.unlock()
+      onMtuChange?(identifier.uuidString, mtu)
     }
     session.onNotification = { [weak self] characteristic, value in
       guard let self else {
@@ -362,9 +358,10 @@ extension CentralEngine {
     session.connect(spec, completion: completion)
   }
 
-  private func publishConnectionState(_ peripheralId: String, _ state: SessionState, _ error: CoreError?) {
+  private func publishConnectionState(_ peripheralId: String, _ state: SessionState, _ error: CoreError?, mtu: Int?) {
     stateLock.lock()
     connectionStates[peripheralId] = state.js
+    mtus[peripheralId] = mtu
     stateLock.unlock()
     onConnectionStateChange?(peripheralId, state, error)
   }

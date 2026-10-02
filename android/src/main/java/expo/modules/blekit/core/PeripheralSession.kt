@@ -53,7 +53,14 @@ class ConnectSpec(
   val autoConnect: Boolean = timeoutMs == null,
   /** Discover every service before the connection counts as ready (plan §4.8). */
   val autoDiscover: Boolean = true,
-)
+  /** Android: the MTU to request before the connection counts as ready; null asks for none (Q3). */
+  val requestMtu: Int? = DEFAULT_REQUESTED_MTU,
+) {
+  companion object {
+    /** Plan §5.4 / Q3. Android 14+ asks for 517 whatever the app requests (measured in P0-06). */
+    const val DEFAULT_REQUESTED_MTU = 517
+  }
+}
 
 /**
  * One peripheral's connection (plan §4.4, §4.8): connect with a timeout and a bounded retry of
@@ -85,6 +92,12 @@ class PeripheralSession(
       }
     }
   }
+
+  /** A changed ATT MTU on a ready connection, on the BLE thread: after a request, or one the stack or peer started. */
+  var onMtuChange: ((Int) -> Unit)? = null
+
+  /** A non-fatal problem, such as a refused MTU request during setup. */
+  var onWarning: ((CoreError) -> Unit)? = null
 
   /** Notifications and indications of subscribed characteristics, on the BLE thread. */
   var onNotification: ((GattCharacteristicRef, ByteArray) -> Unit)? = null
@@ -120,6 +133,7 @@ class PeripheralSession(
   private var attempts = 0
   private var autoConnect = false
   private var autoDiscover = true
+  private var setupMtu: Int? = null
   private var connectTimeout: Cancellable? = null
   private var retry: Cancellable? = null
   private var disconnectTimeout: Cancellable? = null
@@ -146,6 +160,7 @@ class PeripheralSession(
         attempts = 0
         autoConnect = spec.autoConnect
         autoDiscover = spec.autoDiscover
+        setupMtu = spec.requestMtu
         setState(SessionState.CONNECTING, null)
         spec.timeoutMs?.let { timeoutMs ->
           connectTimeout = executor.executeDelayed(timeoutMs) {
@@ -436,6 +451,26 @@ class PeripheralSession(
   private fun notSupported(characteristic: UUID, what: String) =
     CoreError(CoreError.Code.NOT_SUPPORTED, "Characteristic $characteristic doesn't support $what")
 
+  /** Negotiates the ATT MTU (23–517) and resolves the value both sides agreed on (plan §5.4). */
+  fun requestMtu(mtu: Int, timeoutMs: Long?, completion: (Result<Int>) -> Unit) {
+    if (mtu !in DEFAULT_MTU..MAX_MTU) {
+      val error = CoreError(CoreError.Code.INVALID_ARGUMENT, "MTU $mtu is outside $DEFAULT_MTU–$MAX_MTU")
+      return completion(Result.failure(error))
+    }
+    val kind = GattOperation.Kind.REQUEST_MTU
+    enqueueAttributeOperation(kind, "mtu", timeoutMs, completion, valueOf = { it.number ?: this.mtu }) {
+      if (gatt?.requestMtu(mtu) != true) refused("MTU request")
+    }
+  }
+
+  /** Reads the link's RSSI in dBm. */
+  fun readRssi(timeoutMs: Long?, completion: (Result<Int>) -> Unit) {
+    val kind = GattOperation.Kind.READ_RSSI
+    enqueueAttributeOperation(kind, "rssi", timeoutMs, completion, valueOf = { it.number ?: 0 }) {
+      if (gatt?.readRemoteRssi() != true) refused("RSSI read")
+    }
+  }
+
   /** The adapter went away (off, or the module is destroyed): drop everything with [error]. */
   fun forceDisconnected(error: CoreError) {
     if (state == SessionState.DISCONNECTED) {
@@ -497,6 +532,22 @@ class PeripheralSession(
       if (attemptGeneration == generation && subscriptions[key(ref)]?.enabled == true) {
         onNotification?.invoke(ref, value)
       }
+    }
+
+    override fun onMtuChanged(mtu: Int, status: Int) {
+      if (attemptGeneration != generation) return
+      val error = AndroidErrorMapping.operationError(status, "MTU request")
+      if (error == null) updateMtu(mtu)
+      queue.complete(error?.let(GattResult::Failure) ?: GattResult.Success(number = mtu)) {
+        it.kind == GattOperation.Kind.REQUEST_MTU
+      }
+    }
+
+    override fun onReadRemoteRssi(rssi: Int, status: Int) {
+      if (attemptGeneration != generation) return
+      val result = AndroidErrorMapping.operationError(status, "RSSI read")?.let(GattResult::Failure)
+        ?: GattResult.Success(number = rssi)
+      queue.complete(result) { it.kind == GattOperation.Kind.READ_RSSI }
     }
 
     override fun onServicesDiscovered(status: Int) {
@@ -651,16 +702,46 @@ class PeripheralSession(
   /** The connect timeout keeps running through setup: connect() covers it all (plan §4.8). */
   private fun onLinkUp() {
     setState(SessionState.CONNECTED, null)
-    // P1-09 adds the MTU request here.
     if (!autoDiscover) {
-      becomeReady()
+      exchangeMtu()
       return
     }
     setState(SessionState.DISCOVERING, null)
     discover(filter = null, timeoutMs = null) { result ->
       if (state == SessionState.DISCOVERING) {
-        result.fold(onSuccess = { becomeReady() }, onFailure = { failConnect(it as CoreError) })
+        result.fold(onSuccess = { exchangeMtu() }, onFailure = { failConnect(it as CoreError) })
       }
+    }
+  }
+
+  /**
+   * The last setup step (plan §4.8): ask for the configured MTU. A refusal or failure isn't fatal:
+   * the connection keeps the MTU it has, and a warning says why.
+   */
+  private fun exchangeMtu() {
+    val requested = setupMtu ?: return becomeReady()
+    val setupState = state
+    enqueueSetupOperation(GattOperation.Kind.REQUEST_MTU, { gatt?.requestMtu(requested) == true }) { result ->
+      if (state != setupState) return@enqueueSetupOperation
+      (result as? GattResult.Failure)?.let { failure ->
+        val reason = failure.error
+        val message = "$address: the MTU request after connecting failed, so the MTU stays $mtu (${reason.message})"
+        onWarning?.invoke(CoreError(reason.code, message, reason.gattStatus))
+      }
+      becomeReady()
+    }
+  }
+
+  /** Like an attribute operation, but allowed before READY (setup steps). */
+  private fun enqueueSetupOperation(kind: GattOperation.Kind, submit: () -> Boolean, completion: (GattResult) -> Unit) {
+    queue.enqueue(kind, timeoutMs = null, start = { if (!submit()) refused("MTU request") }, completion = completion)
+  }
+
+  /** Only a ready connection reports changes: the value set up before is in [mtu] at `connected`. */
+  private fun updateMtu(newMtu: Int) {
+    if (newMtu != mtu) {
+      mtu = newMtu
+      if (state == SessionState.READY) onMtuChange?.invoke(newMtu)
     }
   }
 
@@ -717,8 +798,9 @@ class PeripheralSession(
     retry = null
     disconnectTimeout?.cancel()
     disconnectTimeout = null
-    // Handles and the database can differ on the next connection.
+    // Handles, the database and the MTU can differ on the next connection.
     services = emptyList()
+    mtu = DEFAULT_MTU
     // The state changes first, so callbacks of the operations failed below see the final state.
     setState(SessionState.DISCONNECTED, error)
     queue.failAll(CoreError(CoreError.Code.DISCONNECTED, "Disconnected from $address"))
@@ -752,6 +834,7 @@ class PeripheralSession(
     /** Discovery is one queued operation, and slower than the 10 s default (plan §4.9). */
     const val DISCOVERY_TIMEOUT_MS = 30_000L
     const val DEFAULT_MTU = 23
+    const val MAX_MTU = 517
 
     /** The ATT maximum for an attribute value. */
     const val MAX_ATTRIBUTE_LENGTH = 512
