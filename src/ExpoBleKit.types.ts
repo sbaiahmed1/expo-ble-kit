@@ -1,5 +1,5 @@
 import type { BleErrorCode } from './errors';
-import type { BleState, ScanResult } from './types';
+import type { BleState, ConnectionState, ScanResult } from './types';
 
 export type StateChangeEvent = { state: BleState };
 export type ScanResultsEvent = { sessionId: number; results: ScanResult[] };
@@ -12,4 +12,15 @@ export type ExpoBleKitModuleEvents = {
   scanResults: (event: ScanResultsEvent) => void;
   scanError: (event: ScanErrorEvent) => void;
   warning: (event: WarningEvent) => void;
+};
+
+/** `code` and `message` are set when the connection ended or failed unexpectedly. */
+export type ConnectionStateEvent = {
+  state: ConnectionState;
+  code?: BleErrorCode;
+  message?: string;
+};
+
+export type PeripheralObjectEvents = {
+  connectionStateChange: (event: ConnectionStateEvent) => void;
 };

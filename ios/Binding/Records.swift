@@ -32,3 +32,28 @@ struct ScanOptionsRecord: Record {
     )
   }
 }
+
+struct IosConnectOptionsRecord: Record {
+  @Field var notifyOnDisconnection: Bool = false
+}
+
+/// JS `ConnectOptions` (plan §5.4) after the TS layer applied defaults: `timeoutMs` nil means none.
+struct ConnectOptionsRecord: Record {
+  @Field var timeoutMs: Double?
+  @Field var ios: IosConnectOptionsRecord = IosConnectOptionsRecord()
+
+  func spec() throws -> ConnectSpec {
+    if let timeoutMs, !(timeoutMs > 0) {
+      throw CoreError(.invalidArgument, "Invalid connect option timeoutMs: \(timeoutMs)")
+    }
+    return ConnectSpec(timeout: timeoutMs.map { $0 / 1000 }, notifyOnDisconnection: ios.notifyOnDisconnection)
+  }
+}
+
+/// Payload of a peripheral's `connectionStateChange` event. `code` and `message` describe an
+/// unexpected end; `message` may carry `[blekit]` details for `BleError.fromNative`.
+struct ConnectionStateEventRecord: Record {
+  @Field var state: String = "disconnected"
+  @Field var code: String?
+  @Field var message: String?
+}

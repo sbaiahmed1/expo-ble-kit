@@ -1,6 +1,7 @@
 package expo.modules.blekit.binding
 
 import expo.modules.blekit.core.BleCapability
+import expo.modules.blekit.core.ConnectSpec
 import expo.modules.blekit.core.CoreError
 import expo.modules.blekit.core.ManufacturerFilter
 import expo.modules.blekit.core.ScanOptionValues
@@ -88,4 +89,23 @@ class ScanOptionsRecord : Record {
 
   private fun invalid(option: String, value: Any?): Nothing =
     throw CoreError(CoreError.Code.INVALID_ARGUMENT, "Invalid scan option $option: $value")
+}
+
+class AndroidConnectOptionsRecord : Record {
+  @Field val autoConnect: Boolean? = null
+}
+
+/** JS `ConnectOptions` (plan §5.4) after the TS layer applied defaults: `timeoutMs` null means none. */
+class ConnectOptionsRecord : Record {
+  @Field val timeoutMs: Double? = null
+
+  @Field val android: AndroidConnectOptionsRecord = AndroidConnectOptionsRecord()
+
+  fun toSpec(): ConnectSpec {
+    val timeoutMs = timeoutMs?.let {
+      if (!(it > 0)) throw CoreError(CoreError.Code.INVALID_ARGUMENT, "Invalid connect option timeoutMs: $it")
+      it.toLong()
+    }
+    return ConnectSpec(timeoutMs, android.autoConnect ?: (timeoutMs == null))
+  }
 }

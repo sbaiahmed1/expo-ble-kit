@@ -2,7 +2,13 @@ import { readFileSync } from 'fs';
 import { resolve } from 'path';
 
 import { BleError } from '../errors';
-import type { BlePermissions, BleState, PermissionStatus, ScanResult } from '../types';
+import type {
+  BlePermissions,
+  BleState,
+  ConnectionState,
+  PermissionStatus,
+  ScanResult,
+} from '../types';
 
 const root = resolve(__dirname, '../..');
 const read = (path: string) => readFileSync(resolve(root, path), 'utf8');
@@ -64,6 +70,29 @@ describe('native values match the public types (plan §5.1)', () => {
     expect([...kotlinValues(kotlinPermissions, 'BleCapability'), 'canAskAgain'].sort()).toEqual(
       keys
     );
+  });
+});
+
+describe('native connection states are ConnectionState values (plan §4.8)', () => {
+  // `reconnecting` arrives with reconnect policies (P2-01).
+  const states = allOf<ConnectionState>()([
+    'disconnected',
+    'connecting',
+    'connected',
+    'disconnecting',
+    'reconnecting',
+  ]).filter((state) => state !== 'reconnecting');
+
+  it.each([
+    ['iOS', 'ios/Core/PeripheralSession.swift', /return "(\w+)"/g],
+    [
+      'Android',
+      'android/src/main/java/expo/modules/blekit/core/PeripheralSession.kt',
+      /-> "(\w+)"/g,
+    ],
+  ])('%s', (_, path, pattern) => {
+    const values = [...new Set([...read(path).matchAll(pattern)].map((m) => m[1]))].sort();
+    expect(values).toEqual(states);
   });
 });
 

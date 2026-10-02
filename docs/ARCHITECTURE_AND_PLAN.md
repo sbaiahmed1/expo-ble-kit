@@ -1,6 +1,6 @@
 # Expo BLE (`expo-ble-kit`) — Architecture & Implementation Plan
 
-> **Status:** Draft v0.19 · **Date:** 2026-10-02 · **Scope:** proposition #3, an Expo-first Bluetooth Low Energy module · **Changes:** Appendix D
+> **Status:** Draft v0.20 · **Date:** 2026-10-02 · **Scope:** proposition #3, an Expo-first Bluetooth Low Energy module · **Changes:** Appendix D
 >
 > **Package name:** `expo-ble-kit` (D0a, decided 2026-10-02) · native module `ExpoBleKit` · Android package `expo.modules.blekit`.
 >
@@ -244,7 +244,7 @@ iOS platform rules:
   - `PeripheralObject`, with events `connectionStateChange`, `notification` / `notificationBatch`, `mtuChange`, `servicesChanged`.
   - `GattServerObject`, with events `readRequest`, `writeRequest`, `subscriptionChange`.
   - `L2CAPChannelObject`, with events `data`, `close`.
-- Identity: the binding keeps an `id → weak SharedObject` map, so one native peripheral always maps to the same JS object.
+- Identity: the binding keeps an `id → weak SharedObject` map, so one native peripheral always maps to the same JS object. `getPeripheral(id)` is the only way to get one (the JS constructor throws; Expo's Android `Class` requires a constructor, and a missing one crashes the app at start). Ids are normalized first: upper-case addresses on Android, upper-case UUIDs on iOS. The object holds no BLE state; `state` reads the core's published snapshot.
 - Errors: core errors become coded exceptions carrying `code` (§4.11) plus `nativeDomain`, `nativeCode`, `gattStatus`.
 - Lifecycle: an iOS app-delegate subscriber (declared in `expo-module.config.json`) creates engines early when restoration is enabled. An Android application lifecycle listener wires receivers and the service. Under SDK 58's scene life cycle, Expo forwards app-delegate events to subscribers; the background relaunch path is confirmed in spike P0-05.
 - TaskManager consumer for headless background delivery on both platforms ⚠️ VERIFY that third-party consumers are supported on the target SDK (the interfaces live in `expo-modules-core`).
@@ -740,6 +740,16 @@ export interface L2CAPChannel {
 }
 ```
 
+Connection rules (decided in P1-05):
+
+- `connect()` never shows a permission prompt. It rejects with `INVALID_ARGUMENT` (an id that isn't an address on Android or a UUID on iOS), `MISCONFIGURED`, `BLUETOOTH_UNAUTHORIZED` (iOS), `PERMISSION_DENIED` (Android: `BLUETOOTH_CONNECT` missing), `BLUETOOTH_POWERED_OFF`, `BLUETOOTH_RESETTING` or `BLUETOOTH_UNSUPPORTED`; on iOS with `PERIPHERAL_NOT_FOUND` when `retrievePeripherals` doesn't know the id.
+- A connect while one is pending joins it (the first call's options apply); a connect while disconnecting starts once the disconnect completes; a connect while connected resolves at once.
+- `disconnect()` during a connect cancels it: the connect rejects with `OPERATION_CANCELLED`, and the state listener sees `disconnected` without an error. A `disconnect()` on a disconnected or unknown peripheral resolves at once. A disconnect the stack never confirms completes after 5 s anyway (rule 4).
+- Android: `autoConnect` defaults to true exactly when `timeoutMs` is null. Status 133 during a connect is retried, up to 3 attempts with 250 ms and 500 ms backoff, inside the connect timeout; other statuses aren't retried. Every attempt's `BluetoothGatt` is closed exactly once, and callbacks from a closed attempt are ignored.
+- iOS: a timed-out or cancelled connect calls `cancelPeripheralConnection`; a late `didConnect` for it drops the link again. A failed connect is `CONNECTION_FAILED` whatever CBError it carried; the native code is kept.
+- When Bluetooth leaves `poweredOn`, every session ends with the matching error (`BLUETOOTH_POWERED_OFF` …), and pending connects fail with it.
+- The state listener hears only changes of the JS state, and hears `connected` before `connect()` resolves.
+
 ### 5.5 Peripheral role (P4)
 
 ```ts
@@ -841,6 +851,8 @@ export interface Diagnostics {
   permissions: BlePermissions;
   sessions: Array<{ id: string; state: ConnectionState; queueDepth: number; subscriptions: number }>;
   recentErrors: BleError[]; // ring buffer, last 100
+  /** Android: GATT clients opened and not yet closed. Stable across connect cycles when nothing leaks. */
+  android?: { openGattClients: number };
 }
 ```
 
@@ -1043,6 +1055,10 @@ Parallelism: P0-06/P0-07 can run alongside P0-03/P0-04. With two people, P4 can 
   - Connecting to an absent device fails with `CONNECTION_TIMEOUT` within timeout + 1 s.
   - `connect({ timeoutMs: null })` stays pending until the device appears, and `disconnect()` or `signal` cancels it.
   - `connect()` resolves at the same moment the state listener sees `connected`.
+  **Progress 2026-10-02 (open):** `PeripheralSession` on both platforms (§4.8 states, timeouts, cancel, link loss; Android 133 retry and close-once), connections in `CentralEngine`, the `PeripheralObject` binding (`getPeripheral`, `connect`, `disconnect`, `state`, `connectionStateChange`), `getDiagnosticsAsync` (state, sessions, Android open GATT clients), connect-option validation for P1-12 (`src/internal/connectOptions.ts`), and connection controls in the example. Tests: 14 Android, 9 iOS, and Jest tests for the options and the connection-state values. Rules in §4.5 and §5.4. P1-12 must reject or document the connect options that aren't implemented yet (`autoDiscover` P1-06, `android.requestMtu` P1-09, `reconnect` and `ios.enableAutoReconnect` P2-01, `keepAliveInBackground` P3).
+  - Verified on the Galaxy A52 (Android 14): a connect to an absent device with `timeoutMs: 5000` rejected with `CONNECTION_TIMEOUT` after 5,059 ms, the `disconnected` event a millisecond before; `timeoutMs: null` stayed pending for 10 s and `disconnect()` cancelled it with `OPERATION_CANCELLED`; 100 connect/cancel cycles left 0 open GATT clients, and the stack log showed 100 `registerClient` and 100 `unregisterClient`, all on the same client slot. In 22 of those cycles `close()` ran before Android finished registering the client (`unregisterApp() - mClientIf=0`); Samsung's stack still unregistered them. Other vendors: P2-06.
+  - Found on the device: Expo's Android `Class` needs a constructor, or the app crashes at start; fixed with a constructor that throws.
+  - Pending real hardware: 100 connect/disconnect cycles with a real peripheral, a `timeoutMs: null` connect that completes when the device appears, and `connect()` resolving with `connected` on a live link; all of iOS on a physical iPhone.
 - [ ] **P1-06 Discovery and cache** — deps: P1-05.
   **Accept:** full profile discovered; filtered discovery works; cache cleared on disconnect.
 - [ ] **P1-07 Read, write, descriptors** — deps: P1-06.
@@ -1456,3 +1472,4 @@ Submit results (`BluetoothStatusCodes`, API 33+): 1 not enabled → `BLUETOOTH_P
 | v0.17 | 2026-10-02 | P1-14 done: config plugin v1 and the bare setup guide. §4.15 mod-ordering VERIFY resolved (finalized mod, add-only-if-absent); new rules for optional hardware features and for rejecting unknown options |
 | v0.18 | 2026-10-02 | P1-03 in progress: adapter state, permissions and declaration checks on both platforms, verified on the Galaxy A52 and the iOS simulator. New permission rules in §4.13, lazy-creation and power-alert rules in §4.3, the Android state receiver in §4.4. Plugin fix: `neverForLocation: false` no longer caps location at API 30 |
 | v0.19 | 2026-10-02 | P1-04 in progress: scanning on both platforms, verified on the Galaxy A52 (multiplexing, throttle guard). New scanning rules in §5.3 and §4.5; throttle-guard details in §4.4; §4.12 address-type approach changed (the scan's device handle, since `getAddressType` is API 35+). Android 11/12 checks of P1-03 deferred |
+| v0.20 | 2026-10-02 | P1-05 in progress: connect and disconnect on both platforms, verified on the Galaxy A52 without a peripheral (absent-device timeout, cancellable no-timeout connect, 100 cycles without GATT client leaks). Connection rules in §5.4, binding identity in §4.5, `android.openGattClients` in §5.7 `Diagnostics` |

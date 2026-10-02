@@ -1,3 +1,4 @@
+import type { BleError } from './errors';
 import type { UUID } from './uuid';
 
 // Public types of plan §5.1 and §5.3. Changing them requires updating the plan, docs and tests
@@ -7,10 +8,19 @@ export type BleState =
   'unknown' | 'resetting' | 'unsupported' | 'unauthorized' | 'poweredOff' | 'poweredOn';
 
 export type PermissionStatus = 'granted' | 'denied' | 'undetermined';
+/** See §4.8 for how native states map onto these. `connected` means ready for GATT ops. */
+export type ConnectionState =
+  'disconnected' | 'connecting' | 'connected' | 'disconnecting' | 'reconnecting';
+export type Phy = 'le1m' | 'le2m' | 'leCoded';
 
 /** Removes a JS listener. Synchronous, no I/O, never fails. */
 export interface Subscription {
   remove(): void;
+}
+
+export interface OpOptions {
+  timeoutMs?: number;
+  signal?: AbortSignal;
 }
 
 export interface BlePermissions {
@@ -66,4 +76,35 @@ export interface ScanResult {
 export interface ScanSession {
   readonly active: boolean;
   stop(): void;
+}
+
+export interface ConnectOptions extends Omit<OpOptions, 'timeoutMs'> {
+  /**
+   * Default 15000. `null` = no timeout: the connect stays pending until the device appears
+   * ("connect when in range": iOS pending connect, Android autoConnect). It is still cancelled by
+   * disconnect() or `signal`. This is the only exception to Appendix B rule 4.
+   */
+  timeoutMs?: number | null;
+  autoDiscover?: boolean; // default true
+  reconnect?: ReconnectPolicy | false; // default false
+  restoreSubscriptionsOnReconnect?: boolean; // default true when reconnect is set
+  keepAliveInBackground?: boolean; // Android: foreground service (P3). iOS: needs the background mode
+  android?: { autoConnect?: boolean; requestMtu?: number | false; phy?: Phy[] }; // requestMtu default 517 (see Q3)
+  ios?: { enableAutoReconnect?: boolean; notifyOnDisconnection?: boolean };
+}
+
+export interface ReconnectPolicy {
+  maxAttempts?: number; // default Infinity
+  initialDelayMs?: number; // default 1000
+  maxDelayMs?: number; // default 30000
+  backoff?: 'exponential' | 'fixed';
+}
+
+export interface Diagnostics {
+  state: BleState;
+  permissions: BlePermissions;
+  sessions: { id: string; state: ConnectionState; queueDepth: number; subscriptions: number }[];
+  recentErrors: BleError[]; // ring buffer, last 100
+  /** Android: GATT clients opened and not yet closed. Stable across connect cycles when nothing leaks. */
+  android?: { openGattClients: number };
 }

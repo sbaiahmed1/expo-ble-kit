@@ -10,3 +10,4 @@ identifier_name:
   excluded:
     - id
     - ok
+    - js

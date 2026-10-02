@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { Button, SafeAreaView, ScrollView, Text, View } from 'react-native';
+import { Button, Platform, SafeAreaView, ScrollView, Text, View } from 'react-native';
 
 import ExpoBleKit, {
   BleError,
@@ -14,6 +14,9 @@ import ExpoBleKit, {
 
 const TEST_SERVICE = '0c6c1000-b347-4cfa-9827-1c5a13658519';
 const TEST_NAME = 'BleKit-Test';
+// A device that isn't there: a random static address on Android, an unknown id on iOS.
+const ABSENT_ID =
+  Platform.OS === 'android' ? 'C0:FF:EE:00:00:99' : '0C6C0000-0000-4000-8000-000000000099';
 
 type Filters = { services?: string[]; namePrefix?: string; companyId?: number };
 
@@ -59,8 +62,15 @@ export default function App() {
   const [sessions, setSessions] = useState<Record<number, { label: string; ids: string[] }>>({});
   const [testResult, setTestResult] = useState('');
   const [log, setLog] = useState<string[]>([]);
+  const [connectLog, setConnectLog] = useState<string[]>([]);
   const nextSession = useRef(1);
+  const absent = useRef(ExpoBleKit.getPeripheral(ABSENT_ID)).current;
   const labels = useRef<Record<number, string>>({});
+
+  const addConnectLog = (line: string) =>
+    setConnectLog((lines) =>
+      [`${new Date().toISOString().slice(14, 23)} ${line}`, ...lines].slice(0, 10)
+    );
 
   const addLog = (line: string) =>
     setLog((lines) => [`${new Date().toISOString().slice(14, 23)} ${line}`, ...lines].slice(0, 12));
@@ -100,9 +110,47 @@ export default function App() {
         addLog(`warning ${error.code}: ${error.message}`);
       }),
     ];
+    subscriptions.push(
+      absent.addListener('connectionStateChange', (event) => {
+        const error = event.code ? ` ${BleError.fromNative(event).code}` : '';
+        addConnectLog(`state ${event.state}${error} (sync ${absent.state})`);
+      })
+    );
     setState(ExpoBleKit.getState());
     return () => subscriptions.forEach((s) => s.remove());
-  }, []);
+  }, [absent]);
+
+  async function connectAbsent(timeoutMs: number | null) {
+    const started = Date.now();
+    addConnectLog(`connect timeoutMs ${timeoutMs}`);
+    try {
+      await absent.connect({ timeoutMs, android: {}, ios: { notifyOnDisconnection: false } });
+      addConnectLog(`connected after ${Date.now() - started} ms`);
+    } catch (error) {
+      const bleError = BleError.fromNative(error);
+      addConnectLog(`${bleError.code} after ${Date.now() - started} ms`);
+    }
+  }
+
+  // Every cancelled attempt must close its GATT client: open clients stay at 0 (Android).
+  async function cancelCycles() {
+    addConnectLog('100 connect/cancel cycles');
+    for (let cycle = 0; cycle < 100; cycle++) {
+      const pending = absent
+        .connect({ timeoutMs: null, android: {}, ios: { notifyOnDisconnection: false } })
+        .catch(() => {});
+      await absent.disconnect();
+      await pending;
+    }
+    showDiagnostics();
+  }
+
+  async function showDiagnostics() {
+    const diagnostics = await ExpoBleKit.getDiagnosticsAsync();
+    addConnectLog(
+      `diagnostics: open GATT clients ${diagnostics.android?.openGattClients ?? 'n/a'}, sessions ${JSON.stringify(diagnostics.sessions)}`
+    );
+  }
 
   async function run(call: () => Promise<BlePermissions>) {
     setResult('…');
@@ -151,6 +199,28 @@ export default function App() {
     <SafeAreaView style={styles.container}>
       <ScrollView style={styles.container}>
         <Text style={styles.header}>expo-ble-kit · {state}</Text>
+        <Group name="Connecting">
+          <Button
+            testID="connect-absent"
+            title="Connect absent (5 s)"
+            onPress={() => connectAbsent(5000)}
+          />
+          <Button
+            testID="connect-absent-forever"
+            title="Connect absent (no timeout)"
+            onPress={() => connectAbsent(null)}
+          />
+          <Button
+            testID="disconnect-absent"
+            title="Disconnect absent"
+            onPress={() => absent.disconnect()}
+          />
+          <Button testID="cancel-cycles" title="Connect/cancel ×100" onPress={cancelCycles} />
+          <Button testID="diagnostics" title="Diagnostics" onPress={showDiagnostics} />
+          <Text testID="connect-log" style={styles.result}>
+            {connectLog.join('\n')}
+          </Text>
+        </Group>
         <Group name="Scanning">
           <Button testID="scan-all" title="Scan all" onPress={() => startSession('all', {})} />
           <Button

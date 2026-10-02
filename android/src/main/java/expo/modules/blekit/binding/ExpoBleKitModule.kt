@@ -13,6 +13,8 @@ import expo.modules.blekit.core.EpochClock
 import expo.modules.blekit.core.HandlerExecutor
 import expo.modules.blekit.core.PermissionResult
 import expo.modules.blekit.core.PermissionStatus
+import expo.modules.blekit.core.SessionState
+import expo.modules.blekit.core.normalizeAddress
 import expo.modules.interfaces.permissions.Permissions
 import expo.modules.interfaces.permissions.PermissionsResponse
 import expo.modules.interfaces.permissions.PermissionsStatus
@@ -21,6 +23,7 @@ import expo.modules.kotlin.exception.CodedException
 import expo.modules.kotlin.exception.Exceptions
 import expo.modules.kotlin.modules.Module
 import expo.modules.kotlin.modules.ModuleDefinition
+import java.lang.ref.WeakReference
 
 /** A core error as a coded JS exception (plan §4.5). */
 class BleKitException(error: CoreError) : CodedException(error.code.value, error.jsMessage, error)
@@ -28,6 +31,9 @@ class BleKitException(error: CoreError) : CodedException(error.code.value, error
 class ExpoBleKitModule : Module() {
   private lateinit var executor: HandlerExecutor
   private lateinit var engine: CentralEngine
+
+  /** One JS object per peripheral id while JS holds it (plan §4.5). Guarded by itself. */
+  private val peripherals = HashMap<String, WeakReference<PeripheralObject>>()
 
   private val permissionManager: Permissions
     get() = appContext.permissions ?: throw Exceptions.PermissionsModuleNotFound()
@@ -87,6 +93,47 @@ class ExpoBleKitModule : Module() {
       executor.execute { engine.stopScan(sessionId) }
     }
 
+    // Never touches the adapter (plan §5.2). Android ids are addresses, normalized to upper case.
+    Function("getPeripheral") { id: String ->
+      val key = normalizeAddress(id) ?: id
+      synchronized(peripherals) {
+        peripherals[key]?.get() ?: PeripheralObject(key, appContext).also { peripherals[key] = WeakReference(it) }
+      }
+    }
+
+    Class(PeripheralObject::class) {
+      // Expo requires a constructor; peripherals only come from getPeripheral() (one object per id).
+      Constructor {
+        throw CodedException(
+          CoreError.Code.INVALID_ARGUMENT.value,
+          "Use getPeripheral(id) to get a peripheral",
+          null,
+        )
+      }
+
+      Property("id") { ref: PeripheralObject -> ref.id }
+
+      Property("state") { ref: PeripheralObject -> engine.connectionState(ref.id) }
+
+      AsyncFunction("connect") { ref: PeripheralObject, options: ConnectOptionsRecord, promise: Promise ->
+        executor.execute {
+          settle(promise) {
+            engine.connect(ref.id, options.toSpec()) { error ->
+              if (error == null) promise.resolve(null) else promise.reject(BleKitException(error))
+            }
+          }
+        }
+      }
+
+      AsyncFunction("disconnect") { ref: PeripheralObject, promise: Promise ->
+        executor.execute { engine.disconnect(ref.id) { promise.resolve(null) } }
+      }
+    }
+
+    AsyncFunction("getDiagnosticsAsync") { promise: Promise ->
+      executor.execute { promise.resolve(engine.diagnostics()) }
+    }
+
     AsyncFunction("requestPermissionsAsync") { request: PermissionRequestRecord?, promise: Promise ->
       val capabilities = (request ?: PermissionRequestRecord()).capabilities()
       executor.execute {
@@ -117,6 +164,14 @@ class ExpoBleKitModule : Module() {
 
     override fun onWarning(warning: CoreError) {
       sendEvent("warning", mapOf("code" to warning.code.value, "message" to warning.jsMessage))
+    }
+
+    override fun onConnectionStateChange(peripheralId: String, state: SessionState, error: CoreError?) {
+      val peripheral = synchronized(peripherals) { peripherals[peripheralId]?.get() } ?: return
+      peripheral.emit(
+        "connectionStateChange",
+        mapOf("state" to state.js, "code" to error?.code?.value, "message" to error?.jsMessage),
+      )
     }
   }
 

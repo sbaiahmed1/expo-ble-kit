@@ -1,9 +1,12 @@
 package expo.modules.blekit.core
 
 import expo.modules.blekit.core.fakes.FakeBluetoothAdapter
+import expo.modules.blekit.core.fakes.FakeRemoteDevice
 import expo.modules.blekit.core.fakes.ManualExecutor
+import expo.modules.blekit.core.fakes.scanRecord
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /** P1-03: adapter state as JS sees it. */
@@ -20,6 +23,7 @@ class CentralEngineTest {
   private val adapter = FakeBluetoothAdapter(state = AdapterStates.ON)
   private val permissions = FakePermissionSystem(sdkInt = 34)
   private val events = mutableListOf<BleState>()
+  private val connections = mutableListOf<String>()
 
   private fun engine() = CentralEngine(adapter, permissions, ManualExecutor(), EpochClock(0, 0)).also { engine ->
     engine.listener =
@@ -33,6 +37,10 @@ class CentralEngineTest {
         override fun onScanError(sessionId: Int, error: CoreError) = Unit
 
         override fun onWarning(warning: CoreError) = Unit
+
+        override fun onConnectionStateChange(peripheralId: String, state: SessionState, error: CoreError?) {
+          connections += "$peripheralId ${state.js}${error?.let { " ${it.code}" } ?: ""}"
+        }
       }
     engine.start()
   }
@@ -95,5 +103,53 @@ class CentralEngineTest {
     val engine = engine()
     engine.close()
     assertNull(adapter.stateListener)
+  }
+
+  @Test
+  fun `connect checks the id, the permission and the adapter first`() {
+    val engine = engine()
+    fun codeOf(id: String) =
+      runCatching { engine.connect(id, ConnectSpec(15_000)) {} }.exceptionOrNull()?.let { (it as CoreError).code }
+
+    assertEquals(CoreError.Code.INVALID_ARGUMENT, codeOf("not-an-address"))
+    assertEquals(CoreError.Code.PERMISSION_DENIED, codeOf("C0:FF:EE:00:00:01"))
+    permissions.granted += AndroidPermissions.BLUETOOTH_CONNECT
+    adapter.simulateState(AdapterStates.OFF)
+    assertEquals(CoreError.Code.BLUETOOTH_POWERED_OFF, codeOf("C0:FF:EE:00:00:01"))
+    permissions.declared = setOf(AndroidPermissions.BLUETOOTH_SCAN)
+    assertEquals(CoreError.Code.MISCONFIGURED, codeOf("C0:FF:EE:00:00:01"))
+  }
+
+  @Test
+  fun `connects through the scanned handle and drops sessions when Bluetooth turns off`() {
+    permissions.granted += AndroidPermissions.BLUETOOTH_CONNECT
+    permissions.granted += AndroidPermissions.BLUETOOTH_SCAN
+    val engine = engine()
+    val scanned = FakeRemoteDevice("C0:FF:EE:00:00:01")
+    engine.startScan(1, ScanSpec())
+    adapter.scanner.emit(scanRecord(scanned.address, device = scanned))
+
+    var result: CoreError? = CoreError(CoreError.Code.INTERNAL, "pending")
+    engine.connect("c0:ff:ee:00:00:01", ConnectSpec(15_000)) { result = it }
+    assertEquals("the scanned handle, not getRemoteDevice", 1, scanned.clients.size)
+    assertTrue(adapter.devices.isEmpty())
+    scanned.clients[0].callback.onConnectionStateChange(GATT_SUCCESS, ConnectionStates.CONNECTED)
+    assertNull(result)
+    assertEquals("connected", engine.connectionState("C0:FF:EE:00:00:01"))
+    assertEquals(mapOf("openGattClients" to 1), engine.diagnostics()["android"])
+
+    // Not scanned: getRemoteDevice.
+    engine.connect("C0:FF:EE:00:00:02", ConnectSpec(15_000)) {}
+    assertEquals(1, adapter.devices["C0:FF:EE:00:00:02"]!!.clients.size)
+
+    adapter.simulateState(AdapterStates.TURNING_OFF)
+    assertEquals("disconnected", engine.connectionState("C0:FF:EE:00:00:01"))
+    assertTrue(connections.contains("C0:FF:EE:00:00:01 disconnected BLUETOOTH_POWERED_OFF"))
+    assertEquals(mapOf("openGattClients" to 0), engine.diagnostics()["android"])
+    assertEquals(1, scanned.clients[0].closeCount)
+
+    var disconnected = false
+    engine.disconnect("C0:FF:EE:00:00:03") { disconnected = true }
+    assertTrue("unknown peripherals are already disconnected", disconnected)
   }
 }

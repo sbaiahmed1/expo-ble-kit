@@ -14,6 +14,10 @@ final class BleKitException: Exception, @unchecked Sendable {
 }
 
 public class ExpoBleKitModule: Module {
+  /// One JS object per peripheral id while JS holds it (plan §4.5). Guarded by `peripheralsLock`.
+  private let peripherals = NSMapTable<NSString, PeripheralObject>.strongToWeakObjects()
+  private let peripheralsLock = NSLock()
+
   private lazy var engine: CentralEngine = {
     let engine = CentralEngine(queue: DispatchQueue(label: "expo.blekit.central"))
     engine.onStateChange = { [weak self] state in
@@ -27,6 +31,16 @@ public class ExpoBleKitModule: Module {
         "scanError",
         ["sessionId": sessionId, "code": error.code.rawValue, "message": error.jsMessage]
       )
+    }
+    engine.onConnectionStateChange = { [weak self] peripheralId, state, error in
+      guard let peripheral = self?.existingPeripheral(peripheralId) else {
+        return
+      }
+      var event = ConnectionStateEventRecord()
+      event.state = state.js
+      event.code = error?.code.rawValue
+      event.message = error?.jsMessage
+      peripheral.emit(event: "connectionStateChange", payload: event)
     }
     return engine
   }()
@@ -69,6 +83,17 @@ public class ExpoBleKitModule: Module {
       engine.queue.async { engine.stopScan(sessionId) }
     }
 
+    // Never touches CoreBluetooth (plan §5.2).
+    Function("getPeripheral") { (id: String) -> PeripheralObject in
+      self.peripheral(id)
+    }
+
+    peripheralClass()
+
+    AsyncFunction("getDiagnosticsAsync") { (promise: Promise) in
+      self.settle(promise) { engine in engine.diagnostics() }
+    }
+
     // The request flags don't matter on iOS: one authorization covers every capability.
     AsyncFunction("requestPermissionsAsync") { (_: [String: Bool]?, promise: Promise) in
       let engine = self.engine
@@ -84,6 +109,72 @@ public class ExpoBleKitModule: Module {
       }
     }
   }
+  private func peripheralClass() -> ClassDefinition {
+    Class(PeripheralObject.self) {
+      // Peripherals only come from getPeripheral(), one object per id.
+      Constructor { () -> PeripheralObject in
+        throw Exception(
+          name: "BleError",
+          description: "Use getPeripheral(id) to get a peripheral",
+          code: "INVALID_ARGUMENT"
+        )
+      }
+
+      Property("id") { (ref: PeripheralObject) in
+        ref.id
+      }
+
+      Property("state") { (ref: PeripheralObject) in
+        self.engine.connectionState(ref.id)
+      }
+
+      AsyncFunction("connect") { (ref: PeripheralObject, options: ConnectOptionsRecord, promise: Promise) in
+        let engine = self.engine
+        engine.queue.async {
+          do {
+            try engine.connect(ref.id, spec: options.spec()) { error in
+              if let error {
+                promise.reject(BleKitException(error))
+              } else {
+                promise.resolve()
+              }
+            }
+          } catch let error as CoreError {
+            promise.reject(BleKitException(error))
+          } catch {
+            promise.reject(error)
+          }
+        }
+      }
+
+      AsyncFunction("disconnect") { (ref: PeripheralObject, promise: Promise) in
+        let engine = self.engine
+        engine.queue.async {
+          engine.disconnect(ref.id) { promise.resolve() }
+        }
+      }
+    }
+  }
+
+  /// iOS ids are UUIDs; the object is keyed by their upper-case form, as CoreBluetooth reports them.
+  private func peripheral(_ id: String) -> PeripheralObject {
+    let key = (UUID(uuidString: id)?.uuidString ?? id) as NSString
+    peripheralsLock.lock()
+    defer { peripheralsLock.unlock() }
+    if let existing = peripherals.object(forKey: key) {
+      return existing
+    }
+    let created = PeripheralObject(id: key as String)
+    peripherals.setObject(created, forKey: key)
+    return created
+  }
+
+  private func existingPeripheral(_ id: String) -> PeripheralObject? {
+    peripheralsLock.lock()
+    defer { peripheralsLock.unlock() }
+    return peripherals.object(forKey: id as NSString)
+  }
+
   /// Runs `work` on the engine's queue and settles `promise` with its result or error.
   private func settle(_ promise: Promise, _ work: @escaping (CentralEngine) throws -> Any?) {
     let engine = self.engine

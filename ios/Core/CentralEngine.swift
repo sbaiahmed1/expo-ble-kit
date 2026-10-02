@@ -1,8 +1,8 @@
 import CoreBluetooth
 import Foundation
 
-/// Owns the central manager (plan §4.3): adapter state and permissions (P1-03) and scanning
-/// (P1-04). Peripheral sessions join in P1-05.
+/// Owns the central manager (plan §4.3): adapter state and permissions (P1-03), scanning (P1-04)
+/// and peripheral sessions (P1-05).
 ///
 /// Threading (plan §4.7): call everything except `state` on `queue`. Callbacks run on `queue`.
 final class CentralEngine: CentralManagingDelegate {
@@ -29,8 +29,17 @@ final class CentralEngine: CentralManagingDelegate {
   /// Called on `queue` after the published state changes.
   var onStateChange: ((BleState) -> Void)?
   let scanController: ScanController
+  /// Called on `queue` when a peripheral's JS connection state changes; `error` is set when the
+  /// connection ended or failed unexpectedly.
+  var onConnectionStateChange: ((_ peripheralId: String, SessionState, CoreError?) -> Void)?
 
   private let environment: Environment
+  private let scheduler: Scheduling
+  private var sessions: [UUID: PeripheralSession] = [:]
+  /// Connects waiting for a new manager to leave `unknown`.
+  private var pendingConnects: [(id: UUID, run: (Result<CentralManaging, CoreError>) -> Void)] = []
+  /// JS connection states by peripheral id, for synchronous reads. Guarded by `stateLock`.
+  private var connectionStates: [String: String] = [:]
   private(set) var central: CentralManaging?
   private var pendingPermissionRequests: [PermissionsCompletion] = []
 
@@ -41,6 +50,7 @@ final class CentralEngine: CentralManagingDelegate {
     self.queue = queue
     self.environment = environment
     let scheduler = scheduler ?? QueueScheduler(queue: queue)
+    self.scheduler = scheduler
     let clock = EpochClock(wallAtStartMs: Date().timeIntervalSince1970 * 1000, monotonicAtStart: scheduler.now)
     scanController = ScanController(scheduler: scheduler, clock: clock)
     publishedState = Self.stateWithoutCentral(environment.authorization())
@@ -97,16 +107,8 @@ final class CentralEngine: CentralManagingDelegate {
     }
   }
 
-  /// Starts a scan session (plan §5.3). Throws when scanning can't start: a missing declaration, no
-  /// authorization, or Bluetooth that is off. Never shows the permission prompt. While the manager
-  /// still reports `unknown`, the session waits for the first real state.
-  func startScan(_ sessionId: Int, spec: ScanSpec) throws {
-    if let error = missingDeclaration() {
-      throw error
-    }
-    if scanController.activeSessionIds.contains(sessionId) {
-      throw CoreError(.invalidArgument, "Scan session \(sessionId) is already running")
-    }
+  /// The manager, created if needed, when the app is authorized. Never shows the prompt.
+  private func authorizedCentral() throws -> CentralManaging {
     switch environment.authorization() {
     case .allowedAlways:
       break
@@ -118,21 +120,19 @@ final class CentralEngine: CentralManagingDelegate {
     default:
       throw CoreError(.bluetoothUnauthorized, "Bluetooth permission is denied. The user can allow it in Settings.")
     }
-    if central == nil {
-      createCentral()
+    if let central {
+      return central
     }
-    if let central, let error = Self.scanError(central.state) {
-      throw error
+    createCentral()
+    guard let central else {
+      throw CoreError(.internal, "The central manager could not be created")
     }
-    scanController.start(sessionId, spec: spec)
+    return central
   }
 
-  func stopScan(_ sessionId: Int) {
-    scanController.stop(sessionId)
-  }
-
-  /// Why scanning can't run in `state`; nil for `poweredOn` and for `unknown`, which resolves shortly.
-  static func scanError(_ state: CBManagerState) -> CoreError? {
+  /// Why scanning or connecting can't run in `state`; nil for `poweredOn` and for `unknown`, which
+  /// resolves shortly.
+  static func adapterError(_ state: CBManagerState) -> CoreError? {
     switch state {
     case .poweredOn, .unknown:
       return nil
@@ -155,8 +155,11 @@ final class CentralEngine: CentralManagingDelegate {
     publish(BleState(central.state))
     if central.state == .poweredOn {
       scanController.poweredOn(central)
-    } else if let error = Self.scanError(central.state) {
+      runPendingConnects(.success(central))
+    } else if let error = Self.adapterError(central.state) {
       scanController.stopAll(error)
+      sessions.values.forEach { $0.forceDisconnected(error) }
+      runPendingConnects(.failure(error))
     }
     // CoreBluetooth reports a state once the user has answered the prompt.
     let authorization = environment.authorization()
@@ -167,15 +170,6 @@ final class CentralEngine: CentralManagingDelegate {
     pendingPermissionRequests.removeAll()
     let permissions = BlePermissions(authorization: authorization)
     completions.forEach { $0(.success(permissions)) }
-  }
-
-  func central(
-    _ central: CentralManaging,
-    didDiscover peripheral: PeripheralLike,
-    advertisementData: [String: Any],
-    rssi: Int
-  ) {
-    scanController.deliver(peripheral, advertisementData: advertisementData, rssi: rssi)
   }
 
   // MARK: Private
@@ -214,5 +208,165 @@ final class CentralEngine: CentralManagingDelegate {
   /// Before the manager exists, the authorization is all that can be read without the prompt.
   static func stateWithoutCentral(_ authorization: CBManagerAuthorization) -> BleState {
     authorization == .denied || authorization == .restricted ? .unauthorized : .unknown
+  }
+}
+
+// MARK: - Scanning (P1-04)
+
+extension CentralEngine {
+  /// Starts a scan session (plan §5.3). Throws when scanning can't start: a missing declaration, no
+  /// authorization, or Bluetooth that is off. Never shows the permission prompt. While the manager
+  /// still reports `unknown`, the session waits for the first real state.
+  func startScan(_ sessionId: Int, spec: ScanSpec) throws {
+    if let error = missingDeclaration() {
+      throw error
+    }
+    if scanController.activeSessionIds.contains(sessionId) {
+      throw CoreError(.invalidArgument, "Scan session \(sessionId) is already running")
+    }
+    let central = try authorizedCentral()
+    if let error = Self.adapterError(central.state) {
+      throw error
+    }
+    scanController.start(sessionId, spec: spec)
+  }
+
+  func stopScan(_ sessionId: Int) {
+    scanController.stop(sessionId)
+  }
+
+  func central(
+    _ central: CentralManaging,
+    didDiscover peripheral: PeripheralLike,
+    advertisementData: [String: Any],
+    rssi: Int
+  ) {
+    scanController.deliver(peripheral, advertisementData: advertisementData, rssi: rssi)
+  }
+}
+
+// MARK: - Connections (P1-05)
+
+extension CentralEngine {
+  /// JS connection state of `peripheralId`. Safe from any thread and never waits for `queue`.
+  func connectionState(_ peripheralId: String) -> String {
+    stateLock.lock()
+    defer { stateLock.unlock() }
+    return connectionStates[peripheralId.uppercased()] ?? SessionState.disconnected.js
+  }
+
+  /// Connects to `peripheralId` (plan §5.4). Throws when connecting can't start: an invalid id, a
+  /// missing declaration or authorization, or Bluetooth that is off. Never shows the prompt.
+  /// `completion` gets nil once the connection is ready, or the error (PERIPHERAL_NOT_FOUND when iOS
+  /// doesn't know the id).
+  func connect(_ peripheralId: String, spec: ConnectSpec, completion: @escaping PeripheralSession.Completion) throws {
+    if let error = missingDeclaration() {
+      throw error
+    }
+    guard let identifier = UUID(uuidString: peripheralId) else {
+      throw CoreError(.invalidArgument, "Not a peripheral id: \(peripheralId)")
+    }
+    let central = try authorizedCentral()
+    if let error = Self.adapterError(central.state) {
+      throw error
+    }
+    let run: (Result<CentralManaging, CoreError>) -> Void = { [weak self] result in
+      switch result {
+      case let .success(central):
+        self?.startConnect(identifier, central: central, spec: spec, completion: completion)
+      case let .failure(error):
+        completion(error)
+      }
+    }
+    if central.state == .unknown {
+      pendingConnects.append((identifier, run))
+    } else {
+      run(.success(central))
+    }
+  }
+
+  func disconnect(_ peripheralId: String, completion: @escaping () -> Void) {
+    guard let identifier = UUID(uuidString: peripheralId) else {
+      return completion()
+    }
+    let waiting = pendingConnects.filter { $0.id == identifier }
+    pendingConnects.removeAll { $0.id == identifier }
+    let cancelled = CoreError(.operationCancelled, "disconnect() cancelled the connection attempt")
+    waiting.forEach { $0.run(.failure(cancelled)) }
+    if let session = sessions[identifier] {
+      session.disconnect(completion: completion)
+    } else {
+      completion()
+    }
+  }
+
+  /// JS `Diagnostics` so far (plan §5.7): the rest lands with P2-07.
+  func diagnostics() -> [String: Any] {
+    [
+      "state": state.rawValue,
+      "sessions": sessions.values.map { session in
+        [
+          "id": session.peripheral.identifier.uuidString,
+          "state": session.state.js,
+          "queueDepth": session.queue.depth,
+          "subscriptions": 0
+        ] as [String: Any]
+      }
+    ]
+  }
+
+  private func startConnect(
+    _ identifier: UUID,
+    central: CentralManaging,
+    spec: ConnectSpec,
+    completion: @escaping PeripheralSession.Completion
+  ) {
+    if let session = sessions[identifier] {
+      return session.connect(spec, completion: completion)
+    }
+    // iOS knows peripherals it has seen (scans, earlier connections) by their per-app identifier.
+    guard let peripheral = central.retrievePeripherals(withIdentifiers: [identifier]).first else {
+      return completion(CoreError(
+        .peripheralNotFound,
+        "iOS doesn't know a peripheral with id \(identifier.uuidString). Scan for it first."
+      ))
+    }
+    let session = PeripheralSession(peripheral: peripheral, central: central, scheduler: scheduler)
+    session.onStateChange = { [weak self] state, error in
+      self?.publishConnectionState(identifier.uuidString, state, error)
+    }
+    sessions[identifier] = session
+    session.connect(spec, completion: completion)
+  }
+
+  private func publishConnectionState(_ peripheralId: String, _ state: SessionState, _ error: CoreError?) {
+    stateLock.lock()
+    connectionStates[peripheralId] = state.js
+    stateLock.unlock()
+    onConnectionStateChange?(peripheralId, state, error)
+  }
+
+  func central(_ central: CentralManaging, didConnect peripheral: PeripheralLike) {
+    sessions[peripheral.identifier]?.didConnect()
+  }
+
+  func central(_ central: CentralManaging, didFailToConnect peripheral: PeripheralLike, error: Error?) {
+    sessions[peripheral.identifier]?.didFailToConnect(error)
+  }
+
+  func central(
+    _ central: CentralManaging,
+    didDisconnect peripheral: PeripheralLike,
+    isReconnecting: Bool,
+    error: Error?
+  ) {
+    // iOS 17 auto-reconnect (`isReconnecting`) is opt-in and arrives with P2-01.
+    sessions[peripheral.identifier]?.didDisconnect(error)
+  }
+
+  private func runPendingConnects(_ result: Result<CentralManaging, CoreError>) {
+    let pending = pendingConnects
+    pendingConnects.removeAll()
+    pending.forEach { $0.run(result) }
   }
 }
