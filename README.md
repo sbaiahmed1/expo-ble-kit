@@ -16,7 +16,7 @@ Bluetooth Low Energy for Expo and React Native apps.
 
 ## Requirements (planned)
 
-Expo SDK version decided at gate D1 (after the P0-04 spike), iOS 16.4+, Android 8.0 (API 26)+, New Architecture.
+Expo SDK 57+ (Expo Modules 1.0 API), iOS 16.4+, Android 8.0 (API 26)+, New Architecture.
 
 ## Contributing
 

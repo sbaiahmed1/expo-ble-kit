@@ -1,6 +1,6 @@
 # Expo BLE (`expo-ble-kit`) — Architecture & Implementation Plan
 
-> **Status:** Draft v0.10 · **Date:** 2026-10-02 · **Scope:** proposition #3, an Expo-first Bluetooth Low Energy module · **Changes:** Appendix D
+> **Status:** Draft v0.11 · **Date:** 2026-10-02 · **Scope:** proposition #3, an Expo-first Bluetooth Low Energy module · **Changes:** Appendix D
 >
 > **Package name:** `expo-ble-kit` (D0a, decided 2026-10-02) · native module `ExpoBleKit` · Android package `expo.modules.blekit`.
 >
@@ -92,7 +92,7 @@
 | ID | Decision | Status |
 |---|---|---|
 | ADR-001 | Bind through the **Expo Modules API** (not Nitro, not raw TurboModules) | Accepted |
-| ADR-002 | **Minimum Expo SDK 58**, New Architecture only, iOS ≥ 16.4, **Android `minSdk` 26** (Android 8.0) | SDK and binding: Proposed → [GATE D1]. Android `minSdk` 26: Accepted 2026-10-02 (Q5) |
+| ADR-002 | **Minimum Expo SDK 57, Expo Modules 1.0 DSL**, New Architecture only, iOS ≥ 16.4, **Android `minSdk` 26** (Android 8.0). Move to Expo Modules 2.0, one member at a time, once SDK 58 is stable and documented | Accepted 2026-10-02 (D1, after P0-04; `minSdk` 26 via Q5) |
 | ADR-003 | Binary values are `Uint8Array` (JS) / `Data` (Swift) / `ByteArray` (Kotlin). No base64 anywhere in the core API | Accepted |
 | ADR-004 | Object model: `BleManager` singleton + native-backed SharedObjects (`Peripheral`, `GattServer`, `L2CAPChannel`) | Accepted |
 | ADR-005 | Three layers: native core (no Expo/React imports) → thin binding → TypeScript API | Accepted |
@@ -105,7 +105,7 @@
 
 **ADR-001 rationale.** Expo Modules give us everything in one package: app-lifecycle subscribers (needed to create `CBCentralManager` at launch for state restoration), config plugins, SharedObjects with events, and TaskManager interop. Performance is no longer a reason to look elsewhere: on iOS, Expo Modules 2.0 synchronous calls are 2.5–5.6× faster than the 1.0 API, and Expo's Android microbenchmarks show 2.0 faster than a TurboModule in all twelve cases. Nitro was considered and rejected for v1 because we would have to rebuild the lifecycle and plugin integration ourselves. Re-evaluate only if P2 benchmarks show the JS boundary, not the radio, is the bottleneck.
 
-**ADR-002 / [GATE D1] rationale.** Expo Modules 2.0 (annotated Swift/Kotlin classes: `@ExpoModule`, `@JS`, `@Record`, `@SharedObject`, `@Event`) is beta on both platforms in SDK 58. In SDK 57 it is iOS-only and experimental. The MVP lands after SDK 58 is stable, and 1.0 will ship around SDK 59–60. So the default plan is: target SDK 58+, write the binding with 2.0, and fall back to the 1.0 DSL member by member where 2.0 lacks something (both APIs can coexist in one module ⚠️ VERIFY on Android). Under ADR-011 the 2.0 path can't be evaluated until SDK 58 is stable, so P0-04 measures only the stable 1.0 DSL on SDK 57. D1 then chooses between starting on the 1.0 DSL with SDK 57+ support (and migrating later with Expo's `expo-migrate-module` agent skill) or waiting for SDK 58 stable to start on 2.0.
+**ADR-002 / [GATE D1] rationale (decided 2026-10-02).** Expo Modules 2.0 (annotated Swift/Kotlin classes: `@ExpoModule`, `@JS`, `@Record`, `@SharedObject`, `@Event`) is beta in SDK 58 and experimental in SDK 57, so ADR-011 rules it out for now. The P0-04 spike (`docs/spikes/P0-04-binding.md`) measured the stable 1.0 DSL on a real Galaxy A52: binary data is a real `Uint8Array` in arguments, return values and event payloads (no base64), events arrive complete and in order at 10k/s, and an async call costs 0.1–0.45 ms, far below a BLE operation. So the library is built on the 1.0 DSL with SDK 57 as the minimum. Because the binding is thin (ADR-005) and both APIs can coexist in one module, moving to 2.0 later only touches the binding layer; Expo's `expo-migrate-module` agent skill can help. SDK 57 apps built with Xcode 27 need `expo-build-properties` `ios.enableSceneSupport` to launch on iOS 27 (see P0-03).
 
 **ADR-002 Android `minSdk` 26 rationale (decided 2026-10-02).** The Android core is built on API 26+ calls: `connectGatt(…, Handler)`, PendingIntent scans, `AdvertisingSet` and `ScanResult.isConnectable()`. Supporting 24–25 would mean fallback paths and a test device for a negligible share of devices. Expo's default is 24, so the config plugin raises the app's `minSdkVersion` to 26 (§4.15), and the library declares `minSdkVersion 26` as a backstop: an app below 26 fails at manifest merge with a clear error instead of crashing at runtime.
 
@@ -947,10 +947,10 @@ Parallelism: P0-06/P0-07 can run alongside P0-03/P0-04. With two people, P4 can 
   - `android/build.gradle` sets `minSdkVersion 26` explicitly (ADR-002), and the example app builds with `android.minSdkVersion=26`.
   - Add the `exports` map and `app.plugin.js` (§4.2, §4.6). The example uses CNG (§4.2).
   **Accept:** CI green on the empty module; example app launches on both platforms; `npx expo install --check` is clean in `example/`; root and example resolve the same `react-native` version.
-- [ ] **P0-04 Binding spike** `[GATE D1]` — deps: P0-03.
+- [x] **P0-04 Binding spike** `[GATE D1]` — deps: P0-03.
   Stable only (ADR-011): SDK 57 and the 1.0 DSL, on both platforms. Expo Modules 2.0 is beta on SDK 58 and experimental on SDK 57, so it is out of scope until SDK 58 is stable. Implement an async `readValue` returning bytes, a `notification` event with a `Uint8Array` payload, and a `PeripheralObject` SharedObject. Measure 10k async calls, a 10k events/s burst, and binary round-trip correctness (no base64).
   **Accept:** `docs/spikes/P0-04-binding.md` with numbers and a recommendation; a human decides D1.
-  **Status 2026-10-02:** report written with real-device numbers from a Galaxy A52 (Android 14): binary data is a real `Uint8Array` everywhere (arguments, return values, module and shared-object events), no events lost or reordered, async calls 0.1–0.45 ms, 10k events/s sustained. Recommendation: start on the 1.0 DSL with SDK 57 as the minimum. Pending: the iOS real-device run (needs signing), then D1.
+  **Status 2026-10-02:** report written with real-device numbers from a Galaxy A52 (Android 14): binary data is a real `Uint8Array` everywhere (arguments, return values, module and shared-object events), no events lost or reordered, async calls 0.1–0.45 ms, 10k events/s sustained. **D1 decided 2026-10-02: 1.0 DSL, minimum SDK 57** (ADR-002). The iOS real-device run was not done before deciding; it can follow when signing is set up.
 - [ ] **P0-05 iOS background relaunch spike** — deps: P0-03.
   Minimal restoration prototype (`restoreIdentifier`, `bluetooth-central` mode) against a physical peripheral (nRF52840 or a second phone acting as peripheral). Simulate system termination (not a user force-quit) ⚠️ VERIFY Apple's recommended method. Answer: does the app-delegate subscriber run under SDK 58's scene life cycle? Does the JS runtime start without a scene? Can a TaskManager consumer deliver events headlessly?
   **Accept:** `docs/spikes/P0-05-ios-background.md` with findings and the chosen delivery strategy; ADR-008 updated.
@@ -1027,7 +1027,7 @@ Parallelism: P0-06/P0-07 can run alongside P0-03/P0-04. With two people, P4 can 
   Explorer: scan list → device → services → read / write / subscribe, with hex and UTF-8 views. Heart Rate: scan for `0x180D`, connect with a reconnect policy, live BPM.
   **Accept:** both work against Bumble (emulator) and the nRF52840 on iOS and Android devices; Maestro flows `explorer-basic.yaml` and `heart-rate.yaml` pass; example screens have Jest tests using the fake adapter.
 - [ ] **P1-16 Docs v1** — deps: P1-12.
-  Getting started (requirements: Expo SDK per D1, iOS 16.4+, Android 8.0 / API 26+), permissions, bare setup, API reference (TypeDoc), troubleshooting (Android 133, location services on API ≤ 30, reconnecting by id on Android (§4.12), no Bluetooth in the iOS Simulator).
+  Getting started (requirements: Expo SDK 57+, iOS 16.4+, Android 8.0 / API 26+; SDK 57 apps built with Xcode 27 need `ios.enableSceneSupport`), permissions, bare setup, API reference (TypeDoc), troubleshooting (Android 133, location services on API ≤ 30, reconnecting by id on Android (§4.12), no Bluetooth in the iOS Simulator).
   **Accept:** docs build; every public symbol is documented. Publish `0.1.0` on `next`.
 
 ### 7.4 P2 — Robustness
@@ -1217,7 +1217,7 @@ The standard Heart Rate service (`0x180D` / `0x2A37`) is also exposed for demos.
 
 | Risk | Impact | Likelihood | Mitigation |
 |---|---|---|---|
-| Expo Modules 2.0 beta changes during SDK 58/59 | Binding rework | Medium | Thin binding (ADR-005), gate D1, 1.0/2.0 coexistence |
+| Moving from the 1.0 DSL to Expo Modules 2.0 after SDK 58 is stable, or 1.0 falling behind | Binding rework | Medium | Thin binding (ADR-005), 1.0/2.0 coexistence in one module, migrate member by member |
 | SDK 57 apps built with Xcode 27 crash on iOS 27 without the UIScene life cycle (confirmed 2026-10-02) | Users' apps (and our example) fail to launch | Mitigated | The example enables `expo-build-properties` `ios.enableSceneSupport`; docs tell SDK 57 users to do the same; P0-05 must test background relaunch with scene support on, since it changes the app life cycle the binding hooks into |
 | iOS background relaunch behaves differently under the scene life cycle | Background features fail on iOS | Medium | Spike P0-05 first; native-first buffering; TaskManager delivery |
 | Android OEM quirks (status 133, scan throttling, battery killers) | Flaky connections, bad reviews for users' apps | High | Bounded retries, throttle guard, OEM matrix, troubleshooting docs |
@@ -1238,7 +1238,7 @@ The standard Heart Rate service (`0x180D` / `0x2A37`) is also exposed for demos.
 |---|---|---|
 | D0a | ~~Package name and npm scope~~ **Decided 2026-10-02: `expo-ble-kit`** (unscoped). Reserving it on npm is still open (P0-01) | Done |
 | D0b | Build a new library or join an existing effort | Before P1 |
-| D1 | Binding API: Expo Modules 2.0 with min SDK 58, or 1.0 DSL with SDK 57+ | After P0-04 |
+| D1 | ~~Binding API: Expo Modules 2.0 with min SDK 58, or 1.0 DSL with SDK 57+~~ **Decided 2026-10-02: 1.0 DSL, minimum SDK 57** (ADR-002) | Done |
 | D2 | ~~License and ownership~~ **Decided 2026-10-02: MIT, personal ownership, no CLA** (ADR-009) | Done |
 | D3 | Web Bluetooth support in 1.0 or later | Before P6 |
 | Q1 | Persist the background event buffer to disk? Size cap and privacy implications | P3 |
@@ -1350,3 +1350,4 @@ Connection state changes (`onConnectionStateChange` status, HCI disconnect reaso
 | v0.8 | 2026-10-02 | P0-08 done: governance files, issue and PR templates, README; LICENSE copyright corrected from the template's Expo line to Ahmed Sbai |
 | v0.9 | 2026-10-02 | ADR-011 tightened: stable releases only on every branch, spikes included. P0-04 rescoped to the stable 1.0 DSL on SDK 57; the D1 options now include waiting for SDK 58 stable to start on 2.0 |
 | v0.10 | 2026-10-02 | P0-04 report (`docs/spikes/P0-04-binding.md`) with Galaxy A52 measurements; recommends the 1.0 DSL on SDK 57+. iOS device run and D1 pending |
+| v0.11 | 2026-10-02 | D1 decided: Expo Modules 1.0 DSL with Expo SDK 57 as the minimum (ADR-002); P0-04 done. `expo` peer dependency set to `>=57.0.0` |

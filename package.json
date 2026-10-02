@@ -67,7 +67,7 @@
     "passWithNoTests": true
   },
   "peerDependencies": {
-    "expo": "*",
+    "expo": ">=57.0.0",
     "react": "*",
     "react-native": "*"
   },
