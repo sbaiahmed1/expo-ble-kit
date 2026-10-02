@@ -1,6 +1,6 @@
 # Expo BLE (`expo-ble-kit`) — Architecture & Implementation Plan
 
-> **Status:** Draft v0.21 · **Date:** 2026-10-02 · **Scope:** proposition #3, an Expo-first Bluetooth Low Energy module · **Changes:** Appendix D
+> **Status:** Draft v0.22 · **Date:** 2026-10-02 · **Scope:** proposition #3, an Expo-first Bluetooth Low Energy module · **Changes:** Appendix D
 >
 > **Package name:** `expo-ble-kit` (D0a, decided 2026-10-02) · native module `ExpoBleKit` · Android package `expo.modules.blekit`.
 >
@@ -757,6 +757,15 @@ Discovery rules (decided in P1-06):
 - With `autoDiscover` (default), discovery runs between link-up and `connected`, inside the connect timeout. A discovery failure fails the connect with the discovery's error and closes the link; a link drop during discovery fails it with `CONNECTION_FAILED`.
 - Several instances of one service or characteristic UUID: the cache lists them all; addressing by UUID (P1-07) takes the first.
 
+Attribute rules (decided in P1-07):
+
+- `read`, `write`, `readDescriptor` and `writeDescriptor` need a ready connection (`DISCONNECTED`) and a discovered attribute (`SERVICE_NOT_FOUND`, `CHARACTERISTIC_NOT_FOUND`, `DESCRIPTOR_NOT_FOUND`), and check the characteristic's properties before using the radio (`READ_NOT_PERMITTED`, `WRITE_NOT_PERMITTED`; a write without response needs `writeWithoutResponse`). Each goes through the queue with a 10 s default timeout.
+- Lengths: a value is at most 512 bytes; a write without response must fit one packet (MTU − 3 on Android, `maximumWriteValueLength(for: .withoutResponse)` on iOS). Longer values reject with `INVALID_ATTRIBUTE_LENGTH` before the radio. Long reads and long writes with response are left to the stack.
+- Writing the CCCD (0x2902) rejects with `INVALID_ARGUMENT` on both platforms: subscriptions own it (P1-08), and CoreBluetooth throws an exception that would crash the app.
+- Writes without response, basic pacing (flow control is P2-02): iOS waits for `canSendWriteWithoutResponse`, then completes once CoreBluetooth takes the value; Android retries a busy submit every 5 ms within the timeout and completes on `onCharacteristicWrite`.
+- iOS reports reads and notifications through the same callback: an update while a read of that characteristic is in flight answers the read.
+- The native functions take one request object (`service`, `characteristic`, `descriptor`, `withResponse`, `timeoutMs`) plus the value; the TS layer normalizes UUIDs and fills the defaults (`src/internal/attributeRequest.ts`).
+
 ### 5.5 Peripheral role (P4)
 
 ```ts
@@ -1074,6 +1083,9 @@ Parallelism: P0-06/P0-07 can run alongside P0-03/P0-04. With two people, P4 can 
 - [ ] **P1-07 Read, write, descriptors** — deps: P1-06.
   With and without response (basic pacing only; full flow control is P2-02). Long values up to 512 bytes.
   **Accept:** every profile characteristic read/written as its properties allow; 512-byte read and write succeed on both platforms ⚠️ VERIFY long-write behavior.
+  **Progress 2026-10-02 (open):** reads, writes with and without response, and descriptor reads and writes on both platforms through the queue, with the checks and limits of §5.4, attribute callbacks matched by attribute (iOS: by object, which also tells instances apart), the binding functions, and the TS request builder with Jest tests. Android tracks the MTU (23 until P1-09 negotiates). Tests: 8 Android, 7 iOS, 3 Jest.
+  - Verified on the Galaxy A52: `read()` and `write()` without a connection reject with `DISCONNECTED`, through the native request record and byte conversion.
+  - Pending real hardware: every profile characteristic read and written as its properties allow, and the 512-byte read and long write on both platforms (the ⚠️ VERIFY above stays open until then).
 - [ ] **P1-08 Notify and indicate** — deps: P1-06.
   CCCD handling, `subscribe`, CCCD sharing across subscribers, `unsubscribe()` / `remove()`, cleanup on disconnect.
   **Accept:**
@@ -1484,3 +1496,4 @@ Submit results (`BluetoothStatusCodes`, API 33+): 1 not enabled → `BLUETOOTH_P
 | v0.19 | 2026-10-02 | P1-04 in progress: scanning on both platforms, verified on the Galaxy A52 (multiplexing, throttle guard). New scanning rules in §5.3 and §4.5; throttle-guard details in §4.4; §4.12 address-type approach changed (the scan's device handle, since `getAddressType` is API 35+). Android 11/12 checks of P1-03 deferred |
 | v0.20 | 2026-10-02 | P1-05 in progress: connect and disconnect on both platforms, verified on the Galaxy A52 without a peripheral (absent-device timeout, cancellable no-timeout connect, 100 cycles without GATT client leaks). Connection rules in §5.4, binding identity in §4.5, `android.openGattClients` in §5.7 `Diagnostics` |
 | v0.21 | 2026-10-02 | P1-06 in progress: discovery, `autoDiscover` and the cache on both platforms; two-timeout reset on Android. Discovery rules in §5.4, the discovery timeout in §4.9 |
+| v0.22 | 2026-10-02 | P1-07 in progress: reads, writes and descriptors on both platforms. Attribute rules in §5.4 (checks, lengths, the CCCD guard, basic write-without-response pacing) |

@@ -62,3 +62,21 @@ struct ConnectionStateEventRecord: Record {
   @Field var code: String?
   @Field var message: String?
 }
+
+/// Where an attribute operation goes and how (plan §5.4), after the TS layer normalized the UUIDs
+/// and applied the defaults.
+struct AttributeRequestRecord: Record {
+  @Field var service: String = ""
+  @Field var characteristic: String = ""
+  @Field var descriptor: String?
+  @Field var withResponse: Bool = true
+  @Field var timeoutMs: Double = 10_000
+
+  var path: AttributePath {
+    AttributePath(service: service, characteristic: characteristic, descriptor: descriptor)
+  }
+
+  var timeout: TimeInterval {
+    timeoutMs / 1000
+  }
+}

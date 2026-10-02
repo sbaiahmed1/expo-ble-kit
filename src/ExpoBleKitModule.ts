@@ -1,6 +1,7 @@
 import { NativeModule, requireNativeModule, SharedObject } from 'expo';
 
 import type { ExpoBleKitModuleEvents, PeripheralObjectEvents } from './ExpoBleKit.types';
+import type { NativeAttributeRequest } from './internal/attributeRequest';
 import type { NativeConnectOptions } from './internal/connectOptions';
 import type { NativeScanOptions } from './internal/scanOptions';
 import type {
@@ -24,6 +25,10 @@ export declare class NativePeripheral extends SharedObject<PeripheralObjectEvent
   disconnect(): Promise<void>;
   /** `services` null discovers everything. UUIDs must be normalized; the timeout is required. */
   discover(services: string[] | null, timeoutMs: number): Promise<Service[]>;
+  read(request: NativeAttributeRequest): Promise<Uint8Array>;
+  write(request: NativeAttributeRequest, value: Uint8Array): Promise<void>;
+  readDescriptor(request: NativeAttributeRequest): Promise<Uint8Array>;
+  writeDescriptor(request: NativeAttributeRequest, value: Uint8Array): Promise<void>;
 }
 
 // The raw native module. Its rejections carry a BleErrorCode `code`; convert them with

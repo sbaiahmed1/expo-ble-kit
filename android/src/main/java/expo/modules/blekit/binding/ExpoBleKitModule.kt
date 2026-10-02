@@ -118,15 +118,69 @@ class ExpoBleKitModule : Module() {
 
       Property("services") { ref: PeripheralObject -> engine.services(ref.id) }
 
+      // UUIDs arrive normalized and timeouts always set: the TS layer applies the defaults (rule 4).
+      AsyncFunction("read") { ref: PeripheralObject, request: AttributeRequestRecord, promise: Promise ->
+        attributeOperation(promise) {
+          engine.read(ref.id, request.serviceUuid(), request.characteristicUuid(), request.timeout(), promise.settler())
+        }
+      }
+
+      AsyncFunction("write") {
+          ref: PeripheralObject,
+          request: AttributeRequestRecord,
+          value: ByteArray,
+          promise: Promise,
+        ->
+        attributeOperation(promise) {
+          engine.write(
+            ref.id,
+            request.serviceUuid(),
+            request.characteristicUuid(),
+            value,
+            request.withResponse,
+            request.timeout(),
+            promise.settler(),
+          )
+        }
+      }
+
+      AsyncFunction("readDescriptor") { ref: PeripheralObject, request: AttributeRequestRecord, promise: Promise ->
+        attributeOperation(promise) {
+          engine.readDescriptor(
+            ref.id,
+            request.serviceUuid(),
+            request.characteristicUuid(),
+            request.descriptorUuid(),
+            request.timeout(),
+            promise.settler(),
+          )
+        }
+      }
+
+      AsyncFunction("writeDescriptor") {
+          ref: PeripheralObject,
+          request: AttributeRequestRecord,
+          value: ByteArray,
+          promise: Promise,
+        ->
+        attributeOperation(promise) {
+          engine.writeDescriptor(
+            ref.id,
+            request.serviceUuid(),
+            request.characteristicUuid(),
+            request.descriptorUuid(),
+            value,
+            request.timeout(),
+            promise.settler(),
+          )
+        }
+      }
+
       // `services` null discovers everything; the TS layer always passes a timeout (rule 4).
       AsyncFunction("discover") { ref: PeripheralObject, services: List<String>?, timeoutMs: Double, promise: Promise ->
         executor.execute {
           settle(promise) {
-            val filter = services?.map { uuid ->
-              runCatching { UUID.fromString(uuid) }.getOrElse {
-                throw CoreError(CoreError.Code.INVALID_ARGUMENT, "Invalid service UUID: $uuid")
-              }
-            }
+            val filter = services?.map(::uuidArgument)
             engine.discover(ref.id, filter, timeoutMs.toLong()) { result ->
               result.fold(
                 onSuccess = { promise.resolve(it) },
@@ -197,6 +251,10 @@ class ExpoBleKitModule : Module() {
     }
   }
 
+  private fun attributeOperation(promise: Promise, block: () -> Unit) {
+    executor.execute { settle(promise, block) }
+  }
+
   /** Runs [block] on the BLE thread, rejecting [promise] with whatever it throws. */
   private fun settle(promise: Promise, block: () -> Unit) {
     try {
@@ -238,6 +296,27 @@ class ExpoBleKitModule : Module() {
       *names.toTypedArray(),
     )
   }
+}
+
+private fun uuidArgument(value: String): UUID = runCatching { UUID.fromString(value) }.getOrElse {
+  throw CoreError(CoreError.Code.INVALID_ARGUMENT, "Invalid UUID: $value")
+}
+
+private fun AttributeRequestRecord.serviceUuid() = uuidArgument(service)
+
+private fun AttributeRequestRecord.characteristicUuid() = uuidArgument(characteristic)
+
+private fun AttributeRequestRecord.descriptorUuid() =
+  uuidArgument(descriptor ?: throw CoreError(CoreError.Code.INVALID_ARGUMENT, "No descriptor given"))
+
+private fun AttributeRequestRecord.timeout() = timeoutMs.toLong()
+
+/** Settles the promise with a core result: the value (Unit as undefined), or the coded error. */
+private fun <T> Promise.settler(): (Result<T>) -> Unit = { result ->
+  result.fold(
+    onSuccess = { value -> resolve(value.takeUnless { it is Unit }) },
+    onFailure = { reject(BleKitException(it as CoreError)) },
+  )
 }
 
 private fun PermissionsResponse.toCore() = PermissionResult(

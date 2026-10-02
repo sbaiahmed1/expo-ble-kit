@@ -21,6 +21,7 @@ export type {
   ScanSession,
   Service,
   Subscription,
+  WriteOptions,
 } from './types';
 export { BleError, BleErrorCode } from './errors';
 export type { BleErrorDetails } from './errors';

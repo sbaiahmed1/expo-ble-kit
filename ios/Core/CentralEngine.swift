@@ -275,6 +275,15 @@ extension CentralEngine {
     }
   }
 
+  /// The session of `peripheralId`, or nil after answering `completion` with DISCONNECTED.
+  func session<T>(_ peripheralId: String, else completion: (Result<T, CoreError>) -> Void) -> PeripheralSession? {
+    guard let identifier = UUID(uuidString: peripheralId), let session = sessions[identifier] else {
+      completion(.failure(CoreError(.disconnected, "Not connected to \(peripheralId)")))
+      return nil
+    }
+    return session
+  }
+
   func disconnect(_ peripheralId: String, completion: @escaping () -> Void) {
     guard let identifier = UUID(uuidString: peripheralId) else {
       return completion()

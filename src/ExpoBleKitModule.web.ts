@@ -21,6 +21,22 @@ class WebPeripheral {
     throw notSupported();
   }
 
+  async read(): Promise<never> {
+    throw notSupported();
+  }
+
+  async write(): Promise<never> {
+    throw notSupported();
+  }
+
+  async readDescriptor(): Promise<never> {
+    throw notSupported();
+  }
+
+  async writeDescriptor(): Promise<never> {
+    throw notSupported();
+  }
+
   addListener() {
     return { remove() {} };
   }

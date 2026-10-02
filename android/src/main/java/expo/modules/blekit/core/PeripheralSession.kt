@@ -69,6 +69,11 @@ class PeripheralSession(
     }
   }
 
+  /** ATT MTU. 23 until an exchange raises it (P1-09). */
+  @Volatile
+  var mtu = DEFAULT_MTU
+    private set
+
   /** The discovery cache: every service the last discovery found. Empty when disconnected. */
   @Volatile
   var services: List<GattServiceInfo> = emptyList()
@@ -184,6 +189,96 @@ class PeripheralSession(
     )
   }
 
+  /** Reads a characteristic (plan §5.4). Long values are read in full by the stack. */
+  fun read(service: UUID, characteristic: UUID, timeoutMs: Long?, completion: (Result<ByteArray>) -> Unit) {
+    val ref = try {
+      findCharacteristic(service, characteristic, CharacteristicProperties.READ, CoreError.Code.READ_NOT_PERMITTED)
+    } catch (error: CoreError) {
+      return completion(Result.failure(error))
+    }
+    enqueueAttributeOperation(GattOperation.Kind.READ, key(ref), timeoutMs, completion, valueOf = {
+      it.value
+        ?: ByteArray(0)
+    }) {
+      if (gatt?.readCharacteristic(ref) != true) refused("read")
+    }
+  }
+
+  /**
+   * Writes a characteristic (plan §5.4). With response, values up to 512 bytes (longer than one
+   * packet use the stack's long write); without response, one packet (MTU − 3).
+   */
+  fun write(
+    service: UUID,
+    characteristic: UUID,
+    value: ByteArray,
+    withResponse: Boolean,
+    timeoutMs: Long?,
+    completion: (Result<Unit>) -> Unit,
+  ) {
+    val ref = try {
+      val property = if (withResponse) CharacteristicProperties.WRITE else CharacteristicProperties.WRITE_NO_RESPONSE
+      findCharacteristic(service, characteristic, property, CoreError.Code.WRITE_NOT_PERMITTED).also {
+        checkLength(value, if (withResponse) MAX_ATTRIBUTE_LENGTH else mtu - 3)
+      }
+    } catch (error: CoreError) {
+      return completion(Result.failure(error))
+    }
+    val kind = if (withResponse) GattOperation.Kind.WRITE else GattOperation.Kind.WRITE_WITHOUT_RESPONSE
+    val writeType = if (withResponse) WriteTypes.DEFAULT else WriteTypes.NO_RESPONSE
+    enqueueAttributeOperation(kind, key(ref), timeoutMs, completion, valueOf = {}) {
+      submitWrite(kind, "Write") { gatt?.writeCharacteristic(ref, value, writeType) ?: SubmitStatus.ERROR_UNKNOWN }
+    }
+  }
+
+  fun readDescriptor(
+    service: UUID,
+    characteristic: UUID,
+    descriptor: UUID,
+    timeoutMs: Long?,
+    completion: (Result<ByteArray>) -> Unit,
+  ) {
+    val ref = try {
+      findDescriptor(service, characteristic, descriptor)
+    } catch (error: CoreError) {
+      return completion(Result.failure(error))
+    }
+    enqueueAttributeOperation(GattOperation.Kind.READ_DESCRIPTOR, key(ref), timeoutMs, completion, valueOf = {
+      it.value
+        ?: ByteArray(0)
+    }) {
+      if (gatt?.readDescriptor(ref) != true) refused("descriptor read")
+    }
+  }
+
+  /** The CCCD is off limits: subscriptions own it (P1-08), and iOS throws if it is written directly. */
+  fun writeDescriptor(
+    service: UUID,
+    characteristic: UUID,
+    descriptor: UUID,
+    value: ByteArray,
+    timeoutMs: Long?,
+    completion: (Result<Unit>) -> Unit,
+  ) {
+    val ref = try {
+      if (descriptor == CCCD) {
+        throw CoreError(
+          CoreError.Code.INVALID_ARGUMENT,
+          "The Client Characteristic Configuration descriptor (0x2902) is managed by subscribe()",
+        )
+      }
+      checkLength(value, MAX_ATTRIBUTE_LENGTH)
+      findDescriptor(service, characteristic, descriptor)
+    } catch (error: CoreError) {
+      return completion(Result.failure(error))
+    }
+    enqueueAttributeOperation(GattOperation.Kind.WRITE_DESCRIPTOR, key(ref), timeoutMs, completion, valueOf = {}) {
+      submitWrite(GattOperation.Kind.WRITE_DESCRIPTOR, "Descriptor write") {
+        gatt?.writeDescriptor(ref, value) ?: SubmitStatus.ERROR_UNKNOWN
+      }
+    }
+  }
+
   /** The adapter went away (off, or the module is destroyed): drop everything with [error]. */
   fun forceDisconnected(error: CoreError) {
     if (state == SessionState.DISCONNECTED) {
@@ -208,6 +303,31 @@ class PeripheralSession(
     override fun onConnectionStateChange(status: Int, newState: Int) {
       if (attemptGeneration == generation) {
         onLinkState(status, newState)
+      }
+    }
+
+    override fun onCharacteristicRead(ref: GattCharacteristicRef, value: ByteArray, status: Int) {
+      if (attemptGeneration == generation) onAttributeResult(GattOperation.Kind.READ, key(ref), status, value, "Read")
+    }
+
+    override fun onCharacteristicWrite(ref: GattCharacteristicRef, status: Int) {
+      if (attemptGeneration == generation) {
+        // Android reports both write types here; whichever is in flight for this characteristic.
+        val kind = queue.current?.kind.takeIf { it == GattOperation.Kind.WRITE_WITHOUT_RESPONSE }
+          ?: GattOperation.Kind.WRITE
+        onAttributeResult(kind, key(ref), status, null, "Write")
+      }
+    }
+
+    override fun onDescriptorRead(ref: GattDescriptorRef, value: ByteArray, status: Int) {
+      if (attemptGeneration == generation) {
+        onAttributeResult(GattOperation.Kind.READ_DESCRIPTOR, key(ref), status, value, "Descriptor read")
+      }
+    }
+
+    override fun onDescriptorWrite(ref: GattDescriptorRef, status: Int) {
+      if (attemptGeneration == generation) {
+        onAttributeResult(GattOperation.Kind.WRITE_DESCRIPTOR, key(ref), status, null, "Descriptor write")
       }
     }
 
@@ -247,6 +367,116 @@ class PeripheralSession(
       }
 
       SessionState.DISCONNECTED -> Unit
+    }
+  }
+
+  private fun onAttributeResult(
+    kind: GattOperation.Kind,
+    target: String,
+    status: Int,
+    value: ByteArray?,
+    operation: String,
+  ) {
+    val result = AndroidErrorMapping.operationError(status, operation)?.let(GattResult::Failure)
+      ?: GattResult.Success(value)
+    queue.complete(result) { it.kind == kind && it.target == target }
+  }
+
+  /** Queues one attribute operation; [start] submits it, and a callback completes it. */
+  private fun <T> enqueueAttributeOperation(
+    kind: GattOperation.Kind,
+    target: String,
+    timeoutMs: Long?,
+    completion: (Result<T>) -> Unit,
+    valueOf: (GattResult.Success) -> T,
+    start: () -> Unit,
+  ) {
+    if (state != SessionState.READY) {
+      return completion(Result.failure(CoreError(CoreError.Code.DISCONNECTED, "Not connected to $address")))
+    }
+    queue.enqueue(kind, target, timeoutMs, start) { result ->
+      when (result) {
+        is GattResult.Success -> completion(Result.success(valueOf(result)))
+        is GattResult.Failure -> completion(Result.failure(result.error))
+      }
+    }
+  }
+
+  /** The stack refused to start the in-flight operation. */
+  private fun refused(operation: String) {
+    val current = queue.current ?: return
+    queue.complete(
+      GattResult.Failure(CoreError(CoreError.Code.GATT_ERROR, "Android refused to start the $operation")),
+    ) {
+      it === current
+    }
+  }
+
+  /**
+   * Submits a write. A busy stack (Android 13+) is retried after a short pause while the operation's
+   * timeout runs (basic pacing; flow control is P2-02).
+   */
+  private fun submitWrite(kind: GattOperation.Kind, operation: String, submit: () -> Int) {
+    val current = queue.current ?: return
+    val status = submit()
+    when {
+      status == SubmitStatus.SUCCESS -> Unit
+
+      status == SubmitStatus.ERROR_GATT_WRITE_REQUEST_BUSY -> executor.executeDelayed(BUSY_RETRY_DELAY_MS) {
+        if (queue.current === current && current.kind == kind) submitWrite(kind, operation, submit)
+      }
+
+      else -> {
+        val error = AndroidErrorMapping.submitError(status, operation)
+          ?: CoreError(CoreError.Code.GATT_ERROR, "$operation was refused with status $status")
+        queue.complete(GattResult.Failure(error)) { it === current }
+      }
+    }
+  }
+
+  /** The first discovered instance of [characteristic] in [service], if it allows [property]. */
+  private fun findCharacteristic(
+    service: UUID,
+    characteristic: UUID,
+    property: Int,
+    notPermitted: CoreError.Code,
+  ): GattCharacteristicRef {
+    if (state != SessionState.READY) {
+      throw CoreError(CoreError.Code.DISCONNECTED, "Not connected to $address")
+    }
+    val found = services.firstOrNull { it.uuid == service }
+      ?: throw CoreError(CoreError.Code.SERVICE_NOT_FOUND, "Service $service not found; discover() it first")
+    val info = found.characteristics.firstOrNull { it.ref.uuid == characteristic }
+      ?: throw CoreError(
+        CoreError.Code.CHARACTERISTIC_NOT_FOUND,
+        "Characteristic $characteristic not found in $service",
+      )
+    if (info.properties and property == 0) {
+      throw CoreError(notPermitted, "Characteristic $characteristic doesn't allow this (properties ${info.properties})")
+    }
+    return info.ref
+  }
+
+  private fun findDescriptor(service: UUID, characteristic: UUID, descriptor: UUID): GattDescriptorRef {
+    if (state != SessionState.READY) {
+      throw CoreError(CoreError.Code.DISCONNECTED, "Not connected to $address")
+    }
+    val found = services.firstOrNull { it.uuid == service }
+      ?: throw CoreError(CoreError.Code.SERVICE_NOT_FOUND, "Service $service not found; discover() it first")
+    val info = found.characteristics.firstOrNull { it.ref.uuid == characteristic }
+      ?: throw CoreError(
+        CoreError.Code.CHARACTERISTIC_NOT_FOUND,
+        "Characteristic $characteristic not found in $service",
+      )
+    if (descriptor !in info.descriptors) {
+      throw CoreError(CoreError.Code.DESCRIPTOR_NOT_FOUND, "Descriptor $descriptor not found on $characteristic")
+    }
+    return GattDescriptorRef(info.ref, descriptor)
+  }
+
+  private fun checkLength(value: ByteArray, max: Int) {
+    if (value.size > max) {
+      throw CoreError(CoreError.Code.INVALID_ATTRIBUTE_LENGTH, "${value.size} bytes is more than the $max allowed here")
     }
   }
 
@@ -350,5 +580,16 @@ class PeripheralSession(
 
     /** Discovery is one queued operation, and slower than the 10 s default (plan §4.9). */
     const val DISCOVERY_TIMEOUT_MS = 30_000L
+    const val DEFAULT_MTU = 23
+
+    /** The ATT maximum for an attribute value. */
+    const val MAX_ATTRIBUTE_LENGTH = 512
+    const val BUSY_RETRY_DELAY_MS = 5L
+    val CCCD: UUID = UUID.fromString("00002902-0000-1000-8000-00805f9b34fb")
+
+    private fun key(ref: GattCharacteristicRef) =
+      "${ref.serviceUuid}#${ref.serviceInstanceId}/${ref.uuid}#${ref.instanceId}"
+
+    private fun key(ref: GattDescriptorRef) = "${key(ref.characteristic)}/${ref.uuid}"
   }
 }

@@ -163,6 +163,63 @@ class CentralEngine(
     session.discover(filter, timeoutMs) { result -> completion(result.map { found -> found.map { it.toJs() } }) }
   }
 
+  /** The ready session of [peripheralId], or DISCONNECTED through [completion]. */
+  private fun <T> withSession(
+    peripheralId: String,
+    completion: (Result<T>) -> Unit,
+    block: (PeripheralSession) -> Unit,
+  ) {
+    val session = normalizeAddress(peripheralId)?.let { sessions[it] }
+    if (session == null) {
+      completion(Result.failure(CoreError(CoreError.Code.DISCONNECTED, "Not connected to $peripheralId")))
+    } else {
+      block(session)
+    }
+  }
+
+  fun read(
+    peripheralId: String,
+    service: UUID,
+    characteristic: UUID,
+    timeoutMs: Long?,
+    completion: (Result<ByteArray>) -> Unit,
+  ) = withSession(peripheralId, completion) { it.read(service, characteristic, timeoutMs, completion) }
+
+  fun write(
+    peripheralId: String,
+    service: UUID,
+    characteristic: UUID,
+    value: ByteArray,
+    withResponse: Boolean,
+    timeoutMs: Long?,
+    completion: (Result<Unit>) -> Unit,
+  ) = withSession(peripheralId, completion) {
+    it.write(service, characteristic, value, withResponse, timeoutMs, completion)
+  }
+
+  fun readDescriptor(
+    peripheralId: String,
+    service: UUID,
+    characteristic: UUID,
+    descriptor: UUID,
+    timeoutMs: Long?,
+    completion: (Result<ByteArray>) -> Unit,
+  ) = withSession(peripheralId, completion) {
+    it.readDescriptor(service, characteristic, descriptor, timeoutMs, completion)
+  }
+
+  fun writeDescriptor(
+    peripheralId: String,
+    service: UUID,
+    characteristic: UUID,
+    descriptor: UUID,
+    value: ByteArray,
+    timeoutMs: Long?,
+    completion: (Result<Unit>) -> Unit,
+  ) = withSession(peripheralId, completion) {
+    it.writeDescriptor(service, characteristic, descriptor, value, timeoutMs, completion)
+  }
+
   fun disconnect(peripheralId: String, completion: () -> Unit) {
     val session = normalizeAddress(peripheralId)?.let { sessions[it] }
     if (session == null) completion() else session.disconnect(completion)

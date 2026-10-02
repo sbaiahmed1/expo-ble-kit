@@ -13,6 +13,9 @@ final class BleKitException: Exception, @unchecked Sendable {
   }
 }
 
+/// Attribute operations take one request: where, how, and the timeout.
+typealias Request = AttributeRequestRecord
+
 public class ExpoBleKitModule: Module {
   /// One JS object per peripheral id while JS holds it (plan §4.5). Guarded by `peripheralsLock`.
   private let peripherals = NSMapTable<NSString, PeripheralObject>.strongToWeakObjects()
@@ -132,6 +135,23 @@ public class ExpoBleKitModule: Module {
         self.engine.services(ref.id)
       }
 
+      // UUIDs arrive normalized and timeouts always set: the TS layer applies the defaults (rule 4).
+      AsyncFunction("read") { (ref: PeripheralObject, request: Request, promise: Promise) in
+        self.read(ref.id, request, promise)
+      }
+
+      AsyncFunction("write") { (ref: PeripheralObject, request: Request, value: Data, promise: Promise) in
+        self.write(ref.id, request, value, promise)
+      }
+
+      AsyncFunction("readDescriptor") { (ref: PeripheralObject, request: Request, promise: Promise) in
+        self.readDescriptor(ref.id, request, promise)
+      }
+
+      AsyncFunction("writeDescriptor") { (ref: PeripheralObject, request: Request, value: Data, promise: Promise) in
+        self.writeDescriptor(ref.id, request, value, promise)
+      }
+
       // `services` nil discovers everything; the TS layer always passes a timeout (rule 4).
       AsyncFunction("discover") { (ref: PeripheralObject, services: [String]?, timeoutMs: Double, promise: Promise) in
         self.discover(ref.id, services: services, timeoutMs: timeoutMs, promise: promise)
@@ -166,6 +186,56 @@ public class ExpoBleKitModule: Module {
       } catch {
         promise.reject(error)
       }
+    }
+  }
+
+  private func read(_ id: String, _ request: Request, _ promise: Promise) {
+    attributeOperation(id, promise) { session, done in
+      session.read(request.path, timeout: request.timeout) { done($0.map { $0 }) }
+    }
+  }
+
+  private func write(_ id: String, _ request: Request, _ value: Data, _ promise: Promise) {
+    attributeOperation(id, promise) { session, done in
+      session.write(request.path, value: value, withResponse: request.withResponse, timeout: request.timeout) {
+        done($0.map { _ in nil })
+      }
+    }
+  }
+
+  private func readDescriptor(_ id: String, _ request: Request, _ promise: Promise) {
+    attributeOperation(id, promise) { session, done in
+      session.readDescriptor(request.path, timeout: request.timeout) { done($0.map { $0 }) }
+    }
+  }
+
+  private func writeDescriptor(_ id: String, _ request: Request, _ value: Data, _ promise: Promise) {
+    attributeOperation(id, promise) { session, done in
+      session.writeDescriptor(request.path, value: value, timeout: request.timeout) { done($0.map { _ in nil }) }
+    }
+  }
+
+  /// Runs an attribute operation on the engine's queue and settles `promise` with its value
+  /// (`Data`, or nil for writes) or its error.
+  private func attributeOperation(
+    _ id: String,
+    _ promise: Promise,
+    _ operation: @escaping (PeripheralSession, @escaping (Result<Data?, CoreError>) -> Void) -> Void
+  ) {
+    let engine = self.engine
+    engine.queue.async {
+      let done: (Result<Data?, CoreError>) -> Void = { result in
+        switch result {
+        case let .success(value):
+          promise.resolve(value)
+        case let .failure(error):
+          promise.reject(BleKitException(error))
+        }
+      }
+      guard let session = engine.session(id, else: done) else {
+        return
+      }
+      operation(session, done)
     }
   }
 

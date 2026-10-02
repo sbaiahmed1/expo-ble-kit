@@ -134,3 +134,7 @@ export interface Descriptor {
   uuid: UUID;
   characteristicUUID: UUID;
 }
+
+export interface WriteOptions extends OpOptions {
+  withResponse?: boolean; // default true
+}

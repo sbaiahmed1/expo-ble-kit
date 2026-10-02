@@ -148,6 +148,27 @@ export default function App() {
     }
   }
 
+  // Not connected: both reject with DISCONNECTED, through the native request and byte conversions.
+  async function readWriteAbsent() {
+    const request = {
+      service: TEST_SERVICE,
+      characteristic: '0c6c1003-b347-4cfa-9827-1c5a13658519',
+      withResponse: true,
+      timeoutMs: 10_000,
+    };
+    for (const [name, call] of [
+      ['read', () => absent.read(request)],
+      ['write', () => absent.write(request, new Uint8Array([1, 2, 3]))],
+    ] as const) {
+      try {
+        await call();
+        addConnectLog(`${name}: ok`);
+      } catch (error) {
+        addConnectLog(`${name}: ${BleError.fromNative(error).code}`);
+      }
+    }
+  }
+
   // Every cancelled attempt must close its GATT client: open clients stay at 0 (Android).
   async function cancelCycles() {
     addConnectLog('100 connect/cancel cycles');
@@ -238,6 +259,11 @@ export default function App() {
           />
           <Button testID="cancel-cycles" title="Connect/cancel ×100" onPress={cancelCycles} />
           <Button testID="discover-absent" title="Discover absent" onPress={discoverAbsent} />
+          <Button
+            testID="read-write-absent"
+            title="Read + write absent"
+            onPress={readWriteAbsent}
+          />
           <Button testID="diagnostics" title="Diagnostics" onPress={showDiagnostics} />
           <Text testID="connect-log" style={styles.result}>
             {connectLog.join('\n')}

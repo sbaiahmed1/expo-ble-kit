@@ -76,6 +76,9 @@ final class PeripheralSession: PeripheralLikeDelegate {
   private var disconnectWaiters: [() -> Void] = []
   private var autoDiscover = true
   private var discovery: DiscoveryRun?
+  /// A write without response waiting for `canSendWriteWithoutResponse` (basic pacing; P2-02 adds
+  /// flow control).
+  var pendingWriteWithoutResponse: (() -> Void)?
   private var nextDiscoveryId = 0
 
   static let disconnectTimeout: TimeInterval = 5
@@ -273,6 +276,7 @@ final class PeripheralSession: PeripheralLikeDelegate {
     connectTimeout = nil
     disconnectTimeout?.cancel()
     disconnectTimeout = nil
+    pendingWriteWithoutResponse = nil
     // Handles and the database can differ on the next connection.
     if !services.isEmpty {
       services = []

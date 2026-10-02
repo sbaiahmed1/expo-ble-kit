@@ -111,3 +111,16 @@ class ConnectOptionsRecord : Record {
     return ConnectSpec(timeoutMs, android.autoConnect ?: (timeoutMs == null), autoDiscover)
   }
 }
+
+/** Where an attribute operation goes and how (plan §5.4), after the TS layer normalized the UUIDs. */
+class AttributeRequestRecord : Record {
+  @Field val service: String = ""
+
+  @Field val characteristic: String = ""
+
+  @Field val descriptor: String? = null
+
+  @Field val withResponse: Boolean = true
+
+  @Field val timeoutMs: Double = 10_000.0
+}
