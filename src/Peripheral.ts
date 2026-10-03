@@ -1,14 +1,17 @@
 import type {
   ConnectionStateEvent,
   NotificationEvent,
+  StreamProgressEvent,
   SubscriptionEndedEvent,
 } from './ExpoBleKit.types';
 import { BleError, BleErrorCode } from './errors';
 import {
+  checkStreamData,
   checkValue,
   operationTimeout,
   subscribeMode,
   toNativeAttributeRequest,
+  toStreamParameters,
   type NativeAttributeRequest,
 } from './internal/attributeRequest';
 import {
@@ -33,6 +36,7 @@ import type {
   OpOptions,
   Peripheral,
   Service,
+  StreamOptions,
   SubscribeOptions,
   Subscription,
   WriteOptions,
@@ -73,9 +77,15 @@ class SubscriptionHandle implements CharacteristicSubscription {
  */
 export class PeripheralImpl implements Peripheral {
   private readonly subscribers = new Map<number, Subscriber>();
+  /** Progress callbacks of the streams in flight, by operation id. */
+  private readonly streams = new Map<number, (sent: number, total: number) => void>();
 
   constructor(private readonly native: NativePeripheralPort) {
     native.addListener('notification', (event: NotificationEvent) => this.deliver(event));
+    native.addListener('streamProgress', (event: StreamProgressEvent) => {
+      if (event.operationId !== null)
+        this.streams.get(event.operationId)?.(event.sent, event.total);
+    });
     native.addListener('connectionStateChange', (event: ConnectionStateEvent) => {
       if (event.code) {
         recordError(this.connectionError(event));
@@ -169,6 +179,50 @@ export class PeripheralImpl implements Peripheral {
   ): Promise<void> {
     return this.attribute(service, characteristic, undefined, options, (request) =>
       this.native.write(request, checkValue(value))
+    );
+  }
+
+  writeStream(
+    service: UUID,
+    characteristic: UUID,
+    data: Uint8Array,
+    options?: StreamOptions
+  ): Promise<void> {
+    return guard(
+      () => {
+        const bytes = checkStreamData(data);
+        const { withResponse, chunkSize, onProgress } = toStreamParameters(options);
+        const request = toNativeAttributeRequest(service, characteristic, undefined, {
+          ...options,
+          withResponse: options?.withResponse ?? withResponse,
+        });
+        let reported = 0;
+        const report = (sent: number, total: number) => {
+          reported = sent;
+          try {
+            onProgress?.(sent, total);
+          } catch (error) {
+            reportListenerError(error);
+          }
+        };
+        // The id routes progress events; the last one may come after the promise, so the final
+        // report is made here.
+        return this.cancellable(
+          options,
+          async (operationId) => {
+            const id = operationId!;
+            this.streams.set(id, report);
+            try {
+              await this.native.writeStream({ ...request, operationId: id }, bytes, chunkSize);
+            } finally {
+              this.streams.delete(id);
+            }
+            if (reported < bytes.length) report(bytes.length, bytes.length);
+          },
+          true
+        );
+      },
+      this.context(service, characteristic)
     );
   }
 
@@ -319,11 +373,17 @@ export class PeripheralImpl implements Peripheral {
 
   private cancellable<T>(
     options: OpOptions | undefined,
-    start: (operationId: number | null) => Promise<T>
+    start: (operationId: number | null) => Promise<T>,
+    withId = false
   ): Promise<T> {
-    return cancellable(checkSignal(options?.signal), start, (operationId) => {
-      this.native.cancelOperation(operationId).catch(() => {});
-    });
+    return cancellable(
+      checkSignal(options?.signal),
+      start,
+      (operationId) => {
+        this.native.cancelOperation(operationId).catch(() => {});
+      },
+      withId
+    );
   }
 
   private deliver(event: NotificationEvent): void {

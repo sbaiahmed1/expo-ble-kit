@@ -6,7 +6,7 @@ End-to-end flows for the example app's screens (plan §7, P1-15; §8.1 L4).
 |---|---|
 | `explorer-basic.yaml` | Explorer: find `BleKit-Test`, connect, read `STATIC_READ`, write `ECHO_WRITE` and read it back from `ECHO_READ`, subscribe to Heart Rate Measurement, disconnect |
 | `heart-rate.yaml` | Heart Rate: find the monitor by its 0x180D service, live BPM, reconnection after the test device drops the link (`CONTROL` `DISCONNECT_AFTER`), disconnect |
-| `sink.yaml` | Developer checks: 1 MB through repeated writes without response reaches the peripheral's byte counter (`SINK_NO_RSP` → `SINK_COUNTER`), with the throughput (P2-02) |
+| `sink.yaml` | Developer checks: 1 MB through repeated writes without response (P2-02), then through one `writeStream` (P2-03), reaches the peripheral's byte counter (`SINK_NO_RSP` → `SINK_COUNTER`), with the throughput; a stream aborted at 25 % rejects with `OPERATION_CANCELLED` |
 | `_setup.yaml` | Shared start: launch, demo mode, the Bluetooth permission |
 
 They target the test peripheral of `test-peripherals/profile.json`.

@@ -157,6 +157,32 @@ class ExpoBleKitModule : Module() {
         }
       }
 
+      // Progress goes to the peripheral object as `streamProgress`, keyed by the operation id.
+      AsyncFunction("writeStream") {
+          ref: PeripheralObject,
+          request: AttributeRequestRecord,
+          data: ByteArray,
+          chunkSize: Int?,
+          promise: Promise,
+        ->
+        attributeOperation(promise) {
+          engine.writeStream(
+            ref.id,
+            request.serviceUuid(),
+            request.characteristicUuid(),
+            data,
+            request.withResponse,
+            chunkSize,
+            request.timeout(),
+            { sent, total ->
+              ref.emit("streamProgress", mapOf("operationId" to request.operationId, "sent" to sent, "total" to total))
+            },
+            promise.settler(),
+            request.operationId,
+          )
+        }
+      }
+
       AsyncFunction("readDescriptor") { ref: PeripheralObject, request: AttributeRequestRecord, promise: Promise ->
         attributeOperation(promise) {
           engine.readDescriptor(

@@ -126,6 +126,13 @@ struct MtuChangeEventRecord: Record {
   @Field var mtu: Int = 23
 }
 
+/// Payload of a peripheral's `streamProgress` event (P2-03): bytes a writeStream wrote so far.
+struct StreamProgressEventRecord: Record {
+  @Field var operationId: Int?
+  @Field var sent: Int = 0
+  @Field var total: Int = 0
+}
+
 /// Payload of a peripheral's `subscriptionEnded` event (P2-01): a subscription that ended while its
 /// connection reconnects.
 struct SubscriptionEndedEventRecord: Record {

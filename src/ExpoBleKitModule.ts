@@ -32,6 +32,11 @@ export declare class NativePeripheral
   ): Promise<Service[]>;
   read(request: NativeAttributeRequest): Promise<Uint8Array>;
   write(request: NativeAttributeRequest, value: Uint8Array): Promise<void>;
+  writeStream(
+    request: NativeAttributeRequest,
+    data: Uint8Array,
+    chunkSize: number | null
+  ): Promise<void>;
   readDescriptor(request: NativeAttributeRequest): Promise<Uint8Array>;
   writeDescriptor(request: NativeAttributeRequest, value: Uint8Array): Promise<void>;
   subscribe(

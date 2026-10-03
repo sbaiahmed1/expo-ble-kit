@@ -87,28 +87,30 @@ let nextOperationId = 1;
 
 /**
  * Runs a native operation that `signal` can cancel (plan §4.9). Without a signal the operation gets
- * no id. An already aborted signal rejects with OPERATION_CANCELLED and starts nothing; a later
- * abort calls `cancel`, after which the native side rejects with OPERATION_CANCELLED.
+ * no id, unless `withId` (the native side then reports progress under it). An already aborted
+ * signal rejects with OPERATION_CANCELLED and starts nothing; a later abort calls `cancel`, after
+ * which the native side rejects with OPERATION_CANCELLED.
  */
 export async function cancellable<T>(
   signal: AbortSignal | undefined,
   start: (operationId: number | null) => Promise<T>,
-  cancel: (operationId: number) => void
+  cancel: (operationId: number) => void,
+  withId = false
 ): Promise<T> {
-  if (!signal) {
+  if (!signal && !withId) {
     return start(null);
   }
-  if (signal.aborted) {
+  if (signal?.aborted) {
     throw abortedError();
   }
   const operationId = nextOperationId;
   nextOperationId = nextOperationId === MAX_OPERATION_ID ? 1 : nextOperationId + 1;
   const onAbort = () => cancel(operationId);
-  signal.addEventListener('abort', onAbort);
+  signal?.addEventListener('abort', onAbort);
   try {
     return await start(operationId);
   } finally {
-    signal.removeEventListener('abort', onAbort);
+    signal?.removeEventListener('abort', onAbort);
   }
 }
 

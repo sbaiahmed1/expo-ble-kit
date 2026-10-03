@@ -14,10 +14,10 @@ import {
   type ScanSession,
 } from 'expo-ble-kit';
 
-import { sendToSink } from '../lib/sink';
+import { abortStreamToSink, sendToSink, streamToSink, type SinkReport } from '../lib/sink';
 
 // Developer checks on the public API (P1-12): adapter state, permissions, scanning, connections
-// to a device that isn't there, and throughput to the test peripheral (P2-02).
+// to a device that isn't there, and throughput to the test peripheral (P2-02, P2-03).
 
 const TEST_SERVICE = '0c6c1000-b347-4cfa-9827-1c5a13658519';
 const TEST_NAME = 'BleKit-Test';
@@ -49,6 +49,17 @@ function describeResult(result: ScanResult) {
 }
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+const MEGABYTE = 1 << 20;
+
+/** `Writes complete: 1048576 / 1048576 bytes, 244-byte packets, 9.1 s, 112.5 KB/s`. */
+function describeReport(label: string, report: SinkReport) {
+  const seconds = report.ms / 1000;
+  return (
+    `${label} ${report.received === report.sent ? 'complete' : 'INCOMPLETE'}: ` +
+    `${report.received} / ${report.sent} bytes, ${report.packetSize}-byte packets, ` +
+    `${seconds.toFixed(1)} s, ${(report.sent / 1024 / seconds).toFixed(1)} KB/s`
+  );
+}
 const time = () => new Date().toISOString().slice(14, 23);
 const describeError = (error: unknown) => {
   const bleError = BleError.fromNative(error);
@@ -221,9 +232,8 @@ export function DevChecksScreen() {
     startSession('after throttle', {});
   }
 
-  // P2-02 accept: 1 MB of writes without response reaches the test peripheral's byte counter.
-  async function sinkMegabyte() {
-    const total = 1 << 20;
+  /** Finds and connects the test peripheral, runs `check` on it, then disconnects. */
+  async function withTestPeripheral(check: (device: Peripheral) => Promise<string>) {
     let device: Peripheral | null = null;
     try {
       setSinkStatus('Looking for the test peripheral…');
@@ -232,21 +242,39 @@ export function DevChecksScreen() {
       device = BleManager.getPeripheral(found.id);
       await device.connect();
       setSinkStatus(`Connected, MTU ${device.mtu}. Sending…`);
-      const report = await sendToSink(device, total, (sent) => {
-        if (sent % (64 * 1024) < device!.mtu) setSinkStatus(`Sent ${sent} / ${total} bytes…`);
-      });
-      const seconds = report.ms / 1000;
-      setSinkStatus(
-        `${report.received === report.sent ? 'Complete' : 'Incomplete'}: ` +
-          `${report.received} / ${report.sent} bytes, ${report.packetSize}-byte packets, ` +
-          `${seconds.toFixed(1)} s, ${(report.sent / 1024 / seconds).toFixed(1)} KB/s`
-      );
+      setSinkStatus(await check(device));
     } catch (error) {
       setSinkStatus(describeError(error));
     } finally {
       device?.disconnect().catch(() => {});
     }
   }
+
+  const showProgress = (sent: number) => {
+    if (sent % (64 * 1024) < 512) setSinkStatus(`Sent ${sent} / ${MEGABYTE} bytes…`);
+  };
+
+  // P2-02 accept: 1 MB of writes without response reaches the test peripheral's byte counter.
+  const sinkMegabyte = () =>
+    withTestPeripheral(async (device) =>
+      describeReport('Writes', await sendToSink(device, MEGABYTE, showProgress))
+    );
+
+  // P2-03 accept: 1 MB in one writeStream arrives complete, with the throughput.
+  const streamMegabyte = () =>
+    withTestPeripheral(async (device) =>
+      describeReport('Stream', await streamToSink(device, MEGABYTE, showProgress))
+    );
+
+  // P2-03 accept: an abort stops the stream (natively within the chunk in flight).
+  const abortStream = () =>
+    withTestPeripheral(async (device) => {
+      const report = await abortStreamToSink(device, MEGABYTE, MEGABYTE / 4);
+      return (
+        `Stream aborted: ${report.code} ${report.rejectedAfterMs} ms after abort() at ` +
+        `${report.reportedAtAbort} bytes; the peripheral counted ${report.received} of ${report.total}`
+      );
+    });
 
   async function scanForTest() {
     addLog('scanFor TEST service, 10 s');
@@ -296,6 +324,8 @@ export function DevChecksScreen() {
       </Group>
       <Group name="Test peripheral">
         <Button testID="sink-1mb" title="Send 1 MB without response" onPress={sinkMegabyte} />
+        <Button testID="stream-1mb" title="Stream 1 MB (writeStream)" onPress={streamMegabyte} />
+        <Button testID="stream-abort" title="Stream 1 MB, abort at 25 %" onPress={abortStream} />
         <Text testID="sink-status" style={styles.result}>
           {sinkStatus}
         </Text>

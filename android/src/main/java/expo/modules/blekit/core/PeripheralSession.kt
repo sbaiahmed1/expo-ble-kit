@@ -355,6 +355,78 @@ class PeripheralSession(
     }
   }
 
+  /**
+   * Writes [data] in chunks (plan §5.4, P2-03): [chunkSize] bytes each, one packet (MTU − 3) by
+   * default, every chunk one write through the queue with the flow control of §4.9. Each chunk queues
+   * the next one first, so operations issued later wait for the end of the stream. [onProgress] hears
+   * the bytes written about every 1 % and at the end. [timeoutMs] applies to each chunk; cancelling
+   * [operationId] stops the stream within the chunk in flight.
+   */
+  fun writeStream(
+    service: UUID,
+    characteristic: UUID,
+    data: ByteArray,
+    withResponse: Boolean,
+    chunkSize: Int?,
+    timeoutMs: Long?,
+    onProgress: (sent: Int, total: Int) -> Unit,
+    completion: (Result<Unit>) -> Unit,
+    operationId: Int? = null,
+  ) {
+    val ref: GattCharacteristicRef
+    val size: Int
+    try {
+      val property = if (withResponse) CharacteristicProperties.WRITE else CharacteristicProperties.WRITE_NO_RESPONSE
+      ref = findCharacteristic(service, characteristic, property, CoreError.Code.WRITE_NOT_PERMITTED)
+      val max = if (withResponse) MAX_ATTRIBUTE_LENGTH else mtu - 3
+      size = chunkSize ?: (mtu - 3)
+      if (size !in 1..max) {
+        throw CoreError(CoreError.Code.INVALID_ARGUMENT, "chunkSize $size is outside 1…$max for this write type")
+      }
+    } catch (error: CoreError) {
+      return completion(Result.failure(error))
+    }
+    if (data.isEmpty()) return completion(Result.success(Unit))
+    val kind = if (withResponse) GattOperation.Kind.WRITE else GattOperation.Kind.WRITE_WITHOUT_RESPONSE
+    val writeType = if (withResponse) WriteTypes.DEFAULT else WriteTypes.NO_RESPONSE
+    val progressStep = maxOf(size, data.size / PROGRESS_STEPS)
+    var reported = 0
+
+    fun sendChunk(offset: Int) {
+      val end = minOf(offset + size, data.size)
+      val chunk = data.copyOfRange(offset, end)
+      val chunkDone = { result: Result<Unit> ->
+        val error = result.exceptionOrNull() as CoreError?
+        when {
+          error != null -> completion(Result.failure(streamError(error, offset, data.size)))
+
+          else -> {
+            if (end == data.size || end - reported >= progressStep) {
+              reported = end
+              onProgress(end, data.size)
+            }
+            if (end == data.size) completion(Result.success(Unit)) else sendChunk(end)
+          }
+        }
+      }
+      enqueueAttributeOperation(kind, key(ref), timeoutMs, chunkDone, operationId, valueOf = {}, first = offset > 0) {
+        val submit = {
+          submitWrite(kind, "Write") { gatt?.writeCharacteristic(ref, chunk, writeType) ?: SubmitStatus.ERROR_UNKNOWN }
+        }
+        if (withResponse) submit() else sendPacket(submit)
+      }
+    }
+    sendChunk(0)
+  }
+
+  /** A chunk's error, saying how far the stream got. */
+  private fun streamError(error: CoreError, sent: Int, total: Int) = CoreError(
+    error.code,
+    "${error.message} (stream stopped after $sent of $total bytes)",
+    error.gattStatus,
+    error.retryable,
+  )
+
   fun readDescriptor(
     service: UUID,
     characteristic: UUID,
@@ -703,12 +775,13 @@ class PeripheralSession(
     operationId: Int?,
     valueOf: (GattResult.Success) -> T,
     requireReady: Boolean = true,
+    first: Boolean = false,
     start: () -> Unit,
   ) {
     if (requireReady && state != SessionState.READY) {
       return completion(Result.failure(CoreError(CoreError.Code.DISCONNECTED, "Not connected to $address")))
     }
-    val operation = queue.enqueue(kind, target, timeoutMs, start) { result ->
+    val operation = queue.enqueue(kind, target, timeoutMs, first, start) { result ->
       operationId?.let(cancellable::remove)
       when (result) {
         is GattResult.Success -> completion(Result.success(valueOf(result)))
@@ -1107,6 +1180,9 @@ class PeripheralSession(
     /** The ATT maximum for an attribute value. */
     const val MAX_ATTRIBUTE_LENGTH = 512
     const val BUSY_RETRY_DELAY_MS = 5L
+
+    /** writeStream reports progress about this many times (P2-03). */
+    const val PROGRESS_STEPS = 100
 
     /** The pause before a write without response on a congested link (P2-02). */
     const val CONGESTION_RETRY_DELAY_MS = 10L

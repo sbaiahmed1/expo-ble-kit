@@ -73,6 +73,16 @@ export interface NativePeripheralPort {
   ): Promise<Service[]>;
   read(request: NativeAttributeRequest): Promise<Uint8Array>;
   write(request: NativeAttributeRequest, value: Uint8Array): Promise<void>;
+  /**
+   * Writes `data` in chunks of `chunkSize` bytes (null: one packet), each one write through the
+   * queue; the next chunk keeps its place ahead of later operations. Progress comes as
+   * `streamProgress` events with `request.operationId`, about every 1 % and at the end.
+   */
+  writeStream(
+    request: NativeAttributeRequest,
+    data: Uint8Array,
+    chunkSize: number | null
+  ): Promise<void>;
   readDescriptor(request: NativeAttributeRequest): Promise<Uint8Array>;
   writeDescriptor(request: NativeAttributeRequest, value: Uint8Array): Promise<void>;
   /**

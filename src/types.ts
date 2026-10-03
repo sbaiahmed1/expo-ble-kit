@@ -2,8 +2,8 @@ import type { BleError } from './errors';
 import type { UUID } from './uuid';
 
 // Public types of plan §5 (central role). Changing them requires updating the plan, docs and tests
-// together (Appendix B, rule 8). Members owned by later tasks (writeStream, batching, logging, the
-// peripheral role, background, onboarding, Android-only peripheral calls) land with those tasks.
+// together (Appendix B, rule 8). Members owned by later tasks (batching, logging, the peripheral
+// role, background, onboarding, Android-only peripheral calls) land with those tasks.
 
 /**
  * The state of the Bluetooth adapter, as the app sees it.
@@ -320,6 +320,30 @@ export interface WriteOptions extends OpOptions {
   withResponse?: boolean;
 }
 
+/**
+ * Options of `Peripheral.writeStream`. `timeoutMs` applies to each chunk, and `signal` stops the
+ * stream within the chunk in flight.
+ */
+export interface StreamOptions extends OpOptions {
+  /**
+   * Wait for the peripheral to acknowledge every chunk: slower, for peripherals that require it
+   * (some firmware-update protocols). Without response, chunks follow the flow control of `write`.
+   * @defaultValue false
+   */
+  withResponse?: boolean;
+  /**
+   * Bytes per chunk, each sent as one write. At most one packet (MTU − 3) without response, and
+   * 512 with response (longer than one packet then uses the stack's long write).
+   * @defaultValue one packet: MTU − 3 (`maximumWriteValueLength(.withoutResponse)` on iOS)
+   */
+  chunkSize?: number;
+  /**
+   * Called with the bytes written so far, about every 1 % of `data`, and with
+   * `(total, total)` before the stream resolves.
+   */
+  onProgress?: (sent: number, total: number) => void;
+}
+
 /** Options of `Peripheral.subscribe`. */
 export interface SubscribeOptions extends OpOptions {
   /**
@@ -377,6 +401,17 @@ export interface Peripheral {
     characteristic: UUID,
     value: Uint8Array,
     options?: WriteOptions
+  ): Promise<void>;
+  /**
+   * Writes `data` of any length in chunks, one write per chunk, natively and without a JS round
+   * trip per chunk. Operations issued meanwhile wait until the stream ends. Rejects with the first
+   * failed chunk (the message says how far it got); bytes already written stay written.
+   */
+  writeStream(
+    service: UUID,
+    characteristic: UUID,
+    data: Uint8Array,
+    options?: StreamOptions
   ): Promise<void>;
   /** Reads a descriptor. */
   readDescriptor(

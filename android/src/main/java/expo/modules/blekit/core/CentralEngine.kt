@@ -257,6 +257,31 @@ class CentralEngine(
     it.write(service, characteristic, value, withResponse, timeoutMs, completion, operationId)
   }
 
+  fun writeStream(
+    peripheralId: String,
+    service: UUID,
+    characteristic: UUID,
+    data: ByteArray,
+    withResponse: Boolean,
+    chunkSize: Int?,
+    timeoutMs: Long?,
+    onProgress: (sent: Int, total: Int) -> Unit,
+    completion: (Result<Unit>) -> Unit,
+    operationId: Int? = null,
+  ) = withSession(peripheralId, completion) {
+    it.writeStream(
+      service,
+      characteristic,
+      data,
+      withResponse,
+      chunkSize,
+      timeoutMs,
+      onProgress,
+      completion,
+      operationId,
+    )
+  }
+
   fun readDescriptor(
     peripheralId: String,
     service: UUID,

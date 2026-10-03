@@ -111,6 +111,20 @@ Operations on one device run one at a time, in order, and each has a timeout (10
 
 A write without response (`{ withResponse: false }`) takes one packet (`device.mtu - 3` bytes) and resolves once the phone's Bluetooth stack has taken it. It waits while the stack is full, so nothing is dropped on the phone: to send a lot of data fast, issue several writes before awaiting them, and they go out in order.
 
+## Sending a lot of data
+
+`writeStream` sends a payload of any length in chunks of one packet, natively, with progress:
+
+```ts
+const controller = new AbortController();
+await device.writeStream(MY_SERVICE, FIRMWARE_CHARACTERISTIC, image, {
+  onProgress: (sent, total) => setProgress(sent / total), // about every 1 %, and at the end
+  signal: controller.signal, // abort() stops it within the chunk in flight
+});
+```
+
+Chunks go without response by default; `withResponse: true` waits for the peripheral to acknowledge each one (some firmware-update protocols need it), and `chunkSize` makes them smaller. `timeoutMs` applies to each chunk. Other operations issued during a stream wait until it ends.
+
 ## Notifications
 
 ```ts

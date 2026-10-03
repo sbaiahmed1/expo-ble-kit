@@ -15,6 +15,8 @@ private struct QueueContractCase: Decodable {
 private struct QueueContractStep: Decodable {
   let enqueue: String?
   let timeoutMs: Double?
+  let first: Bool?
+  let thenFirst: String?
   let complete: String?
   let error: String?
   let cancel: String?
@@ -63,22 +65,31 @@ final class GattQueueContractTests: XCTestCase {
     }
   }
 
+  private func enqueue(_ name: String, timeout: TimeInterval?, first: Bool, thenFirst: String?, in run: Run) {
+    run.operations[name] = run.queue.enqueue(
+      .read,
+      target: name,
+      timeout: timeout,
+      first: first,
+      start: { run.started.append(name) },
+      completion: { [unowned self] result in
+        switch result {
+        case .success:
+          run.results[name] = "ok"
+          if let next = thenFirst {
+            enqueue(next, timeout: nil, first: true, thenFirst: nil, in: run)
+          }
+        case let .failure(error):
+          run.results[name] = error.code.rawValue
+        }
+      }
+    )
+  }
+
   private func apply(_ step: QueueContractStep, to run: Run) throws {
     if let name = step.enqueue {
-      run.operations[name] = run.queue.enqueue(
-        .read,
-        target: name,
-        timeout: step.timeoutMs.map { $0 / 1000 },
-        start: { run.started.append(name) },
-        completion: { result in
-          switch result {
-          case .success:
-            run.results[name] = "ok"
-          case let .failure(error):
-            run.results[name] = error.code.rawValue
-          }
-        }
-      )
+      let timeout = step.timeoutMs.map { $0 / 1000 }
+      enqueue(name, timeout: timeout, first: step.first ?? false, thenFirst: step.thenFirst, in: run)
     } else if let name = step.complete {
       let result: Result<GattOperation.Output, CoreError> = try step.error
         .map { .failure(CoreError(try code($0), "from the radio")) } ?? .success(.none)

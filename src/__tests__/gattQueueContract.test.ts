@@ -11,6 +11,8 @@ import type { Scheduler } from '../internal/scheduler';
 interface Step {
   enqueue?: string;
   timeoutMs?: number;
+  first?: boolean;
+  thenFirst?: string;
   complete?: string;
   error?: BleErrorCode;
   cancel?: string;
@@ -72,18 +74,24 @@ describe('GATT queue contract (shared with the native cores)', () => {
     const started: string[] = [];
     const results = new Map<string, string>();
 
+    const enqueue = (name: string, timeoutMs?: number, first?: boolean, thenFirst?: string) => {
+      operations.set(
+        name,
+        queue.enqueue(
+          'read',
+          { target: name, timeoutMs, first },
+          () => started.push(name),
+          (result) => {
+            results.set(name, result.ok ? 'ok' : result.error.code);
+            if (result.ok && thenFirst !== undefined) enqueue(thenFirst, undefined, true);
+          }
+        )
+      );
+    };
+
     for (const step of steps) {
       if (step.enqueue !== undefined) {
-        const name = step.enqueue;
-        operations.set(
-          name,
-          queue.enqueue(
-            'read',
-            { target: name, timeoutMs: step.timeoutMs },
-            () => started.push(name),
-            (result) => results.set(name, result.ok ? 'ok' : result.error.code)
-          )
-        );
+        enqueue(step.enqueue, step.timeoutMs, step.first, step.thenFirst);
       } else if (step.complete !== undefined) {
         const name = step.complete;
         const result = step.error

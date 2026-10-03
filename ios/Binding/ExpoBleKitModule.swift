@@ -137,16 +137,14 @@ public class ExpoBleKitModule: Module {
     }
   }
 
+  /// Peripherals only come from getPeripheral(), one object per id.
+  private static func useGetPeripheral() -> Exception {
+    Exception(name: "BleError", description: "Use getPeripheral(id) to get a peripheral", code: "INVALID_ARGUMENT")
+  }
+
   private func peripheralClass() -> ClassDefinition {
     Class(PeripheralObject.self) {
-      // Peripherals only come from getPeripheral(), one object per id.
-      Constructor { () -> PeripheralObject in
-        throw Exception(
-          name: "BleError",
-          description: "Use getPeripheral(id) to get a peripheral",
-          code: "INVALID_ARGUMENT"
-        )
-      }
+      Constructor { () -> PeripheralObject in throw ExpoBleKitModule.useGetPeripheral() }
 
       // Synchronous reads of the engine's snapshots (plan §4.7).
       Property("id") { (ref: PeripheralObject) in ref.id }
@@ -162,6 +160,10 @@ public class ExpoBleKitModule: Module {
 
       AsyncFunction("write") { (ref: PeripheralObject, request: Request, value: Data, promise: Promise) in
         self.write(ref.id, request, value, promise)
+      }
+
+      AsyncFunction("writeStream") { (ref: Handle, request: Request, data: Data, chunkSize: Int?, promise: Promise) in
+        self.writeStream(ref, request, data, chunkSize, promise)
       }
 
       AsyncFunction("readDescriptor") { (ref: PeripheralObject, request: Request, promise: Promise) in

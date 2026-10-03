@@ -34,18 +34,24 @@ class GattQueueContractTest {
     val started = mutableListOf<String>()
     val results = mutableMapOf<String, String>()
 
+    fun enqueue(op: String, timeout: Long?, first: Boolean, thenFirst: String?) {
+      operations[op] = queue.enqueue(GattOperation.Kind.READ, op, timeout, first, start = { started += op }) { result ->
+        results[op] = when (result) {
+          is GattResult.Success -> "ok"
+          is GattResult.Failure -> result.error.code.value
+        }
+        if (result is GattResult.Success && thenFirst != null) enqueue(thenFirst, null, true, null)
+      }
+    }
+
     for (step in steps) {
       when {
-        step.has("enqueue") -> {
-          val op = step.getString("enqueue")
-          val timeout = if (step.has("timeoutMs")) step.getLong("timeoutMs") else null
-          operations[op] = queue.enqueue(GattOperation.Kind.READ, op, timeout, start = { started += op }) { result ->
-            results[op] = when (result) {
-              is GattResult.Success -> "ok"
-              is GattResult.Failure -> result.error.code.value
-            }
-          }
-        }
+        step.has("enqueue") -> enqueue(
+          step.getString("enqueue"),
+          if (step.has("timeoutMs")) step.getLong("timeoutMs") else null,
+          step.optBoolean("first"),
+          step.optString("thenFirst").ifEmpty { null },
+        )
 
         step.has("complete") -> {
           val op = step.getString("complete")

@@ -193,7 +193,7 @@ extension PeripheralSession {
   /// (P2-02): while `canSendWriteWithoutResponse` is false, CoreBluetooth drops writes, so the packet
   /// waits for `peripheralIsReady(toSendWriteWithoutResponse:)`. A packet whose operation ended
   /// meanwhile (timeout, cancel, disconnect) is never sent.
-  private func startWrite(_ value: Data, to characteristic: CharacteristicLike, withResponse: Bool) {
+  func startWrite(_ value: Data, to characteristic: CharacteristicLike, withResponse: Bool) {
     guard !withResponse else {
       return peripheral.writeValue(value, for: characteristic, type: .withResponse)
     }
@@ -212,9 +212,8 @@ extension PeripheralSession {
     }
   }
 
-  /// The first discovered instance of `characteristic` in `service`, if it allows `property`.
   /// The first discovered instance of the characteristic, if it allows `property`.
-  private func findCharacteristic(
+  func findCharacteristic(
     _ path: AttributePath,
     allowing property: CBCharacteristicProperties,
     otherwise notPermitted: CoreError.Code

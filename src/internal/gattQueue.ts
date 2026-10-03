@@ -65,9 +65,13 @@ export class GattQueue {
     return this.pending.length + (this.running ? 1 : 0);
   }
 
+  /**
+   * Queues an operation. `first` queues it ahead of the queued ones: a completion that queues the
+   * next part of its work this way keeps its place (writeStream chunks, P2-03).
+   */
   enqueue<T>(
     kind: GattOperationKind,
-    options: { target?: string; timeoutMs?: number },
+    options: { target?: string; timeoutMs?: number; first?: boolean },
     start: () => void,
     completion: (result: GattResult<T>) => void
   ): GattOperation {
@@ -80,7 +84,11 @@ export class GattQueue {
       start,
       completion: completion as (result: GattResult) => void,
     };
-    this.pending.push(entry);
+    if (options.first) {
+      this.pending.unshift(entry);
+    } else {
+      this.pending.push(entry);
+    }
     this.schedulePump();
     return entry;
   }

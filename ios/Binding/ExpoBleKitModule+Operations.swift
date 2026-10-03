@@ -42,6 +42,31 @@ extension ExpoBleKitModule {
     }
   }
 
+  /// Progress goes to the peripheral object as `streamProgress`, keyed by the operation id.
+  func writeStream(_ ref: PeripheralObject, _ request: Request, _ data: Data, _ chunkSize: Int?, _ promise: Promise) {
+    attributeOperation(ref.id, promise) { session, done in
+      let stream = PeripheralSession.StreamRequest(
+        data: data,
+        withResponse: request.withResponse,
+        chunkSize: chunkSize,
+        timeout: request.timeout,
+        operationId: request.operationId
+      )
+      session.writeStream(
+        request.path,
+        stream,
+        onProgress: { [weak ref] sent, total in
+          var event = StreamProgressEventRecord()
+          event.operationId = request.operationId
+          event.sent = sent
+          event.total = total
+          ref?.emit(event: "streamProgress", payload: event)
+        },
+        completion: { done($0.map { _ in nil }) }
+      )
+    }
+  }
+
   func readDescriptor(_ id: String, _ request: Request, _ promise: Promise) {
     attributeOperation(id, promise) { session, done in
       session.readDescriptor(request.path, timeout: request.timeout, operationId: request.operationId) {

@@ -10,5 +10,5 @@ This app exercises the `expo-ble-kit` library in the parent directory. Read `../
 - There is no router. Example screens planned in §7 (Explorer, Heart Rate, Phone-as-Peripheral, Throughput, Background) are added as plain components until a navigation library is chosen: `App.tsx` switches tabs between the screens in `src/screens/`.
 - Demo mode (the switch in the header) installs the fake adapter with the test peripheral of `test-peripherals/profile.json` (`src/demo/testPeripheral.ts`), so the screens, their Jest tests and the Maestro flows (`e2e/maestro/`) run without hardware. Leaving it needs an app restart.
 - `yarn test` runs the screens' Jest tests against the fake. Jest maps `expo-ble-kit` to `../src` and forces one copy of `react`, `react-native` and `expo` (the example's).
-- Until reconnection policies land (P2-01), the Heart Rate screen reconnects from the app (`src/lib/useKeepConnected.ts`) with a ReconnectPolicy's backoff.
+- The Heart Rate screen stays connected with `connect({ reconnect })` (P2-01). The developer checks' sink buttons (`src/lib/sink.ts`) are the acceptance runs of P2-02 and P2-03 against the test peripheral.
 - Bluetooth does not work in the iOS Simulator. BLE behavior on iOS is only verified on devices (plan §8.1).

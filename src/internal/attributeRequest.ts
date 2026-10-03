@@ -1,5 +1,5 @@
 import { BleError } from '../errors';
-import type { OpOptions, SubscribeOptions, WriteOptions } from '../types';
+import type { OpOptions, StreamOptions, SubscribeOptions, WriteOptions } from '../types';
 import { normalizeUUID } from '../uuid';
 
 /** Plan §4.9: every GATT operation has a timeout, 10 s unless the call says otherwise. */
@@ -52,6 +52,30 @@ export function toNativeAttributeRequest(
     withResponse: options.withResponse ?? true,
     timeoutMs: operationTimeout(options),
   };
+}
+
+/** What writeStream adds to the request (plan §5.4, P2-03). Throws INVALID_ARGUMENT. */
+export function toStreamParameters(options: StreamOptions = {}): {
+  withResponse: boolean;
+  chunkSize: number | null;
+  onProgress: ((sent: number, total: number) => void) | undefined;
+} {
+  const { chunkSize, onProgress } = options;
+  if (chunkSize !== undefined && (!Number.isInteger(chunkSize) || chunkSize < 1)) {
+    throw invalid('chunkSize', 'expected an integer of 1 or more');
+  }
+  if (onProgress !== undefined && typeof onProgress !== 'function') {
+    throw invalid('onProgress', 'expected a function');
+  }
+  return { withResponse: options.withResponse ?? false, chunkSize: chunkSize ?? null, onProgress };
+}
+
+/** A stream's data: bytes of any length (Appendix B rule 6). */
+export function checkStreamData(data: unknown): Uint8Array {
+  if (!(data instanceof Uint8Array)) {
+    throw invalid('data', 'expected a Uint8Array');
+  }
+  return data;
 }
 
 /** Attribute values are bytes end to end (Appendix B rule 6). */

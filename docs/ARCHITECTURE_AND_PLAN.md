@@ -1,6 +1,6 @@
 # Expo BLE (`expo-ble-kit`) — Architecture & Implementation Plan
 
-> **Status:** Draft v0.30 · **Date:** 2026-10-03 · **Scope:** proposition #3, an Expo-first Bluetooth Low Energy module · **Changes:** Appendix D
+> **Status:** Draft v0.31 · **Date:** 2026-10-03 · **Scope:** proposition #3, an Expo-first Bluetooth Low Energy module · **Changes:** Appendix D
 >
 > **Package name:** `expo-ble-kit` (D0a, decided 2026-10-02) · native module `ExpoBleKit` · Android package `expo.modules.blekit`.
 >
@@ -331,6 +331,7 @@ Invariants:
   - Android submit: `BluetoothGatt` allows one outstanding write (`mDeviceBusy`, cleared by the callback; Android 13+ also one per device across clients). Android 13+ returns `ERROR_GATT_WRITE_REQUEST_BUSY`; before Android 13, `writeCharacteristic` / `writeDescriptor` return false, and with the client open and the attribute checked, busy is the remaining reason. Both are retried every 5 ms within the op's timeout. Sources: AOSP `BluetoothGatt.java` `writeCharacteristic` (`android12-release`, `android14-release`) and `GattService.java` `writeCharacteristic` permits (`android14-release`).
 - **Long values:** writes with response larger than MTU − 3 rely on the platform's long-write support, up to the 512-byte ATT maximum ⚠️ VERIFY on both platforms. Larger payloads use `writeStream()` (chunked, flow-controlled, progress callback, abortable).
 - **Ordering:** for a given peripheral, completion order equals submission order. There is no ordering across peripherals.
+- **Streams** (P2-03): `writeStream` runs as one queue op per chunk. A chunk's completion queues the next chunk at the front of the queue, before the next op can start (the pump is always asynchronous), so a stream keeps its place: ops submitted after it run after its last chunk, and the ordering rule holds for the stream as a whole. The queue contract has the `first` and `thenFirst` cases for this.
 
 ### 4.10 Events and batching
 
@@ -502,7 +503,7 @@ Bare apps follow `docs/guides/bare-setup.md`, which lists exactly the entries th
 
 This section is the contract. Changing it requires updating `src/types.ts`, docs and tests in the same PR (Appendix B, rule 8).
 
-Members owned by later tasks are added to the exported types when those tasks land; until then they are absent, not stubs: `writeStream` (P2-03), `subscribeBatched` (P2-04), `addServicesChangedListener` (P2-06), `Peripheral.android` (P5-01, P5-02, P2-06), `openL2CAPChannel` (P5-03), `setLogLevel` and `setLogHandler` (P2-07), the peripheral role (P4), background tasks (P3), and `BleManager.ios` / `BleManager.android` (P5-04, P5-05). `src/__tests__/publicApi.test.ts` compares every §5 interface with `src/types.ts` and the testing entry, member by member, with this list as the only exception, and checks the exported values.
+Members owned by later tasks are added to the exported types when those tasks land; until then they are absent, not stubs: `subscribeBatched` (P2-04), `addServicesChangedListener` (P2-06), `Peripheral.android` (P5-01, P5-02, P2-06), `openL2CAPChannel` (P5-03), `setLogLevel` and `setLogHandler` (P2-07), the peripheral role (P4), background tasks (P3), and `BleManager.ios` / `BleManager.android` (P5-04, P5-05). `src/__tests__/publicApi.test.ts` compares every §5 interface with `src/types.ts` and the testing entry, member by member, with this list as the only exception, and checks the exported values.
 
 ### 5.1 Common types
 
@@ -664,7 +665,7 @@ export interface WriteOptions extends OpOptions { withResponse?: boolean } // de
 export interface StreamOptions extends OpOptions {
   /** Default false. true = every chunk waits for the ATT acknowledgement (slower; for peripherals that require it, e.g. some DFU protocols). */
   withResponse?: boolean;
-  /** Default: the maximum value length for the chosen write type (MTU − 3 on Android, maximumWriteValueLength on iOS). */
+  /** Default: one packet, MTU − 3 (maximumWriteValueLength(.withoutResponse) on iOS), for either write type. At most one packet without response, 512 with response. */
   chunkSize?: number;
   onProgress?: (sent: number, total: number) => void;
 }
@@ -803,6 +804,14 @@ API rules (decided in P1-12):
 - Notifications are fanned out in JS: each subscriber gets every value of its characteristic. A subscriber callback that throws doesn't stop the others; the error is rethrown asynchronously. A disconnect marks every subscription inactive.
 - `getPeripheral(id)` returns the same object for the same id while it is in use. `getKnownPeripherals` and `getSystemConnectedPeripherals` resolve with those objects; both use the manager without showing a prompt, so they reject like `connect()` when it can't be used. Android keeps every valid address in `getKnownPeripherals` (§4.12).
 - `getDiagnostics()` combines the native snapshot with the permissions (all `undetermined` when they can't be read, the error then being among the recent errors) and the last 100 errors the API returned (`recentErrors`, kept in JS).
+
+Stream rules (decided in P2-03):
+
+- `writeStream(service, characteristic, data, options)` takes any length of `data` and writes it natively, one chunk per write, without a JS round trip per chunk. The native function is `writeStream(request, data, chunkSize | null)` with a JS-assigned `operationId` in the request; the TS layer validates the input (`chunkSize` an integer ≥ 1, `onProgress` a function, `data` a `Uint8Array`) and applies `withResponse: false`.
+- Chunks are one packet by default for both write types: MTU − 3 on Android, `maximumWriteValueLength(for: .withoutResponse)` on iOS. Firmware-update protocols expect one ATT write per chunk, so a stream with response doesn't default to long writes. `chunkSize` above one packet without response, or above 512 with response, is `INVALID_ARGUMENT` (checked natively, where the MTU is known). Chunks without response follow the flow control of §4.9.
+- `timeoutMs` (10 s default) applies to each chunk. The first failed chunk rejects the stream with its code; the message adds how many bytes were written before it. A disconnect rejects with `DISCONNECTED` (rule 5).
+- Cancelling (`signal`) answers at once with `OPERATION_CANCELLED`: a queued chunk is removed, a running one finishes at the radio, and no further chunk is queued. The native core queues the next chunk in the same step as the last one completes, so a cancel always finds the stream's current chunk.
+- Progress: native emits `streamProgress { operationId, sent, total }` on the peripheral object about every 1 % (when at least `max(chunkSize, total / 100)` bytes passed) and after the last chunk, at most about 101 events. Events and the promise travel separately, so the TS layer calls `onProgress(total, total)` itself before resolving if that event hasn't arrived, and ignores events after it. A throwing `onProgress` is reported like a listener error and doesn't stop the stream. Empty `data` resolves without writing or reporting.
 
 Reconnection rules (decided in P2-01):
 
@@ -969,7 +978,7 @@ export interface VirtualPeripheral {
 }
 ```
 
-Fake rules (P1-13): Bluetooth is on and every permission granted unless `installFakeBle` says otherwise; a peripheral advertises from `addPeripheral` until `advertise(false)`; a connect to a peripheral that isn't advertising waits (times out, or completes when it advertises), like a real absent device; writes store the value, so a later read returns it; writes without response take at most MTU − 3 bytes (20 at the default MTU); the MTU is negotiated like on Android, during the connect and in `requestMtu()`, as the smaller of the request and the peripheral's `mtu` (23 unless its config says more), and a failed setup exchange (`injectError` op `requestMtu`) is a `warning`; results and operation answers arrive on later timer ticks, so tests advance timers (Jest fake timers work). `notify()` reaches a connected client only while it has the CCCD enabled, as on a real peripheral, and a disconnect resets the CCCDs; `mode: 'indicate'` follows Android (allowed on a characteristic that also notifies). A peripheral's `name` is known once a scan delivered it or a connection reached `connected`. `getKnownPeripherals` drops ids without a virtual peripheral (like iOS); `getSystemConnectedPeripherals` lists the connected ones that have one of the services. Cancelled operations behave like the native queues: a queued one never runs, a running one finishes at the radio after its caller was answered.
+Fake rules (P1-13): Bluetooth is on and every permission granted unless `installFakeBle` says otherwise; a peripheral advertises from `addPeripheral` until `advertise(false)`; a connect to a peripheral that isn't advertising waits (times out, or completes when it advertises), like a real absent device; writes store the value, so a later read returns it; writes without response take at most MTU − 3 bytes (20 at the default MTU); the MTU is negotiated like on Android, during the connect and in `requestMtu()`, as the smaller of the request and the peripheral's `mtu` (23 unless its config says more), and a failed setup exchange (`injectError` op `requestMtu`) is a `warning`; results and operation answers arrive on later timer ticks, so tests advance timers (Jest fake timers work). `notify()` reaches a connected client only while it has the CCCD enabled, as on a real peripheral, and a disconnect resets the CCCDs; `mode: 'indicate'` follows Android (allowed on a characteristic that also notifies). A peripheral's `name` is known once a scan delivered it or a connection reached `connected`. `getKnownPeripherals` drops ids without a virtual peripheral (like iOS); `getSystemConnectedPeripherals` lists the connected ones that have one of the services. Cancelled operations behave like the native queues: a queued one never runs, a running one finishes at the radio after its caller was answered. `writeStream` chunks like the native cores (each chunk a queued write, recorded in `writes`, queuing the next one first) and emits the same progress events.
 
 ### 5.9 Usage examples
 
@@ -1232,6 +1241,12 @@ Parallelism: P0-06/P0-07 can run alongside P0-03/P0-04. With two people, P4 can 
 - [ ] **P2-03 `writeStream()`** — deps: P2-02.
   Chunking, progress, abort.
   **Accept:** 1 MB completes; abort stops within one chunk; throughput is logged.
+  **Progress 2026-10-03 (open: waits for a test peripheral and the device matrix):** `Peripheral.writeStream` on both platforms and in the fake (stream rules in §5.4, queue rule in §4.9).
+  - Queue: an op can be queued first; the shared contract has two new cases (`first`, `thenFirst`), run by the Kotlin, Swift and TypeScript queues.
+  - Native: `PeripheralSession.writeStream` (Android) and `PeripheralSession+Stream.swift` (iOS): chunks through the queue with the flow control of P2-02, progress about every 1 %, per-chunk timeouts, cancel within the chunk in flight; the bindings emit `streamProgress`.
+  - TS: validation, the progress callback (with the final report guaranteed before the promise), `AbortSignal` wiring; the fake chunks the same way.
+  - Example: "Stream 1 MB (writeStream)" and "Stream 1 MB, abort at 25 %" in the developer checks, with the throughput and where the peripheral's counter stopped; `e2e/maestro/sink.yaml` runs them after the P2-02 check.
+  - Tests: 8 Android and 8 iOS (1 MB-scale ordering, chunk sizes, ops waiting for the stream, cancel, failures, per-chunk timeouts, disconnect, validation), 10 Jest on the public API (1 MB in order through the fake), 2 example Jest.
 - [ ] **P2-04 Native notification batching** — deps: P1-08.
   Batching and the overflow policy from §4.10.
   **Accept:** 100 Hz × 20 B for 60 minutes with `intervalMs: 16` gives ≤ ~63 JS events/s and `dropped == 0`.
@@ -1608,3 +1623,4 @@ Submit results (`BluetoothStatusCodes`, API 33+): 1 not enabled → `BLUETOOTH_P
 | v0.28 | 2026-10-03 | P1-15 in progress: Explorer and Heart Rate screens with demo mode, example Jest tests, the two Maestro flows (passing in demo mode on the Galaxy A52). The test profile advertises Heart Rate (§8.3) |
 | v0.29 | 2026-10-03 | P2-01 in progress: reconnection policies on both platforms and in the fake. §4.8 diagram and invariants for `reconnecting` (entered from `ready` only, failed attempts wait again), reconnection rules in §5.4 (Android direct-then-`autoConnect`, iOS 17 auto-reconnect, subscription restore and `subscriptionEnded`); the Heart Rate example drops its app-level loop |
 | v0.30 | 2026-10-03 | P2-02 in progress: write-without-response flow control verified (Apple docs, AOSP sources) and written in §4.9, closing its ⚠️ VERIFY: Android congestion statuses (0x8F success, 0x81 resend), legacy refusals retried as busy, iOS waiting packets tied to their op. Appendix A.1 rows for 0x8F and 0x81 on writes without response; the example's 1 MB sink check |
+| v0.31 | 2026-10-03 | P2-03 in progress: `writeStream` on both platforms and in the fake. Stream rules in §5.4 (one packet per chunk by default for both write types, per-chunk timeouts, progress about every 1 % with the final report made by the TS layer), the queue's `first` option and the stream ordering rule in §4.9, two queue contract cases; the example's stream and abort checks |

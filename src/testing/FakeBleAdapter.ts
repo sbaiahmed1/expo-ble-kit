@@ -126,6 +126,8 @@ export interface VirtualPeripheral {
 
 const CCCD = normalizeUUID('2902');
 const MAX_ATTRIBUTE_LENGTH = 512;
+/** writeStream reports progress about this many times, like the native cores. */
+const STREAM_PROGRESS_STEPS = 100;
 const MIN_MTU = 23;
 const MAX_MTU = 517;
 
@@ -348,6 +350,8 @@ class FakePeripheralHandle implements NativePeripheralPort {
   private subscriptionKeys = new Map<number, string>();
   /** Running and queued operations JS may cancel, by the id JS gave them. */
   private cancellable = new Map<number, GattOperation>();
+  /** writeStream calls in flight, by operation id. */
+  private readonly streams = new Map<number, { cancelled: boolean }>();
 
   constructor(
     readonly id: string,
@@ -470,6 +474,79 @@ class FakePeripheralHandle implements NativePeripheralPort {
         withResponse: request.withResponse,
       });
     });
+  }
+
+  /** Like the native cores (P2-03): chunks through the queue, each queuing the next one first. */
+  async writeStream(
+    request: NativeAttributeRequest,
+    data: Uint8Array,
+    chunkSize: number | null
+  ): Promise<void> {
+    const property = request.withResponse ? 'write' : 'writeWithoutResponse';
+    const characteristic = this.findCharacteristic(
+      request,
+      [property],
+      BleErrorCode.WRITE_NOT_PERMITTED
+    );
+    const largest = request.withResponse ? MAX_ATTRIBUTE_LENGTH : this.mtu - 3;
+    const size = chunkSize ?? this.mtu - 3;
+    if (!Number.isInteger(size) || size < 1 || size > largest) {
+      throw fail(
+        BleErrorCode.INVALID_ARGUMENT,
+        `chunkSize ${size} is outside 1…${largest} for this write type`
+      );
+    }
+    const kind = request.withResponse ? 'write' : 'writeWithoutResponse';
+    const step = Math.max(size, Math.floor(data.length / STREAM_PROGRESS_STEPS));
+    // Natively the next chunk is queued in the same step as the last one completes, so a cancel
+    // always finds one; here the loop resumes later, so a cancel in between is remembered.
+    const stream = { cancelled: false };
+    const operationId = request.operationId ?? null;
+    if (operationId !== null) this.streams.set(operationId, stream);
+    try {
+      await this.streamChunks(request, data, characteristic, { kind, size, step, stream });
+    } finally {
+      if (operationId !== null) this.streams.delete(operationId);
+    }
+  }
+
+  private async streamChunks(
+    request: NativeAttributeRequest,
+    data: Uint8Array,
+    characteristic: VirtualCharacteristic,
+    plan: { kind: GattOperationKind; size: number; step: number; stream: { cancelled: boolean } }
+  ): Promise<void> {
+    const { kind, size, step, stream } = plan;
+    let reported = 0;
+    for (let offset = 0; offset < data.length; offset += size) {
+      const chunk = data.slice(offset, offset + size);
+      try {
+        if (stream.cancelled) {
+          throw fail(BleErrorCode.OPERATION_CANCELLED, 'Operation write was cancelled');
+        }
+        await this.operation(kind, 'write', { ...request, first: offset > 0 }, () => {
+          characteristic.value = chunk;
+          this.device()?.writes.push({
+            characteristic: request.characteristic,
+            value: chunk.slice(),
+            withResponse: request.withResponse,
+          });
+        });
+      } catch (error) {
+        const failure = error as BleError;
+        throw new BleError(
+          failure.code,
+          `${failure.message} (stream stopped after ${offset} of ${data.length} bytes)`,
+          { retryable: failure.retryable }
+        );
+      }
+      const end = offset + chunk.length;
+      if (end === data.length || end - reported >= step) {
+        reported = end;
+        const operationId = request.operationId ?? null;
+        this.emitter.emit('streamProgress', { operationId, sent: end, total: data.length });
+      }
+    }
   }
 
   async readDescriptor(request: NativeAttributeRequest): Promise<Uint8Array> {
@@ -623,6 +700,10 @@ class FakePeripheralHandle implements NativePeripheralPort {
   }
 
   async cancelOperation(operationId: number): Promise<void> {
+    const stream = this.streams.get(operationId);
+    if (stream) {
+      stream.cancelled = true;
+    }
     const operation = this.cancellable.get(operationId);
     if (operation) {
       this.queue.cancel(operation);
@@ -933,17 +1014,22 @@ class FakePeripheralHandle implements NativePeripheralPort {
   private operation<T>(
     kind: GattOperationKind,
     op: FakeOperation,
-    target: { characteristic?: string; timeoutMs: number; operationId?: number | null },
+    target: {
+      characteristic?: string;
+      timeoutMs: number;
+      operationId?: number | null;
+      first?: boolean;
+    },
     perform: () => T
   ): Promise<T> {
     if (this.state !== 'connected') {
       return Promise.reject(fail(BleErrorCode.DISCONNECTED, `Not connected to ${this.id}`));
     }
-    const { characteristic, timeoutMs, operationId } = target;
+    const { characteristic, timeoutMs, operationId, first } = target;
     return new Promise((resolve, reject) => {
       const operation = this.queue.enqueue<T>(
         kind,
-        { target: characteristic, timeoutMs },
+        { target: characteristic, timeoutMs, first },
         () =>
           this.scheduler.schedule(() => {
             // A running operation that was cancelled still finishes at the radio; the queue then

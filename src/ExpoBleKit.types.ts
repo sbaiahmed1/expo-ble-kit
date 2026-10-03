@@ -39,9 +39,13 @@ export type SubscriptionEndedEvent = {
   message: string;
 };
 
+/** Bytes a writeStream wrote so far (P2-03), keyed by its operation id. */
+export type StreamProgressEvent = { operationId: number | null; sent: number; total: number };
+
 export type PeripheralObjectEvents = {
   connectionStateChange: (event: ConnectionStateEvent) => void;
   notification: (event: NotificationEvent) => void;
   mtuChange: (event: MtuChangeEvent) => void;
   subscriptionEnded: (event: SubscriptionEndedEvent) => void;
+  streamProgress: (event: StreamProgressEvent) => void;
 };

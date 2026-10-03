@@ -86,12 +86,15 @@ final class GattQueue {
   var depth: Int { pending.count + (current == nil ? 0 : 1) }
 
   /// Queues an operation. `start` issues the platform call when its turn comes; the result is
-  /// reported later through `complete(_:where:)`.
+  /// reported later through `complete(_:where:)`. `first` queues it ahead of the queued ones: a
+  /// completion that queues the next part of its work this way keeps its place (writeStream
+  /// chunks, P2-03).
   @discardableResult
   func enqueue(
     _ kind: GattOperation.Kind,
     target: String? = nil,
     timeout: TimeInterval? = nil,
+    first: Bool = false,
     start: @escaping () -> Void,
     completion: @escaping GattOperation.Completion
   ) -> GattOperation {
@@ -104,7 +107,11 @@ final class GattQueue {
       completion: completion
     )
     nextId += 1
-    pending.append(operation)
+    if first {
+      pending.insert(operation, at: 0)
+    } else {
+      pending.append(operation)
+    }
     schedulePump()
     return operation
   }

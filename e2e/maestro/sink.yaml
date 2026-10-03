@@ -1,9 +1,10 @@
-# P2-02: 1 MB sent through repeated writes without response reaches the test peripheral's byte
-# counter (SINK_NO_RSP → SINK_COUNTER), from the developer checks.
+# P2-02 and P2-03: 1 MB sent through repeated writes without response, then through one
+# writeStream, reaches the test peripheral's byte counter (SINK_NO_RSP → SINK_COUNTER); a stream
+# aborted at 25 % rejects with OPERATION_CANCELLED. From the developer checks.
 #   maestro test e2e/maestro/sink.yaml               # Bumble or the nRF52840 advertising
 #   maestro test -e DEMO=true e2e/maestro/sink.yaml  # the app's virtual test peripheral
 appId: expo.modules.blekit.example
-name: Sink 1 MB
+name: Sink and stream 1 MB
 ---
 - runFlow: _setup.yaml
 - tapOn:
@@ -17,7 +18,31 @@ name: Sink 1 MB
 - extendedWaitUntil:
     visible:
       id: sink-status
-      text: "Complete: 1048576 / 1048576 bytes.*"
+      text: "Writes complete: 1048576 / 1048576 bytes.*"
+    timeout: 300000
+- copyTextFrom:
+    id: sink-status
+- evalScript: ${console.log(maestro.copiedText)}
+
+# P2-03: the same megabyte in one writeStream
+- tapOn:
+    id: stream-1mb
+- extendedWaitUntil:
+    visible:
+      id: sink-status
+      text: "Stream complete: 1048576 / 1048576 bytes.*"
+    timeout: 300000
+- copyTextFrom:
+    id: sink-status
+- evalScript: ${console.log(maestro.copiedText)}
+
+# P2-03: an abort stops the stream
+- tapOn:
+    id: stream-abort
+- extendedWaitUntil:
+    visible:
+      id: sink-status
+      text: "Stream aborted: OPERATION_CANCELLED.*"
     timeout: 300000
 - copyTextFrom:
     id: sink-status

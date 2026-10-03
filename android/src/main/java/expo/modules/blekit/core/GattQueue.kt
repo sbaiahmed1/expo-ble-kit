@@ -76,17 +76,19 @@ class GattQueue(private val executor: SerialExecutor, private val defaultTimeout
 
   /**
    * Queues an operation. [start] issues the platform call when its turn comes; the result is
-   * reported later through [complete].
+   * reported later through [complete]. [first] queues it ahead of the queued ones: a completion that
+   * queues the next part of its work this way keeps its place (writeStream chunks, P2-03).
    */
   fun enqueue(
     kind: GattOperation.Kind,
     target: String? = null,
     timeoutMs: Long? = null,
+    first: Boolean = false,
     start: () -> Unit,
     completion: (GattResult) -> Unit,
   ): GattOperation {
     val operation = GattOperation(nextId++, kind, target, timeoutMs ?: defaultTimeoutMs, start, completion)
-    pending.addLast(operation)
+    if (first) pending.addFirst(operation) else pending.addLast(operation)
     schedulePump()
     return operation
   }

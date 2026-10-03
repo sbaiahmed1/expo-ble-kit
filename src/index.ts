@@ -34,6 +34,7 @@ export type {
   ScanResult,
   ScanSession,
   Service,
+  StreamOptions,
   SubscribeOptions,
   Subscription,
   WriteOptions,

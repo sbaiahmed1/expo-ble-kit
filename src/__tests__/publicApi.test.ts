@@ -21,7 +21,6 @@ const LATER: Record<string, Record<string, string>> = {
     setLogHandler: 'P2-07',
   },
   Peripheral: {
-    writeStream: 'P2-03',
     subscribeBatched: 'P2-04',
     addServicesChangedListener: 'P2-06',
     android: 'P5-01',
@@ -31,7 +30,6 @@ const LATER: Record<string, Record<string, string>> = {
 
 /** Interfaces of the later tasks themselves (P2–P5), not yet in src/types.ts. */
 const LATER_INTERFACES = new Set([
-  'StreamOptions',
   'BatchOptions',
   'NotificationBatch',
   'L2CAPChannel',

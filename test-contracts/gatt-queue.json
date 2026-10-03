@@ -1,5 +1,5 @@
 {
-  "$comment": "GATT queue contract (plan §4.9, P1-02, P1-13). Swift, Kotlin and TypeScript tests all run these cases against their queue, so the fake adapter orders and fails operations like the native cores. Operations are named; 'complete' is the radio answering one. After every step the harness runs everything that is due. Results: 'ok', a BleErrorCode, or null while pending.",
+  "$comment": "GATT queue contract (plan §4.9, P1-02, P1-13). Swift, Kotlin and TypeScript tests all run these cases against their queue, so the fake adapter orders and fails operations like the native cores. Operations are named; 'complete' is the radio answering one. After every step the harness runs everything that is due. Results: 'ok', a BleErrorCode, or null while pending. 'first' queues an operation ahead of the queued ones; 'thenFirst' names an operation its completion queues first when it succeeds (how writeStream chains its chunks, P2-03).",
   "cases": [
     {
       "name": "one operation at a time, in submission order",
@@ -13,6 +13,30 @@
         { "complete": "b" },
         { "complete": "c" },
         { "expect": { "started": ["a", "b", "c"], "results": { "b": "ok", "c": "ok" }, "depth": 0 } }
+      ]
+    },
+    {
+      "name": "an operation queued first runs before the queued ones",
+      "steps": [
+        { "enqueue": "a" },
+        { "enqueue": "b" },
+        { "enqueue": "c", "first": true },
+        { "expect": { "started": ["a"], "depth": 3 } },
+        { "complete": "a" },
+        { "expect": { "started": ["a", "c"] } },
+        { "complete": "c" },
+        { "expect": { "started": ["a", "c", "b"] } }
+      ]
+    },
+    {
+      "name": "a continuation queued first from a completion runs before operations queued meanwhile",
+      "steps": [
+        { "enqueue": "a", "thenFirst": "a2" },
+        { "enqueue": "b" },
+        { "complete": "a" },
+        { "expect": { "started": ["a", "a2"], "results": { "a": "ok", "a2": null, "b": null }, "depth": 2 } },
+        { "complete": "a2" },
+        { "expect": { "started": ["a", "a2", "b"], "results": { "a2": "ok", "b": null } } }
       ]
     },
     {
