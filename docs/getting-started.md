@@ -239,6 +239,15 @@ controller.abort(); // rejects with OPERATION_CANCELLED; a queued read never rea
 
 `connect({ timeoutMs: null })` waits until the device appears ("connect when in range"); `disconnect()` or a signal cancels it.
 
+## Logging
+
+```ts
+BleManager.setLogLevel('debug'); // 'none' | 'error' | 'warn' (default) | 'info' | 'debug' | 'verbose'
+BleManager.setLogHandler((entry) => console.log(entry.level, entry.peripheralId, entry.opId, entry.message));
+```
+
+At `debug`, every GATT operation logs a line like `read 0c6c1001-…: ok in 34 ms` with its operation id. Logs also go to Logcat (tag `BleKit`) and to the unified log on iOS (subsystem `expo.blekit`). `setLogHandler(null)` stops the handler.
+
 ## Testing your app
 
 `expo-ble-kit/testing` replaces the native module with virtual peripherals in Jest:

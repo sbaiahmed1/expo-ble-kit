@@ -1,6 +1,7 @@
-import type { ScanErrorEvent, ScanResultsEvent } from './ExpoBleKit.types';
+import type { LogEvent, ScanErrorEvent, ScanResultsEvent } from './ExpoBleKit.types';
 import { PeripheralImpl } from './Peripheral';
 import { BleError, BleErrorCode } from './errors';
+import { checkLogLevel, deliver, setHandler, setLevel } from './internal/log';
 import { getNativeModule } from './internal/native';
 import {
   abortedError,
@@ -18,6 +19,7 @@ import type {
   BlePermissions,
   BleState,
   Diagnostics,
+  LogEntry,
   Peripheral,
   ScanOptions,
   ScanResult,
@@ -58,6 +60,20 @@ function checkPermissionRequest(request: BlePermissionRequest | undefined): void
       throw invalid(`request.${flag}`, 'expected a boolean');
     }
   }
+}
+
+/** The native `log` subscription while an app handler is set (plan §4.16). */
+let logSubscription: Subscription | null = null;
+
+/** A native log line as a `LogEntry`, without the fields native left empty. */
+function toLogEntry({ level, message, timestamp, peripheralId, opId }: LogEvent): LogEntry {
+  return {
+    level,
+    message,
+    timestamp,
+    ...(peripheralId != null && { peripheralId }),
+    ...(opId != null && { opId }),
+  };
 }
 
 /** Shown in getDiagnostics() when the permissions can't be read (the error is in recentErrors). */
@@ -245,6 +261,27 @@ export const BleManager: BleManagerApi = {
       const connected = await getNativeModule().getSystemConnectedPeripherals(uuids);
       return connected.map(getPeripheral);
     });
+  },
+
+  setLogLevel(level) {
+    const checked = checkLogLevel(level);
+    getNativeModule().setLogLevel(checked);
+    setLevel(checked);
+  },
+
+  setLogHandler(handler) {
+    if (handler !== null && typeof handler !== 'function') {
+      throw invalid('handler', 'expected a function or null');
+    }
+    const module = getNativeModule();
+    setHandler(handler);
+    if (handler && !logSubscription) {
+      logSubscription = module.addListener('log', (event: LogEvent) => deliver(toLogEntry(event)));
+    } else if (!handler && logSubscription) {
+      logSubscription.remove();
+      logSubscription = null;
+    }
+    module.setLogForwarding(handler !== null);
   },
 
   getDiagnostics() {

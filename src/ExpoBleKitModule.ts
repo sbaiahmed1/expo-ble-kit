@@ -10,6 +10,7 @@ import type {
   BlePermissions,
   BleState,
   ConnectionState,
+  LogLevel,
   Service,
 } from './types';
 
@@ -65,6 +66,8 @@ export declare class ExpoBleKitModule
   getKnownPeripherals(ids: string[]): Promise<string[]>;
   getSystemConnectedPeripherals(services: string[]): Promise<string[]>;
   getDiagnosticsAsync(): Promise<NativeDiagnostics>;
+  setLogLevel(level: LogLevel): void;
+  setLogForwarding(enabled: boolean): void;
 }
 
 /** Null where the module isn't linked: Jest, or an app that wasn't rebuilt (plan §4.6). */

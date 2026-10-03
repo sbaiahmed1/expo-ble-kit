@@ -11,6 +11,7 @@ import type {
   BleState,
   ConnectionState,
   Diagnostics,
+  LogLevel,
   Service,
   Subscription,
 } from '../types';
@@ -38,8 +39,12 @@ export interface NativeBleKitPort {
   getKnownPeripherals(ids: string[]): Promise<string[]>;
   /** Ids of peripherals connected at the OS level. Android can't filter by `services` (plan §6). */
   getSystemConnectedPeripherals(services: string[]): Promise<string[]>;
-  /** So far: state, sessions and, on Android, open GATT clients. The rest lands with P2-07. */
+  /** State, sessions and, on Android, open GATT clients; JS adds permissions and errors. */
   getDiagnosticsAsync(): Promise<NativeDiagnostics>;
+  /** The native log level (plan §4.16). */
+  setLogLevel(level: LogLevel): void;
+  /** While on, native log lines also arrive as `log` events. */
+  setLogForwarding(enabled: boolean): void;
   addListener<E extends keyof ExpoBleKitModuleEvents>(
     event: E,
     listener: ExpoBleKitModuleEvents[E]

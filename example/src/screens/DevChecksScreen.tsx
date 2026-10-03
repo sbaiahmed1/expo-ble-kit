@@ -9,6 +9,8 @@ import {
   usePeripheral,
   useScan,
   type BlePermissions,
+  type LogEntry,
+  type LogLevel,
   type Peripheral,
   type ScanResult,
   type ScanSession,
@@ -25,8 +27,8 @@ import { describeMultipleDevices, runMultipleDevices } from '../lib/multipleDevi
 import { abortStreamToSink, sendToSink, streamToSink, type SinkReport } from '../lib/sink';
 
 // Developer checks on the public API (P1-12): adapter state, permissions, scanning, connections
-// to a device that isn't there, and throughput, batching, several test peripherals at once and GATT
-// hygiene (P2-02 to P2-06).
+// to a device that isn't there, throughput, batching, several test peripherals at once, GATT
+// hygiene and the log (P2-02 to P2-07).
 
 const TEST_SERVICE = '0c6c1000-b347-4cfa-9827-1c5a13658519';
 const TEST_NAME = 'BleKit-Test';
@@ -102,6 +104,23 @@ export function DevChecksScreen() {
       [`${new Date().toISOString().slice(11, 23)} ${state}`, ...lines].slice(0, 8)
     );
   }, [state]);
+
+  // P2-07: the last log lines, at the level picked below.
+  const [logLevel, setLogLevel] = useState<LogLevel>('warn');
+  const [logLines, setLogLines] = useState<string[]>([]);
+  useEffect(() => {
+    const show = (entry: LogEntry) => {
+      const about = [entry.peripheralId?.slice(-5), entry.opId && `op #${entry.opId}`];
+      const line = [entry.level, ...about.filter(Boolean)].join(' ') + `: ${entry.message}`;
+      setLogLines((lines) => [line, ...lines].slice(0, 12));
+    };
+    BleManager.setLogHandler(show);
+    return () => BleManager.setLogHandler(null);
+  }, []);
+  const pickLogLevel = (level: LogLevel) => {
+    BleManager.setLogLevel(level);
+    setLogLevel(level);
+  };
 
   useEffect(() => {
     const listener = absent.addConnectionStateListener((next, error) => {
@@ -441,6 +460,15 @@ export function DevChecksScreen() {
         <Text testID="nearby" style={styles.result}>
           {`scanning ${nearby.isScanning}, error ${nearby.error?.code ?? 'none'}, ${nearby.results.length} devices\n`}
           {nearby.results.map((r) => `${r.id} ${r.name ?? '—'} ${r.rssi}`).join('\n')}
+        </Text>
+      </Group>
+      <Group name="Log">
+        <Text testID="log-level">{`level: ${logLevel}`}</Text>
+        <Button testID="log-debug" title="Log level: debug" onPress={() => pickLogLevel('debug')} />
+        <Button testID="log-warn" title="Log level: warn" onPress={() => pickLogLevel('warn')} />
+        <Button testID="log-clear" title="Clear the log" onPress={() => setLogLines([])} />
+        <Text testID="log-lines" style={styles.result}>
+          {logLines.join('\n')}
         </Text>
       </Group>
       <Group name="Adapter state">

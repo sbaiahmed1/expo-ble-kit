@@ -4,6 +4,7 @@ import android.os.SystemClock
 import expo.modules.blekit.core.AndroidBluetoothAdapterPort
 import expo.modules.blekit.core.AndroidPermissionSystem
 import expo.modules.blekit.core.BleCapability
+import expo.modules.blekit.core.BleLogger
 import expo.modules.blekit.core.BlePermissionPolicy
 import expo.modules.blekit.core.BlePermissions
 import expo.modules.blekit.core.BleState
@@ -11,6 +12,7 @@ import expo.modules.blekit.core.CentralEngine
 import expo.modules.blekit.core.CoreError
 import expo.modules.blekit.core.EpochClock
 import expo.modules.blekit.core.HandlerExecutor
+import expo.modules.blekit.core.LogLevel
 import expo.modules.blekit.core.NotificationBatch
 import expo.modules.blekit.core.PermissionResult
 import expo.modules.blekit.core.PermissionStatus
@@ -44,7 +46,7 @@ class ExpoBleKitModule : Module() {
   override fun definition() = ModuleDefinition {
     Name("ExpoBleKit")
 
-    Events("stateChange", "scanResults", "scanError", "warning")
+    Events("stateChange", "scanResults", "scanError", "warning", "log")
 
     OnCreate {
       val context = appContext.reactContext ?: throw Exceptions.ReactContextLost()
@@ -54,6 +56,7 @@ class ExpoBleKitModule : Module() {
         AndroidPermissionSystem(context),
         executor,
         EpochClock(System.currentTimeMillis(), SystemClock.elapsedRealtime()),
+        BleLogger::logcat,
       )
       engine.listener = EngineEvents()
       executor.execute { engine.start() }
@@ -315,6 +318,31 @@ class ExpoBleKitModule : Module() {
     AsyncFunction("getSystemConnectedPeripherals") { services: List<String>, promise: Promise ->
       executor.execute {
         settle(promise) { promise.resolve(engine.systemConnectedPeripherals(services.map(::uuidArgument))) }
+      }
+    }
+
+    // Plan §4.16: the level applies to Logcat and to JS; JS gets `log` events only with a handler.
+    Function("setLogLevel") { level: String ->
+      engine.logger.level = LogLevel.of(level)
+        ?: throw BleKitException(CoreError(CoreError.Code.INVALID_ARGUMENT, "Invalid log level: $level"))
+    }
+
+    Function("setLogForwarding") { enabled: Boolean ->
+      engine.logger.forward = if (!enabled) {
+        null
+      } else {
+        { entry ->
+          sendEvent(
+            "log",
+            mapOf(
+              "level" to entry.level.js,
+              "message" to entry.message,
+              "timestamp" to entry.timestamp,
+              "peripheralId" to entry.peripheralId,
+              "opId" to entry.opId?.toDouble(),
+            ),
+          )
+        }
       }
     }
 

@@ -1,17 +1,26 @@
 import type { BleErrorCode } from './errors';
-import type { BleState, ConnectionState, ScanResult } from './types';
+import type { BleState, ConnectionState, LogLevel, ScanResult } from './types';
 
 export type StateChangeEvent = { state: BleState };
 export type ScanResultsEvent = { sessionId: number; results: ScanResult[] };
 /** The session has ended. `message` may carry `[blekit]` details for `BleError.fromNative`. */
 export type ScanErrorEvent = { sessionId: number; code: BleErrorCode; message: string };
 export type WarningEvent = { code: BleErrorCode; message: string };
+/** A native log line (plan §4.16); sent only while JS forwards the log. */
+export type LogEvent = {
+  level: LogLevel;
+  message: string;
+  timestamp: number;
+  peripheralId?: string | null;
+  opId?: number | null;
+};
 
 export type ExpoBleKitModuleEvents = {
   stateChange: (event: StateChangeEvent) => void;
   scanResults: (event: ScanResultsEvent) => void;
   scanError: (event: ScanErrorEvent) => void;
   warning: (event: WarningEvent) => void;
+  log: (event: LogEvent) => void;
 };
 
 /** `code` and `message` are set when the connection ended or failed unexpectedly. */

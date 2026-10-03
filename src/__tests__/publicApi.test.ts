@@ -17,8 +17,6 @@ const LATER: Record<string, Record<string, string>> = {
     unregisterBackgroundTask: 'P3-02',
     ios: 'P5-04',
     android: 'P5-05',
-    setLogLevel: 'P2-07',
-    setLogHandler: 'P2-07',
   },
   Peripheral: {
     openL2CAPChannel: 'P5-03',
@@ -28,7 +26,6 @@ const LATER: Record<string, Record<string, string>> = {
 /** Interfaces of the later tasks themselves (P2–P5), not yet in src/types.ts. */
 const LATER_INTERFACES = new Set([
   'L2CAPChannel',
-  'LogEntry',
   'ServiceDefinition',
   'CharacteristicDefinition',
   'ReadRequest',

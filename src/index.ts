@@ -26,6 +26,8 @@ export type {
   ConnectOptions,
   Descriptor,
   Diagnostics,
+  LogEntry,
+  LogLevel,
   NotificationBatch,
   OpOptions,
   Peripheral,

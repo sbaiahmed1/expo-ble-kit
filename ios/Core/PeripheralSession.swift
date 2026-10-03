@@ -126,6 +126,8 @@ final class PeripheralSession: PeripheralLikeDelegate {
   var onWarning: ((CoreError) -> Void)?
   /// The peripheral's services changed and were discovered again (P2-06), on the engine's queue.
   var onServicesChanged: (() -> Void)?
+  /// The engine's log (plan §4.16); silent until the engine sets it.
+  var logger = BleLogger(clock: { 0 }).silenced()
   /// Arrival times of notifications; the engine makes them epoch milliseconds (plan §4.10).
   lazy var clock: () -> Double = { [unowned self] in scheduler.now * 1000 }
   /// The batched subscribers' batchers, by subscription id (P2-04).
@@ -142,6 +144,7 @@ final class PeripheralSession: PeripheralLikeDelegate {
     self.scheduler = scheduler
     queue = GattQueue(scheduler: scheduler)
     peripheral.delegate = self
+    queue.onSettled = { [weak self] in self?.logSettled($0, $1, elapsed: $2) }
   }
 
   /// Completes with nil once the connection is ready. A connect while one is pending joins it, with

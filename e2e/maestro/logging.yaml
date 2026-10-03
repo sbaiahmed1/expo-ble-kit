@@ -1,0 +1,38 @@
+# P2-07: with the log level at debug, every GATT operation of the service-change check shows up in
+# the log with its op id, kind, status and duration.
+#   maestro test e2e/maestro/logging.yaml               # Bumble or the nRF52840 advertising
+#   maestro test -e DEMO=true e2e/maestro/logging.yaml  # the app's virtual test peripheral
+appId: expo.modules.blekit.example
+name: Logging
+---
+- runFlow: _setup.yaml
+- tapOn:
+    id: tab-checks
+- scrollUntilVisible:
+    element:
+      id: log-debug
+- tapOn:
+    id: log-debug
+- assertVisible: "level: debug"
+- scrollUntilVisible:
+    element:
+      id: service-change
+    direction: UP
+- tapOn:
+    id: service-change
+- extendedWaitUntil:
+    visible:
+      id: sink-status
+      text: "Service change OK.*"
+    timeout: 60000
+- scrollUntilVisible:
+    element:
+      id: log-lines
+- copyTextFrom:
+    id: log-lines
+- evalScript: ${console.log(maestro.copiedText)}
+- assertVisible:
+    id: log-lines
+    text: "(?s).*debug .*op #\\d+: \\w+ .*: ok in \\d+ ms.*"
+- tapOn:
+    id: log-warn

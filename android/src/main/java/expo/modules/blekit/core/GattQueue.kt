@@ -27,6 +27,9 @@ class GattOperation internal constructor(
 
   internal var timer: Cancellable? = null
 
+  /** When it reached the radio (executor time), for its duration in the log (plan §4.16). */
+  internal var startedAtMs: Long? = null
+
   /** The caller was already answered (cancelled); the operation may still occupy the radio. */
   var isSettled = false
     private set
@@ -71,6 +74,12 @@ class GattQueue(private val executor: SerialExecutor, private val defaultTimeout
 
   var onTimeout: ((operation: GattOperation, consecutiveTimeouts: Int) -> Unit)? = null
 
+  /**
+   * Every caller answered, with how long the operation ran (null if it never started). For the
+   * debug log (plan §4.16).
+   */
+  var onSettled: ((operation: GattOperation, result: GattResult, elapsedMs: Long?) -> Unit)? = null
+
   /** Queued plus in-flight operations. */
   val depth: Int get() = pending.size + (if (current == null) 0 else 1)
 
@@ -99,14 +108,15 @@ class GattQueue(private val executor: SerialExecutor, private val defaultTimeout
     if (!matches(operation)) return false
     finishCurrent()
     consecutiveTimeouts = 0
-    operation.settle(result)
+    settle(operation, result)
     return true
   }
 
   /** Answers the caller with OPERATION_CANCELLED (plan §4.9). */
   fun cancel(operation: GattOperation) {
     pending.remove(operation)
-    operation.settle(
+    settle(
+      operation,
       GattResult.Failure(CoreError(CoreError.Code.OPERATION_CANCELLED, "Operation ${operation.kind} was cancelled")),
     )
   }
@@ -119,7 +129,7 @@ class GattQueue(private val executor: SerialExecutor, private val defaultTimeout
     current?.timer?.cancel()
     current = null
     pending.clear()
-    operations.forEach { it.settle(GattResult.Failure(error)) }
+    operations.forEach { settle(it, GattResult.Failure(error)) }
   }
 
   private fun schedulePump() {
@@ -137,6 +147,7 @@ class GattQueue(private val executor: SerialExecutor, private val defaultTimeout
     if (current != null) return
     val operation = pending.removeFirstOrNull() ?: return
     current = operation
+    operation.startedAtMs = executor.nowMs()
     operation.timer = executor.executeDelayed(operation.timeoutMs) { timeOut(operation) }
     operation.start()
   }
@@ -147,12 +158,18 @@ class GattQueue(private val executor: SerialExecutor, private val defaultTimeout
     schedulePump()
   }
 
+  private fun settle(operation: GattOperation, result: GattResult) {
+    if (operation.isSettled) return
+    operation.settle(result)
+    onSettled?.invoke(operation, result, operation.startedAtMs?.let { executor.nowMs() - it })
+  }
+
   private fun timeOut(operation: GattOperation) {
     if (current !== operation) return
     finishCurrent()
     consecutiveTimeouts++
     val message = "Operation ${operation.kind} timed out after ${operation.timeoutMs} ms"
-    operation.settle(GattResult.Failure(CoreError(CoreError.Code.OPERATION_TIMEOUT, message)))
+    settle(operation, GattResult.Failure(CoreError(CoreError.Code.OPERATION_TIMEOUT, message)))
     onTimeout?.invoke(operation, consecutiveTimeouts)
   }
 

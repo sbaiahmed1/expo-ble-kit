@@ -27,6 +27,8 @@ export interface GattOperation {
 
 interface Entry extends GattOperation {
   settled: boolean;
+  /** When it started (scheduler time), for its duration in the log. */
+  startedAt?: number;
   start: () => void;
   completion: (result: GattResult) => void;
   cancelTimer?: () => void;
@@ -50,6 +52,10 @@ export class GattQueue {
   private running: Entry | null = null;
   private nextId = 1;
   private pumpScheduled = false;
+  /** Every caller answered, with how long the operation ran (null if it never started): the log. */
+  onSettled:
+    ((operation: GattOperation, result: GattResult, elapsedMs: number | null) => void) | null =
+    null;
 
   constructor(
     private readonly scheduler: Scheduler,
@@ -100,7 +106,7 @@ export class GattQueue {
       return false;
     }
     this.finishCurrent();
-    settle(entry, result);
+    this.settle(entry, result);
     return true;
   }
 
@@ -111,7 +117,7 @@ export class GattQueue {
     if (index >= 0) {
       this.pending.splice(index, 1);
     }
-    settle(
+    this.settle(
       entry,
       failure(BleErrorCode.OPERATION_CANCELLED, `Operation ${entry.kind} was cancelled`)
     );
@@ -123,7 +129,7 @@ export class GattQueue {
     this.running?.cancelTimer?.();
     this.running = null;
     this.pending.length = 0;
-    entries.forEach((entry) => settle(entry, { ok: false, error }));
+    entries.forEach((entry) => this.settle(entry, { ok: false, error }));
   }
 
   private schedulePump(): void {
@@ -148,8 +154,16 @@ export class GattQueue {
       return;
     }
     this.running = entry;
+    entry.startedAt = this.scheduler.now();
     entry.cancelTimer = this.scheduler.scheduleAfter(entry.timeoutMs, () => this.timeOut(entry));
     entry.start();
+  }
+
+  private settle(entry: Entry, result: GattResult): void {
+    if (entry.settled) return;
+    settle(entry, result);
+    const elapsed = entry.startedAt === undefined ? null : this.scheduler.now() - entry.startedAt;
+    this.onSettled?.(entry, result, elapsed);
   }
 
   private finishCurrent(): void {
@@ -163,7 +177,7 @@ export class GattQueue {
       return;
     }
     this.finishCurrent();
-    settle(
+    this.settle(
       entry,
       failure(
         BleErrorCode.OPERATION_TIMEOUT,

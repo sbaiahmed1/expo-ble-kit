@@ -32,6 +32,7 @@ public class ExpoBleKitModule: Module {
       self?.sendEvent("scanResults", ["sessionId": sessionId, "results": results])
     }
     engine.scanController.onError = { [weak self] sessionId, error in
+      self?.engine.logger.log(.warn) { "scan session \(sessionId) ended: \(error.code.rawValue) \(error.message)" }
       self?.sendEvent(
         "scanError",
         ["sessionId": sessionId, "code": error.code.rawValue, "message": error.jsMessage]
@@ -80,13 +81,33 @@ public class ExpoBleKitModule: Module {
       event.mtu = mtu
       self?.existingPeripheral(peripheralId)?.emit(event: "mtuChange", payload: event)
     }
+    engine.logger.platform = BleLogger.osLog
     return engine
   }()
+
+  /// Plan §4.16: JS gets `log` events only while it has a log handler.
+  func setLogForwarding(_ enabled: Bool) {
+    engine.logger.forward = enabled ? { [weak self] entry in
+      var event: [String: Any] = ["level": entry.level.rawValue, "message": entry.message, "timestamp": entry.timestamp]
+      event["peripheralId"] = entry.peripheralId
+      event["opId"] = entry.opId
+      self?.sendEvent("log", event)
+    } : nil
+  }
 
   public func definition() -> ModuleDefinition {
     Name("ExpoBleKit")
 
-    Events("stateChange", "scanResults", "scanError", "warning")
+    Events("stateChange", "scanResults", "scanError", "warning", "log")
+
+    Function("setLogLevel") { (level: String) in
+      guard let logLevel = LogLevel(rawValue: level) else {
+        throw BleKitException(CoreError(.invalidArgument, "Invalid log level: \(level)"))
+      }
+      self.engine.logger.level = logLevel
+    }
+
+    Function("setLogForwarding") { (enabled: Bool) in self.setLogForwarding(enabled) }
 
     // Reading or observing the state starts the manager when that can't show the prompt.
     OnStartObserving("stateChange") {

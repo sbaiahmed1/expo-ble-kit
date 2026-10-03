@@ -4,6 +4,8 @@ title: Troubleshooting
 
 # Troubleshooting
 
+When reporting a problem, include `await BleManager.getDiagnostics()` and, if you can, the log at `debug` (`BleManager.setLogLevel('debug')`, then Logcat tag `BleKit` or the Console app with subsystem `expo.blekit`).
+
 Each section starts with what you see. For a bug report, include the output of `await BleManager.getDiagnostics()`: it lists the adapter state, the permissions, every connection with its queue, and the last 100 errors.
 
 ## "The expo-ble-kit native module is missing" (`NOT_SUPPORTED`)

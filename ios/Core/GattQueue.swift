@@ -25,6 +25,8 @@ final class GattOperation {
   fileprivate let start: () -> Void
   fileprivate let completion: Completion
   fileprivate var timer: CancellableWork?
+  /// When it reached the radio (scheduler time), for its duration in the log (plan §4.16).
+  fileprivate var startedAt: TimeInterval?
   /// The caller was already answered (cancelled); the operation may still occupy the radio.
   fileprivate(set) var isSettled = false
 
@@ -76,6 +78,9 @@ final class GattQueue {
   /// Timeouts in a row, reset by any completion. The Android session disconnects after two (§4.9).
   private(set) var consecutiveTimeouts = 0
   var onTimeout: ((GattOperation, _ consecutiveTimeouts: Int) -> Void)?
+  /// Every caller answered, with how long the operation ran (nil if it never started), for the
+  /// debug log (plan §4.16).
+  var onSettled: ((GattOperation, Result<GattOperation.Output, CoreError>, _ elapsed: TimeInterval?) -> Void)?
 
   init(scheduler: Scheduling, defaultTimeout: TimeInterval = GattQueue.defaultTimeout) {
     self.scheduler = scheduler
@@ -124,7 +129,7 @@ final class GattQueue {
     }
     finishCurrent()
     consecutiveTimeouts = 0
-    operation.settle(result)
+    settle(operation, result)
     return true
   }
 
@@ -133,17 +138,19 @@ final class GattQueue {
     if let index = pending.firstIndex(where: { $0 === operation }) {
       pending.remove(at: index)
     }
-    operation.settle(.failure(CoreError(.operationCancelled, "Operation \(operation.kind.rawValue) was cancelled")))
+    settle(operation, .failure(CoreError(.operationCancelled, "Operation \(operation.kind.rawValue) was cancelled")))
   }
 
   /// Fails the running and all queued operations, for example on disconnection (rule 5).
   func failAll(_ error: CoreError) {
+    // A new connection starts counting again.
+    consecutiveTimeouts = 0
     let operations = (current.map { [$0] } ?? []) + pending
     current?.timer?.cancel()
     current = nil
     pending.removeAll()
     for operation in operations {
-      operation.settle(.failure(error))
+      settle(operation, .failure(error))
     }
   }
 
@@ -168,6 +175,7 @@ final class GattQueue {
     }
     let operation = pending.removeFirst()
     current = operation
+    operation.startedAt = scheduler.now
     operation.timer = scheduler.schedule(after: operation.timeout) { [weak self, weak operation] in
       guard let self, let operation else {
         return
@@ -175,6 +183,14 @@ final class GattQueue {
       self.timeOut(operation)
     }
     operation.start()
+  }
+
+  private func settle(_ operation: GattOperation, _ result: Result<GattOperation.Output, CoreError>) {
+    guard !operation.isSettled else {
+      return
+    }
+    operation.settle(result)
+    onSettled?(operation, result, operation.startedAt.map { scheduler.now - $0 })
   }
 
   private func finishCurrent() {
@@ -190,7 +206,7 @@ final class GattQueue {
     finishCurrent()
     consecutiveTimeouts += 1
     let message = "Operation \(operation.kind.rawValue) timed out after \(operation.timeout) s"
-    operation.settle(.failure(CoreError(.operationTimeout, message)))
+    settle(operation, .failure(CoreError(.operationTimeout, message)))
     onTimeout?(operation, consecutiveTimeouts)
   }
 }

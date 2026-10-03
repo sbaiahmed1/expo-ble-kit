@@ -44,10 +44,12 @@ final class CentralEngine: CentralManagingDelegate {
   var onWarning: ((CoreError) -> Void)?
   /// A peripheral's services changed and were discovered again (P2-06), on `queue`.
   var onServicesChanged: ((_ peripheralId: String) -> Void)?
+  /// The log of plan §4.16; the binding sets its level, its `os.Logger` output and JS forwarding.
+  let logger: BleLogger
 
   private let environment: Environment
-  private let scheduler: Scheduling
-  private let clock: EpochClock
+  let scheduler: Scheduling
+  let clock: EpochClock
   private(set) var sessions: [UUID: PeripheralSession] = [:]
   /// Advertised names from scans, then the names iOS caches for connected peripherals (plan §4.7).
   let names = PeripheralNames()
@@ -72,6 +74,7 @@ final class CentralEngine: CentralManagingDelegate {
     self.scheduler = scheduler
     let clock = EpochClock(wallAtStartMs: Date().timeIntervalSince1970 * 1000, monotonicAtStart: scheduler.now)
     self.clock = clock
+    logger = BleLogger { clock.epochMs(monotonic: scheduler.now) }
     scanController = ScanController(scheduler: scheduler, clock: clock)
     publishedState = Self.stateWithoutCentral(environment.authorization())
   }
@@ -357,35 +360,14 @@ extension CentralEngine {
     session.connect(spec, completion: completion)
   }
 
-  /// Notifications, batches (P2-04) and warnings of `session`, with epoch timestamps (plan §4.10).
-  private func wireNotifications(_ session: PeripheralSession, _ identifier: UUID) {
-    session.clock = { [weak self] in
-      guard let self else {
-        return 0
-      }
-      return clock.epochMs(monotonic: scheduler.now)
-    }
-    session.onNotification = { [weak self] characteristic, value, timestamp in
-      self?.onNotification?(
-        identifier.uuidString,
-        characteristic.parentService?.uuid.fullUUIDString ?? "",
-        characteristic.uuid.fullUUIDString,
-        value,
-        timestamp
-      )
-    }
-    session.onNotificationBatch = { [weak self] subscriptionId, batch in
-      self?.onNotificationBatch?(identifier.uuidString, subscriptionId, batch)
-    }
-    session.onWarning = { [weak self] warning in self?.onWarning?(warning) }
-    session.onServicesChanged = { [weak self] in self?.onServicesChanged?(identifier.uuidString) }
-  }
-
   private func publishConnectionState(_ peripheralId: String, _ state: SessionState, _ error: CoreError?, mtu: Int?) {
     stateLock.lock()
     connectionStates[peripheralId] = state.js
     mtus[peripheralId] = mtu
     stateLock.unlock()
+    logger.log(error == nil ? .info : .warn, peripheralId: peripheralId) {
+      state.js + (error.map { ": \($0.code.rawValue) \($0.message)" } ?? "")
+    }
     onConnectionStateChange?(peripheralId, state, error)
   }
 

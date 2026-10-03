@@ -24,6 +24,8 @@ class CentralEngine(
   val permissionSystem: PermissionSystem,
   private val executor: SerialExecutor,
   private val clock: EpochClock,
+  /** Where log lines go besides JS: Logcat in the app ([BleLogger.logcat]), nowhere in JVM tests. */
+  logOutput: (LogLevel, String) -> Unit = { _, _ -> },
 ) {
   /** Engine events, delivered on the BLE thread. */
   interface Listener : ScanController.Events {
@@ -58,6 +60,9 @@ class CentralEngine(
   /** By normalized address. Read from any thread for the synchronous state getters. */
   private val sessions = ConcurrentHashMap<String, PeripheralSession>()
 
+  /** The log of plan §4.16; the binding sets its level and forwards it to JS. */
+  val logger = BleLogger(clock = { clock.epochMs(executor.nowMs()).toDouble() }, platform = logOutput)
+
   /** Advertised names from scans, then the device name once connected (plan §4.7). */
   private val names = PeripheralNames()
 
@@ -73,11 +78,12 @@ class CentralEngine(
         }
 
         override fun onScanError(sessionId: Int, error: CoreError) {
+          logger.log(LogLevel.WARN) { "scan session $sessionId ended: ${error.code.value} ${error.message}" }
           listener?.onScanError(sessionId, error)
         }
 
         override fun onWarning(warning: CoreError) {
-          listener?.onWarning(warning)
+          warn(warning)
         }
       },
     )
@@ -124,10 +130,18 @@ class CentralEngine(
     }
     adapterError(adapter.state)?.let { throw it }
     scanController.start(sessionId, spec)
+    logger.log(LogLevel.INFO) { "scan session $sessionId started" }
   }
 
   fun stopScan(sessionId: Int) {
     scanController.stop(sessionId)
+    logger.log(LogLevel.INFO) { "scan session $sessionId stopped" }
+  }
+
+  /** A warning goes to the log and to JS (`warning` event). */
+  private fun warn(warning: CoreError) {
+    logger.log(LogLevel.WARN) { "${warning.code.value}: ${warning.message}" }
+    listener?.onWarning(warning)
   }
 
   /** The scanned handle for [address], which keeps its address type (plan §4.12). */
@@ -161,17 +175,22 @@ class CentralEngine(
           // The name the device reports about itself; connecting needs the permission to read it.
           names[address] = runCatching { (seenDevice(address) ?: adapter.remoteDevice(address)).name }.getOrNull()
         }
+        logger.log(if (error == null) LogLevel.INFO else LogLevel.WARN, address) {
+          state.js + (error?.let { ": ${it.code.value} ${it.message}" } ?: "")
+        }
         listener?.onConnectionStateChange(address, state, error)
       }.also { session ->
+        session.logger = logger
         session.clock = { clock.epochMs(executor.nowMs()).toDouble() }
         session.onNotification = { ref, value, timestamp ->
+          logger.log(LogLevel.VERBOSE, address) { "notification from ${ref.uuid}: ${value.size} bytes" }
           listener?.onNotification(address, ref.serviceUuid, ref.uuid, value, timestamp)
         }
         session.onNotificationBatch = { id, batch -> listener?.onNotificationBatch(address, id, batch) }
         session.onServicesChanged = { listener?.onServicesChanged(address) }
         session.onMtuChange = { mtu -> listener?.onMtuChange(address, mtu) }
         session.onSubscriptionEnded = { id, error -> listener?.onSubscriptionEnded(address, id, error) }
-        session.onWarning = { warning -> listener?.onWarning(warning) }
+        session.onWarning = ::warn
       }
     }
     session.connect(spec, completion)

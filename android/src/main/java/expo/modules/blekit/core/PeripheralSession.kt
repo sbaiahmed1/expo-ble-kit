@@ -100,8 +100,16 @@ class PeripheralSession(
   var state = SessionState.DISCONNECTED
     private set
 
+  /** The engine's log (plan §4.16); silent until the engine sets it. */
+  var logger = BleLogger(clock = { executor.nowMs().toDouble() }, platform = { _, _ -> }).apply {
+    level = LogLevel.NONE
+  }
+
   /** Operations on this connection (Appendix B rule 2). */
   val queue = GattQueue(executor).also { queue ->
+    queue.onSettled = { operation, result, elapsedMs ->
+      logger.log(LogLevel.DEBUG, address, operation.id) { describe(operation, result, elapsedMs) }
+    }
     // Plan §4.9: on Android, operations in a row that time out mean a stuck stack.
     queue.onTimeout = { _, consecutiveTimeouts ->
       val limit = resetAfterTimeouts
@@ -447,6 +455,13 @@ class PeripheralSession(
       }
     }
     sendChunk(0)
+  }
+
+  /** `read <target>: ok in 12 ms` (plan §4.16: op kind, status and duration). */
+  private fun describe(operation: GattOperation, result: GattResult, elapsedMs: Long?): String {
+    val what = listOfNotNull(operation.kind.name.lowercase(), operation.target).joinToString(" ")
+    val status = if (result is GattResult.Failure) "${result.error.code.value} (${result.error.message})" else "ok"
+    return "$what: $status " + if (elapsedMs == null) "before it started" else "in $elapsedMs ms"
   }
 
   /** A chunk's error, saying how far the stream got. */

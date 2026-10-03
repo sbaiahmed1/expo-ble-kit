@@ -247,6 +247,26 @@ export interface ReconnectPolicy {
   backoff?: 'exponential' | 'fixed';
 }
 
+/**
+ * How much the library logs (plan §4.16), most severe first: `none` logs nothing, `debug` adds one
+ * line per GATT operation (op id, kind, status, duration), `verbose` adds values and notifications.
+ */
+export type LogLevel = 'none' | 'error' | 'warn' | 'info' | 'debug' | 'verbose';
+
+/** One log line, as `BleManager.setLogHandler` receives it. */
+export interface LogEntry {
+  /** How severe the line is. */
+  level: LogLevel;
+  /** The text, without the peripheral and op id (they are separate fields). */
+  message: string;
+  /** Epoch milliseconds. */
+  timestamp: number;
+  /** The peripheral the line is about. */
+  peripheralId?: string;
+  /** The GATT operation the line is about (ids count up per connection's queue). */
+  opId?: number;
+}
+
 /** A snapshot for bug reports, from `BleManager.getDiagnostics()`. */
 export interface Diagnostics {
   /** The adapter state. */
@@ -261,7 +281,7 @@ export interface Diagnostics {
     state: ConnectionState;
     /** Operations queued or running on it. */
     queueDepth: number;
-    /** Active subscriptions (not counted yet: 0). */
+    /** Active subscriptions. */
     subscriptions: number;
   }[];
   /** The last 100 errors the API returned, oldest first. */
@@ -398,7 +418,10 @@ export interface CharacteristicSubscription extends Subscription {
   readonly active: boolean;
   /** Stops delivery immediately. If this was the last subscriber, disables the CCCD and rejects with a coded error if that write fails. */
   unsubscribe(options?: OpOptions): Promise<void>;
-  /** Fire-and-forget unsubscribe(). A failed CCCD write is kept in `getDiagnostics().recentErrors`. */
+  /**
+   * Fire-and-forget unsubscribe(). A failed CCCD write goes to the log (warn) and is kept in
+   * `getDiagnostics().recentErrors`.
+   */
   remove(): void;
 }
 
@@ -548,6 +571,14 @@ export interface BleManagerApi {
   /** Peripherals connected at the OS level, possibly by another app. Android doesn't filter by `services`. */
   getSystemConnectedPeripherals(services: UUID[]): Promise<Peripheral[]>;
 
+  /**
+   * Sets how much the library logs, natively (`os.Logger` subsystem `expo.blekit` on iOS, Logcat
+   * tag `BleKit` on Android) and to the log handler.
+   * @defaultValue 'warn'
+   */
+  setLogLevel(level: LogLevel): void;
+  /** Receives every log line at or above the level, or `null` to stop. */
+  setLogHandler(handler: ((entry: LogEntry) => void) | null): void;
   /** A snapshot for bug reports: state, permissions, connections and recent errors. */
   getDiagnostics(): Promise<Diagnostics>;
 }

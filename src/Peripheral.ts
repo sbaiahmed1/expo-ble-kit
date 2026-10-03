@@ -33,6 +33,7 @@ import {
   reportListenerError,
   toBleError,
 } from './internal/operations';
+import { log } from './internal/log';
 import type { NativePeripheralPort } from './internal/port';
 import type {
   BatchOptions,
@@ -75,8 +76,14 @@ class SubscriptionHandle implements CharacteristicSubscription {
   }
 
   remove(): void {
-    // CCCD failures are kept for getDiagnostics(); P2-07 adds the log.
-    this.unsubscribe().catch(() => {});
+    // Nobody awaits it: a failed CCCD write goes to the log (and to getDiagnostics()).
+    this.unsubscribe().catch((error: BleError) =>
+      log(
+        'warn',
+        `remove() couldn't turn notifications off: ${error.code} ${error.message}`,
+        error.peripheralId
+      )
+    );
   }
 }
 

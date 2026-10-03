@@ -19,10 +19,18 @@ extension CentralEngine {
       throw error
     }
     scanController.start(sessionId, spec: spec)
+    logger.log(.info) { "scan session \(sessionId) started" }
   }
 
   func stopScan(_ sessionId: Int) {
     scanController.stop(sessionId)
+    logger.log(.info) { "scan session \(sessionId) stopped" }
+  }
+
+  /// A warning goes to the log and to JS (`warning` event).
+  func warn(_ warning: CoreError) {
+    logger.log(.warn) { "\(warning.code.rawValue): \(warning.message)" }
+    onWarning?(warning)
   }
 
   func central(

@@ -27,6 +27,7 @@ import type {
   BleState,
   CharacteristicProperty,
   ConnectionState,
+  LogLevel,
   ScanResult,
   Service,
   Subscription,
@@ -381,7 +382,19 @@ class FakePeripheralHandle implements NativePeripheralPort {
     private readonly adapter: FakeBleAdapter,
     private readonly scheduler: Scheduler
   ) {
-    this.queue = new GattQueue(scheduler);
+    this.queue = this.newQueue();
+  }
+
+  /** A queue whose settled operations go to the debug log, like the native cores (plan §4.16). */
+  private newQueue(): GattQueue {
+    const queue = new GattQueue(this.scheduler);
+    queue.onSettled = (operation, result, elapsedMs) => {
+      const what = [operation.kind, operation.target].filter(Boolean).join(' ');
+      const status = result.ok ? 'ok' : `${result.error.code} (${result.error.message})`;
+      const when = elapsedMs === null ? 'before it started' : `in ${elapsedMs} ms`;
+      this.adapter.log('debug', `${what}: ${status} ${when}`, this.id, operation.id);
+    };
+    return queue;
   }
 
   addListener<E extends keyof PeripheralObjectEvents>(
@@ -935,7 +948,7 @@ class FakePeripheralHandle implements NativePeripheralPort {
     this.services = [];
     this.mtu = MIN_MTU;
     this.queue.failAll(fail(BleErrorCode.DISCONNECTED, 'Disconnected'));
-    this.queue = new GattQueue(this.scheduler);
+    this.queue = this.newQueue();
     this.device()?.clientDisconnected();
   }
 
@@ -1114,7 +1127,7 @@ class FakePeripheralHandle implements NativePeripheralPort {
     // The state changes first, so callbacks of the operations failed below see the final state.
     this.setState('disconnected', error);
     this.queue.failAll(fail(BleErrorCode.DISCONNECTED, 'Disconnected'));
-    this.queue = new GattQueue(this.scheduler);
+    this.queue = this.newQueue();
     // Subscriptions end with the connection (plan §4.8), and the peripheral forgets the CCCDs.
     this.subscriptions.clear();
     this.subscriptionKeys.clear();
@@ -1139,6 +1152,11 @@ class FakePeripheralHandle implements NativePeripheralPort {
       event.code = error.code;
       event.message = error.message;
     }
+    this.adapter.log(
+      error ? 'warn' : 'info',
+      error ? `${state}: ${error.code} ${error.message}` : state,
+      this.id
+    );
     this.emitter.emit('connectionStateChange', event);
   }
 
@@ -1428,7 +1446,30 @@ export class FakeBleAdapter implements NativeBleKitPort {
   }
 
   warn(code: BleErrorCode, message: string): void {
+    this.log('warn', `${code}: ${message}`);
     this.emitter.emit('warning', { code, message });
+  }
+
+  // The log (plan §4.16), like the native cores: lines at or above the level, as `log` events
+  // while JS forwards them.
+
+  private logLevel: LogLevel = 'warn';
+  private logForwarding = false;
+
+  setLogLevel(level: LogLevel): void {
+    this.logLevel = level;
+  }
+
+  setLogForwarding(enabled: boolean): void {
+    this.logForwarding = enabled;
+  }
+
+  log(level: LogLevel, message: string, peripheralId?: string, opId?: number): void {
+    const levels: LogLevel[] = ['none', 'error', 'warn', 'info', 'debug', 'verbose'];
+    if (!this.logForwarding || level === 'none') return;
+    if (levels.indexOf(level) > levels.indexOf(this.logLevel)) return;
+    const timestamp = Date.now();
+    this.emitter.emit('log', { level, message, timestamp, peripheralId, opId });
   }
 
   nameOf(id: string): string | null {
