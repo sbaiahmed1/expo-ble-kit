@@ -35,12 +35,39 @@ struct ScanOptionsRecord: Record {
 
 struct IosConnectOptionsRecord: Record {
   @Field var notifyOnDisconnection: Bool = false
+  @Field var enableAutoReconnect: Bool = false
+}
+
+/// JS `ReconnectPolicy` (plan §5.4) with the defaults applied; `maxAttempts` nil means no limit.
+struct ReconnectPolicyRecord: Record {
+  @Field var maxAttempts: Int?
+  @Field var initialDelayMs: Double = 1_000
+  @Field var maxDelayMs: Double = 30_000
+  @Field var backoff: String = "exponential"
+
+  func policy() throws -> ReconnectPolicy {
+    if let maxAttempts, maxAttempts < 1 {
+      throw CoreError(.invalidArgument, "Invalid connect option reconnect.maxAttempts: \(maxAttempts)")
+    }
+    guard initialDelayMs >= 0, maxDelayMs >= initialDelayMs else {
+      throw CoreError(.invalidArgument, "Invalid connect option reconnect delays")
+    }
+    return ReconnectPolicy(
+      maxAttempts: maxAttempts,
+      initialDelay: initialDelayMs / 1000,
+      maxDelay: maxDelayMs / 1000,
+      exponential: backoff != "fixed"
+    )
+  }
 }
 
 /// JS `ConnectOptions` (plan §5.4) after the TS layer applied defaults: `timeoutMs` nil means none.
 struct ConnectOptionsRecord: Record {
   @Field var timeoutMs: Double?
   @Field var autoDiscover: Bool = true
+  /// Nil: no reconnection.
+  @Field var reconnect: ReconnectPolicyRecord?
+  @Field var restoreSubscriptionsOnReconnect: Bool = true
   @Field var ios: IosConnectOptionsRecord = IosConnectOptionsRecord()
 
   func spec() throws -> ConnectSpec {
@@ -50,7 +77,10 @@ struct ConnectOptionsRecord: Record {
     return ConnectSpec(
       timeout: timeoutMs.map { $0 / 1000 },
       notifyOnDisconnection: ios.notifyOnDisconnection,
-      autoDiscover: autoDiscover
+      autoDiscover: autoDiscover,
+      reconnect: try reconnect?.policy(),
+      restoreSubscriptions: restoreSubscriptionsOnReconnect,
+      enableAutoReconnect: ios.enableAutoReconnect
     )
   }
 }
@@ -94,4 +124,12 @@ struct NotificationEventRecord: Record {
 /// Payload of a peripheral's `mtuChange` event (P1-09).
 struct MtuChangeEventRecord: Record {
   @Field var mtu: Int = 23
+}
+
+/// Payload of a peripheral's `subscriptionEnded` event (P2-01): a subscription that ended while its
+/// connection reconnects.
+struct SubscriptionEndedEventRecord: Record {
+  @Field var subscriptionId: Int = 0
+  @Field var code: String = ""
+  @Field var message: String = ""
 }

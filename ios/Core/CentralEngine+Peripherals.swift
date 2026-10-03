@@ -46,7 +46,7 @@ extension CentralEngine {
       "sessions": sessions.values.map { session in
         [
           "id": session.peripheral.identifier.uuidString,
-          "state": session.state.js,
+          "state": session.visibleState.js,
           "queueDepth": session.queue.depth,
           "subscriptions": 0
         ] as [String: Any]

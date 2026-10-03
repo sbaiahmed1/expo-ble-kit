@@ -4,7 +4,7 @@ import { startDemo } from '../demo/testPeripheral';
 import { TestProfile } from '../lib/gattNames';
 import { HeartRateScreen } from '../screens/HeartRateScreen';
 
-// P1-15: Heart Rate against the virtual test peripheral: live BPM and reconnection.
+// P1-15: Heart Rate against the virtual test peripheral: live BPM and reconnection (P2-01).
 
 const settle = (ms = 100) => act(() => jest.advanceTimersByTimeAsync(ms));
 const status = () => screen.getByTestId('hr-status').props.children;
@@ -44,7 +44,7 @@ describe('Heart Rate', () => {
     await openMonitor();
     await settle(1000);
     await act(async () => demo.device.disconnect('linkLoss'));
-    expect(status()).toBe('Connection lost. Retrying in 1 s (attempt 1)');
+    expect(status()).toBe('Connection lost. Reconnecting…');
     await settle(1100);
     expect(status()).toBe('Connected');
     expect(screen.getByText('Reconnected 1×')).toBeTruthy();
@@ -56,7 +56,7 @@ describe('Heart Rate', () => {
     await openMonitor();
     await fireEvent.press(screen.getByTestId('hr-drop'));
     await settle(600);
-    expect(status()).toMatch(/Retrying in 1 s/);
+    expect(status()).toMatch(/Reconnecting/);
     await settle(1100);
     expect(status()).toBe('Connected');
   });
@@ -68,8 +68,10 @@ describe('Heart Rate', () => {
       demo.device.disconnect('linkLoss');
     });
     // Waits of 1, 2, 4, 8 and 16 s, each followed by a 10 s connect timeout.
-    await settle(31_000 + 6 * 10_000);
-    expect(status()).toBe('Gave up (CONNECTION_TIMEOUT)');
+    await settle(31_000 + 5 * 10_000 - 200);
+    expect(status()).toBe('Connection lost. Reconnecting…');
+    await settle(400);
+    expect(status()).toBe('Not connected: CONNECTION_TIMEOUT');
 
     await act(async () => demo.device.advertise(true));
     await fireEvent.press(screen.getByTestId('hr-retry'));

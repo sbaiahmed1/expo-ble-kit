@@ -37,6 +37,9 @@ class CentralEngine(
 
     /** The ATT MTU of a ready connection changed (P1-09). */
     fun onMtuChange(peripheralId: String, mtu: Int)
+
+    /** A subscription ended while its connection reconnects (P2-01). */
+    fun onSubscriptionEnded(peripheralId: String, subscriptionId: Int, error: CoreError)
   }
 
   var listener: Listener? = null
@@ -126,7 +129,7 @@ class CentralEngine(
 
   /** JS `ConnectionState` of [peripheralId]. Safe to read from any thread. */
   fun connectionState(peripheralId: String): String =
-    normalizeAddress(peripheralId)?.let { sessions[it]?.state?.js } ?: SessionState.DISCONNECTED.js
+    normalizeAddress(peripheralId)?.let { sessions[it]?.visibleState?.js } ?: SessionState.DISCONNECTED.js
 
   /**
    * Connects to [peripheralId] (plan §5.4). Throws when connecting can't start: an invalid id, a
@@ -159,6 +162,7 @@ class CentralEngine(
           listener?.onNotification(address, ref.serviceUuid, ref.uuid, value, timestamp)
         }
         session.onMtuChange = { mtu -> listener?.onMtuChange(address, mtu) }
+        session.onSubscriptionEnded = { id, error -> listener?.onSubscriptionEnded(address, id, error) }
         session.onWarning = { warning -> listener?.onWarning(warning) }
       }
     }
@@ -327,7 +331,7 @@ class CentralEngine(
   fun diagnostics(): Map<String, Any?> = mapOf(
     "state" to state.js,
     "sessions" to sessions.values.map {
-      mapOf("id" to it.address, "state" to it.state.js, "queueDepth" to it.queue.depth, "subscriptions" to 0)
+      mapOf("id" to it.address, "state" to it.visibleState.js, "queueDepth" to it.queue.depth, "subscriptions" to 0)
     },
     "android" to mapOf("openGattClients" to sessions.values.count { it.hasOpenClient }),
   )

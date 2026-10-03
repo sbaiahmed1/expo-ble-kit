@@ -5,6 +5,7 @@ import expo.modules.blekit.core.ConnectSpec
 import expo.modules.blekit.core.CoreError
 import expo.modules.blekit.core.ManufacturerFilter
 import expo.modules.blekit.core.PeripheralSession
+import expo.modules.blekit.core.ReconnectPolicy
 import expo.modules.blekit.core.ScanOptionValues
 import expo.modules.blekit.core.ScanSettingsSpec
 import expo.modules.blekit.core.ScanSpec
@@ -99,11 +100,34 @@ class AndroidConnectOptionsRecord : Record {
   @Field val requestMtu: Int? = ConnectSpec.DEFAULT_REQUESTED_MTU
 }
 
+/** JS `ReconnectPolicy` (plan §5.4) with the defaults applied; `maxAttempts` null means no limit. */
+class ReconnectPolicyRecord : Record {
+  @Field val maxAttempts: Int? = null
+
+  @Field val initialDelayMs: Double = 1_000.0
+
+  @Field val maxDelayMs: Double = 30_000.0
+
+  @Field val backoff: String = "exponential"
+
+  fun toPolicy(): ReconnectPolicy {
+    if ((maxAttempts != null && maxAttempts < 1) || !(initialDelayMs >= 0) || !(maxDelayMs >= initialDelayMs)) {
+      throw CoreError(CoreError.Code.INVALID_ARGUMENT, "Invalid connect option reconnect")
+    }
+    return ReconnectPolicy(maxAttempts, initialDelayMs.toLong(), maxDelayMs.toLong(), backoff != "fixed")
+  }
+}
+
 /** JS `ConnectOptions` (plan §5.4) after the TS layer applied defaults: `timeoutMs` null means none. */
 class ConnectOptionsRecord : Record {
   @Field val timeoutMs: Double? = null
 
   @Field val autoDiscover: Boolean = true
+
+  /** Null: no reconnection. */
+  @Field val reconnect: ReconnectPolicyRecord? = null
+
+  @Field val restoreSubscriptionsOnReconnect: Boolean = true
 
   @Field val android: AndroidConnectOptionsRecord = AndroidConnectOptionsRecord()
 
@@ -117,7 +141,14 @@ class ConnectOptionsRecord : Record {
         throw CoreError(CoreError.Code.INVALID_ARGUMENT, "Invalid connect option android.requestMtu: $it")
       }
     }
-    return ConnectSpec(timeoutMs, android.autoConnect ?: (timeoutMs == null), autoDiscover, requestMtu)
+    return ConnectSpec(
+      timeoutMs,
+      android.autoConnect ?: (timeoutMs == null),
+      autoDiscover,
+      requestMtu,
+      reconnect?.toPolicy(),
+      restoreSubscriptionsOnReconnect,
+    )
   }
 }
 

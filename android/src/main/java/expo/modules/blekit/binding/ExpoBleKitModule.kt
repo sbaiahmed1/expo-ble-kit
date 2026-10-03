@@ -339,6 +339,14 @@ class ExpoBleKitModule : Module() {
       )
     }
 
+    override fun onSubscriptionEnded(peripheralId: String, subscriptionId: Int, error: CoreError) {
+      val peripheral = synchronized(peripherals) { peripherals[peripheralId]?.get() } ?: return
+      peripheral.emit(
+        "subscriptionEnded",
+        mapOf("subscriptionId" to subscriptionId, "code" to error.code.value, "message" to error.jsMessage),
+      )
+    }
+
     override fun onMtuChange(peripheralId: String, mtu: Int) {
       val peripheral = synchronized(peripherals) { peripherals[peripheralId]?.get() } ?: return
       peripheral.emit("mtuChange", mapOf("mtu" to mtu))

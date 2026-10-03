@@ -32,8 +32,16 @@ export type NotificationEvent = {
 /** The ATT MTU of a ready connection changed (Android; iOS when a refresh sees a new value). */
 export type MtuChangeEvent = { mtu: number };
 
+/** A subscription ended while its connection reconnects (P2-01): not restored, or restore failed. */
+export type SubscriptionEndedEvent = {
+  subscriptionId: number;
+  code: BleErrorCode;
+  message: string;
+};
+
 export type PeripheralObjectEvents = {
   connectionStateChange: (event: ConnectionStateEvent) => void;
   notification: (event: NotificationEvent) => void;
   mtuChange: (event: MtuChangeEvent) => void;
+  subscriptionEnded: (event: SubscriptionEndedEvent) => void;
 };

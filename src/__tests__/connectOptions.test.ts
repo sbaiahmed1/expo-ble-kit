@@ -1,6 +1,7 @@
 import { BleError } from '../errors';
 import {
   DEFAULT_CONNECT_TIMEOUT_MS,
+  reconnectDelay,
   toNativeConnectOptions,
   validateMtu,
 } from '../internal/connectOptions';
@@ -11,8 +12,10 @@ describe('toNativeConnectOptions', () => {
     expect(toNativeConnectOptions()).toEqual({
       timeoutMs: DEFAULT_CONNECT_TIMEOUT_MS,
       autoDiscover: true,
+      reconnect: null,
+      restoreSubscriptionsOnReconnect: true,
       android: { requestMtu: 517 },
-      ios: { notifyOnDisconnection: false },
+      ios: { notifyOnDisconnection: false, enableAutoReconnect: false },
     });
     expect(toNativeConnectOptions({ timeoutMs: null }).timeoutMs).toBeNull();
     expect(toNativeConnectOptions({ timeoutMs: 2500 }).timeoutMs).toBe(2500);
@@ -20,6 +23,38 @@ describe('toNativeConnectOptions', () => {
 
   it('keeps autoDiscover false', () => {
     expect(toNativeConnectOptions({ autoDiscover: false }).autoDiscover).toBe(false);
+  });
+
+  it('applies the reconnect policy defaults', () => {
+    expect(toNativeConnectOptions({ reconnect: {} }).reconnect).toEqual({
+      maxAttempts: null,
+      initialDelayMs: 1000,
+      maxDelayMs: 30000,
+      backoff: 'exponential',
+    });
+    expect(toNativeConnectOptions({ reconnect: false }).reconnect).toBeNull();
+    expect(
+      toNativeConnectOptions({
+        reconnect: { maxAttempts: 5, initialDelayMs: 40_000, backoff: 'fixed' },
+      }).reconnect
+    ).toEqual({ maxAttempts: 5, initialDelayMs: 40000, maxDelayMs: 40000, backoff: 'fixed' });
+    expect(
+      toNativeConnectOptions({ reconnect: {}, ios: { enableAutoReconnect: true } }).ios
+        .enableAutoReconnect
+    ).toBe(true);
+  });
+
+  it('waits like the native cores between reconnection attempts', () => {
+    const policy = toNativeConnectOptions({
+      reconnect: { initialDelayMs: 500, maxDelayMs: 3000 },
+    }).reconnect!;
+    expect([1, 2, 3, 4, 5].map((attempt) => reconnectDelay(policy, attempt))).toEqual([
+      500, 1000, 2000, 3000, 3000,
+    ]);
+    const fixed = toNativeConnectOptions({
+      reconnect: { backoff: 'fixed', initialDelayMs: 700 },
+    }).reconnect!;
+    expect([1, 2, 3].map((attempt) => reconnectDelay(fixed, attempt))).toEqual([700, 700, 700]);
   });
 
   it('asks for 517 by default, nothing with false, or the given MTU', () => {
@@ -55,6 +90,17 @@ describe('toNativeConnectOptions', () => {
     ['android.requestMtu too small', { android: { requestMtu: 22 } }],
     ['android.requestMtu too large', { android: { requestMtu: 518 } }],
     ['android.requestMtu true', { android: { requestMtu: true } }],
+    ['reconnect.maxAttempts 0', { reconnect: { maxAttempts: 0 } }],
+    ['reconnect.maxAttempts 1.5', { reconnect: { maxAttempts: 1.5 } }],
+    ['reconnect.initialDelayMs negative', { reconnect: { initialDelayMs: -1 } }],
+    [
+      'reconnect.maxDelayMs below initial',
+      { reconnect: { initialDelayMs: 5000, maxDelayMs: 1000 } },
+    ],
+    ['reconnect.backoff', { reconnect: { backoff: 'linear' } }],
+    ['reconnect true', { reconnect: true }],
+    ['restoreSubscriptionsOnReconnect', { restoreSubscriptionsOnReconnect: 'yes' }],
+    ['ios.enableAutoReconnect without reconnect', { ios: { enableAutoReconnect: true } }],
     ['autoDiscover', { autoDiscover: 'no' }],
     ['ios.notifyOnDisconnection', { ios: { notifyOnDisconnection: 1 } }],
   ])('rejects %s', (_, options) => {

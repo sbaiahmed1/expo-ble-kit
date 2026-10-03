@@ -1,4 +1,8 @@
-import type { ConnectionStateEvent, NotificationEvent } from './ExpoBleKit.types';
+import type {
+  ConnectionStateEvent,
+  NotificationEvent,
+  SubscriptionEndedEvent,
+} from './ExpoBleKit.types';
 import { BleError, BleErrorCode } from './errors';
 import {
   checkValue,
@@ -76,11 +80,21 @@ export class PeripheralImpl implements Peripheral {
       if (event.code) {
         recordError(this.connectionError(event));
       }
-      // Subscriptions end with the connection (plan §4.8); natively they are gone already.
+      // Subscriptions end with the connection (plan §4.8); natively they are gone already. While
+      // reconnecting they live on, and the ones that can't be restored end one by one (P2-01).
       if (event.state === 'disconnected') {
         this.subscribers.forEach(({ subscription }) => (subscription.active = false));
         this.subscribers.clear();
       }
+    });
+    native.addListener('subscriptionEnded', (event: SubscriptionEndedEvent) => {
+      const subscriber = this.subscribers.get(event.subscriptionId);
+      if (!subscriber) return;
+      subscriber.subscription.active = false;
+      this.subscribers.delete(event.subscriptionId);
+      recordError(
+        BleError.fromNative(event, this.context(subscriber.service, subscriber.characteristic))
+      );
     });
   }
 

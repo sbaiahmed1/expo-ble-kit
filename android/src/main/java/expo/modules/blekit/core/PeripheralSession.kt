@@ -16,6 +16,9 @@ enum class SessionState {
   /** Link up and setup done: what JS calls `connected`. */
   READY,
   DISCONNECTING,
+
+  /** Waiting before the next reconnection attempt (P2-01). JS also sees the attempts as this. */
+  RECONNECTING,
   ;
 
   /** JS `ConnectionState` (plan §4.8). */
@@ -25,6 +28,7 @@ enum class SessionState {
       CONNECTING, CONNECTED, DISCOVERING -> "connecting"
       READY -> "connected"
       DISCONNECTING -> "disconnecting"
+      RECONNECTING -> "reconnecting"
     }
 }
 
@@ -55,6 +59,10 @@ class ConnectSpec(
   val autoDiscover: Boolean = true,
   /** Android: the MTU to request before the connection counts as ready; null asks for none (Q3). */
   val requestMtu: Int? = DEFAULT_REQUESTED_MTU,
+  /** Reconnect after an unexpected link loss of a ready connection; null never does (P2-01). */
+  val reconnect: ReconnectPolicy? = null,
+  /** With [reconnect]: enable the subscriptions again before the connection counts as ready. */
+  val restoreSubscriptions: Boolean = true,
 ) {
   companion object {
     /** Plan §5.4 / Q3. Android 14+ asks for 517 whatever the app requests (measured in P0-06). */
@@ -102,8 +110,14 @@ class PeripheralSession(
   /** Notifications and indications of subscribed characteristics, on the BLE thread. */
   var onNotification: ((GattCharacteristicRef, ByteArray) -> Unit)? = null
 
+  /**
+   * Subscriptions that end while the connection lives on (reconnecting): a reconnection without
+   * subscription restore, or a restore that failed. On the BLE thread.
+   */
+  var onSubscriptionEnded: ((subscriptionId: Int, error: CoreError) -> Unit)? = null
+
   /** One CCCD per characteristic, shared by its subscribers (plan §5.4). */
-  private class CharacteristicSubscriptions(val ref: GattCharacteristicRef, val indicate: Boolean) {
+  private class CharacteristicSubscriptions(var ref: GattCharacteristicRef, val indicate: Boolean) {
     val subscribers = mutableSetOf<Int>()
 
     /** Subscribers waiting for the CCCD write that enables delivery. */
@@ -131,6 +145,21 @@ class PeripheralSession(
 
   private var gatt: GattClientPort? = null
 
+  /** The reconnection attempt running or waiting (1-based); 0 when not reconnecting. */
+  @Volatile
+  private var reconnectAttempt = 0
+  private var reconnect: ReconnectPolicy? = null
+  private var restoreSubscriptions = true
+  private var connectTimeoutMs: Long? = null
+  private var reconnectTimer: Cancellable? = null
+
+  /** The state the listener last heard, as JS sees it. */
+  private var reported = SessionState.DISCONNECTED
+
+  /** The state as JS sees it: the setup steps of a reconnection read as `reconnecting` (plan §4.8). */
+  val visibleState: SessionState
+    get() = visible(state)
+
   /** Bumped whenever a client is opened or closed; callbacks from older clients are ignored. */
   private var generation = 0
   private var attempts = 0
@@ -154,7 +183,11 @@ class PeripheralSession(
     when (state) {
       SessionState.READY -> completion(null)
 
-      SessionState.CONNECTING, SessionState.CONNECTED, SessionState.DISCOVERING -> connectWaiters += completion
+      SessionState.CONNECTING,
+      SessionState.CONNECTED,
+      SessionState.DISCOVERING,
+      SessionState.RECONNECTING,
+      -> connectWaiters += completion
 
       SessionState.DISCONNECTING -> disconnectWaiters += { connect(spec, completion) }
 
@@ -164,6 +197,9 @@ class PeripheralSession(
         autoConnect = spec.autoConnect
         autoDiscover = spec.autoDiscover
         setupMtu = spec.requestMtu
+        reconnect = spec.reconnect
+        restoreSubscriptions = spec.restoreSubscriptions
+        connectTimeoutMs = spec.timeoutMs
         setState(SessionState.CONNECTING, null)
         spec.timeoutMs?.let { timeoutMs ->
           connectTimeout = executor.executeDelayed(timeoutMs) {
@@ -194,6 +230,11 @@ class PeripheralSession(
           error = null,
           connectError = CoreError(CoreError.Code.OPERATION_CANCELLED, "disconnect() cancelled the connection attempt"),
         )
+      }
+
+      SessionState.RECONNECTING -> {
+        disconnectWaiters += completion
+        finishDisconnected(null, CoreError(CoreError.Code.OPERATION_CANCELLED, "disconnect() stopped reconnecting"))
       }
 
       SessionState.READY -> {
@@ -441,7 +482,7 @@ class PeripheralSession(
     if (state != SessionState.READY) {
       return completion(Result.success(Unit))
     }
-    setNotification(entry, enable = false, timeoutMs, completion)
+    setNotification(entry, enable = false, timeoutMs, completion = completion)
   }
 
   /** Android needs both the local registration and the CCCD write on the peripheral. */
@@ -449,6 +490,7 @@ class PeripheralSession(
     entry: CharacteristicSubscriptions,
     enable: Boolean,
     timeoutMs: Long?,
+    setup: Boolean = false,
     completion: (Result<Unit>) -> Unit,
   ) {
     val value = when {
@@ -457,7 +499,15 @@ class PeripheralSession(
       else -> CCCD_NOTIFY
     }
     val kind = GattOperation.Kind.SET_NOTIFY
-    enqueueAttributeOperation(kind, key(entry.ref), timeoutMs, completion, operationId = null, valueOf = {}) {
+    enqueueAttributeOperation(
+      kind,
+      key(entry.ref),
+      timeoutMs,
+      completion,
+      operationId = null,
+      requireReady = !setup,
+      valueOf = {},
+    ) {
       if (gatt?.setCharacteristicNotification(entry.ref, enable) != true) {
         refused(if (enable) "notification registration" else "notification removal")
       } else {
@@ -599,15 +649,15 @@ class PeripheralSession(
         onConnectFailed(status)
       }
 
-      // The link dropped during post-connect setup: the connect failed.
+      // The link dropped during post-connect setup: the connect (or reconnection attempt) failed.
       SessionState.CONNECTED, SessionState.DISCOVERING -> if (down) {
-        closeGatt(disconnectFirst = false)
-        finishDisconnected(AndroidErrorMapping.connectionError(status, wasConnected = false))
+        failConnect(AndroidErrorMapping.connectionError(status, wasConnected = false))
       }
 
       SessionState.READY -> if (down) {
         closeGatt(disconnectFirst = false)
-        finishDisconnected(AndroidErrorMapping.connectionError(status, wasConnected = true))
+        val error = AndroidErrorMapping.connectionError(status, wasConnected = true)
+        if (reconnect != null) startReconnecting(error) else finishDisconnected(error)
       }
 
       SessionState.DISCONNECTING -> if (down) {
@@ -615,7 +665,7 @@ class PeripheralSession(
         finishDisconnected(null)
       }
 
-      SessionState.DISCONNECTED -> Unit
+      SessionState.DISCONNECTED, SessionState.RECONNECTING -> Unit
     }
   }
 
@@ -639,9 +689,10 @@ class PeripheralSession(
     completion: (Result<T>) -> Unit,
     operationId: Int?,
     valueOf: (GattResult.Success) -> T,
+    requireReady: Boolean = true,
     start: () -> Unit,
   ) {
-    if (state != SessionState.READY) {
+    if (requireReady && state != SessionState.READY) {
       return completion(Result.failure(CoreError(CoreError.Code.DISCONNECTED, "Not connected to $address")))
     }
     val operation = queue.enqueue(kind, target, timeoutMs, start) { result ->
@@ -735,7 +786,8 @@ class PeripheralSession(
   /** The connect timeout keeps running through setup: connect() covers it all (plan §4.8). */
   private fun onLinkUp() {
     setState(SessionState.CONNECTED, null)
-    if (!autoDiscover) {
+    // Restoring subscriptions needs the characteristics, whatever autoDiscover says.
+    if (!autoDiscover && !(reconnectAttempt > 0 && subscriptions.isNotEmpty())) {
       exchangeMtu()
       return
     }
@@ -752,7 +804,7 @@ class PeripheralSession(
    * the connection keeps the MTU it has, and a warning says why.
    */
   private fun exchangeMtu() {
-    val requested = setupMtu ?: return becomeReady()
+    val requested = setupMtu ?: return restoreSubscriptions()
     val setupState = state
     enqueueSetupOperation(GattOperation.Kind.REQUEST_MTU, { gatt?.requestMtu(requested) == true }) { result ->
       if (state != setupState) return@enqueueSetupOperation
@@ -761,8 +813,121 @@ class PeripheralSession(
         val message = "$address: the MTU request after connecting failed, so the MTU stays $mtu (${reason.message})"
         onWarning?.invoke(CoreError(reason.code, message, reason.gattStatus))
       }
-      becomeReady()
+      restoreSubscriptions()
     }
+  }
+
+  /**
+   * After a reconnection (P2-01): enables the CCCD of every subscription again, then the connection
+   * is ready. A subscription whose characteristic is gone or whose CCCD write fails ends alone.
+   */
+  private fun restoreSubscriptions() {
+    val entries = subscriptions.values.toList()
+    if (entries.isEmpty()) return becomeReady()
+    val setupState = state
+    var remaining = entries.size
+    val done = {
+      remaining -= 1
+      if (remaining == 0 && state == setupState) becomeReady()
+    }
+    for (entry in entries) {
+      val ref = services.firstOrNull { it.uuid == entry.ref.serviceUuid }
+        ?.characteristics
+        ?.firstOrNull { it.ref.uuid == entry.ref.uuid && CCCD in it.descriptors }
+        ?.ref
+      if (ref == null) {
+        endSubscriptions(
+          entry,
+          CoreError(CoreError.Code.CHARACTERISTIC_NOT_FOUND, "${entry.ref.uuid} is gone after reconnecting"),
+        )
+        done()
+        continue
+      }
+      rekey(entry, ref)
+      setNotification(entry, enable = true, timeoutMs = null, setup = true) { result ->
+        if (state != setupState) return@setNotification
+        result.fold(onSuccess = { entry.enabled = true }, onFailure = { endSubscriptions(entry, it as CoreError) })
+        done()
+      }
+    }
+  }
+
+  /** Discovery gives new handles: the entry and its subscribers move to the new key. */
+  private fun rekey(entry: CharacteristicSubscriptions, ref: GattCharacteristicRef) {
+    val oldKey = key(entry.ref)
+    val newKey = key(ref)
+    entry.ref = ref
+    if (oldKey == newKey) return
+    subscriptions.remove(oldKey)
+    subscriptions[newKey] = entry
+    entry.subscribers.forEach { subscriptionKeys[it] = newKey }
+  }
+
+  private fun endSubscriptions(entry: CharacteristicSubscriptions, error: CoreError) {
+    subscriptions.remove(key(entry.ref))
+    entry.subscribers.forEach { id ->
+      subscriptionKeys.remove(id)
+      onSubscriptionEnded?.invoke(id, error)
+    }
+  }
+
+  /** A ready connection was lost unexpectedly and a policy is set: wait, then try again (P2-01). */
+  private fun startReconnecting(error: CoreError) {
+    services = emptyList()
+    mtu = DEFAULT_MTU
+    reconnectAttempt = 1
+    setState(SessionState.RECONNECTING, error)
+    queue.failAll(CoreError(CoreError.Code.DISCONNECTED, "Disconnected from $address"))
+    if (restoreSubscriptions) {
+      subscriptions.values.forEach { it.enabled = false }
+    } else {
+      subscriptions.values.toList().forEach { endSubscriptions(it, error) }
+    }
+    scheduleReconnect()
+  }
+
+  private fun scheduleReconnect() {
+    val policy = reconnect ?: return
+    reconnectTimer = executor.executeDelayed(policy.delayMs(reconnectAttempt)) {
+      reconnectTimer = null
+      if (state == SessionState.RECONNECTING) beginReconnectAttempt()
+    }
+  }
+
+  /** Direct first, then autoConnect (plan P2-01): a quick try while the device is likely near. */
+  private fun beginReconnectAttempt() {
+    attempts = 0
+    autoConnect = reconnectAttempt > 1
+    setState(SessionState.CONNECTING, null)
+    connectTimeoutMs?.let { timeoutMs ->
+      connectTimeout = executor.executeDelayed(timeoutMs) {
+        connectTimeout = null
+        failConnect(
+          CoreError(CoreError.Code.CONNECTION_TIMEOUT, "Reconnecting to $address timed out after $timeoutMs ms"),
+        )
+      }
+    }
+    open()
+  }
+
+  /** A reconnection attempt failed: wait for the next one, or give up with [error]. */
+  private fun retryReconnect(error: CoreError) {
+    connectTimeout?.cancel()
+    connectTimeout = null
+    retry?.cancel()
+    retry = null
+    services = emptyList()
+    mtu = DEFAULT_MTU
+    queue.failAll(CoreError(CoreError.Code.DISCONNECTED, "Disconnected from $address"))
+    val next = reconnectAttempt + 1
+    if (reconnect?.allows(next) != true) {
+      finishDisconnected(error)
+      return
+    }
+    reconnectAttempt = next
+    subscriptions.values.forEach { it.enabled = false }
+    setState(SessionState.RECONNECTING, error)
+    scheduleReconnect()
   }
 
   /** Like an attribute operation, but allowed before READY (setup steps). */
@@ -781,6 +946,7 @@ class PeripheralSession(
   private fun becomeReady() {
     connectTimeout?.cancel()
     connectTimeout = null
+    reconnectAttempt = 0
     setState(SessionState.READY, null)
     // The state listener has seen `connected` before connect() resolves (plan §4.8).
     val waiters = connectWaiters.toList()
@@ -806,7 +972,11 @@ class PeripheralSession(
   /** Ends a connect attempt. [error] goes to the state listener; [connectError] to connect() callers. */
   private fun failConnect(error: CoreError?, connectError: CoreError = error!!) {
     closeGatt(disconnectFirst = true)
-    finishDisconnected(error, connectError)
+    if (reconnectAttempt > 0 && error != null) {
+      retryReconnect(error)
+    } else {
+      finishDisconnected(error, connectError)
+    }
   }
 
   private fun closeGatt(disconnectFirst: Boolean) {
@@ -831,13 +1001,16 @@ class PeripheralSession(
     retry = null
     disconnectTimeout?.cancel()
     disconnectTimeout = null
+    reconnectTimer?.cancel()
+    reconnectTimer = null
+    reconnectAttempt = 0
     // Handles, the database and the MTU can differ on the next connection.
     services = emptyList()
     mtu = DEFAULT_MTU
     // The state changes first, so callbacks of the operations failed below see the final state.
     setState(SessionState.DISCONNECTED, error)
     queue.failAll(CoreError(CoreError.Code.DISCONNECTED, "Disconnected from $address"))
-    // Subscriptions end with the connection (plan §4.8); restoring them is P2-01's.
+    // Subscriptions end with the connection (plan §4.8); a reconnection keeps them (P2-01).
     subscriptions.clear()
     subscriptionKeys.clear()
     val connects = connectWaiters.toList()
@@ -850,11 +1023,17 @@ class PeripheralSession(
 
   /** The listener hears changes of the JS state only (plan §4.8 maps several native states to one). */
   private fun setState(newState: SessionState, error: CoreError?) {
-    val previous = state
     state = newState
-    if (newState.js != previous.js) {
-      onStateChange(newState, error)
+    val now = visible(newState)
+    if (now.js != reported.js) {
+      reported = now
+      onStateChange(now, error)
     }
+  }
+
+  private fun visible(state: SessionState): SessionState = when {
+    reconnectAttempt > 0 && state in SETUP_STATES -> SessionState.RECONNECTING
+    else -> state
   }
 
   companion object {
@@ -868,6 +1047,7 @@ class PeripheralSession(
     const val DISCOVERY_TIMEOUT_MS = 30_000L
     const val DEFAULT_MTU = 23
     const val MAX_MTU = 517
+    private val SETUP_STATES = setOf(SessionState.CONNECTING, SessionState.CONNECTED, SessionState.DISCOVERING)
 
     /** The ATT maximum for an attribute value. */
     const val MAX_ATTRIBUTE_LENGTH = 512

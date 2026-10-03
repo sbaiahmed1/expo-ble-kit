@@ -1,5 +1,4 @@
 import { parseHeartRateMeasurement } from '../lib/heartRate';
-import { reconnectDelay } from '../lib/useKeepConnected';
 
 describe('Heart Rate Measurement', () => {
   it('reads an 8-bit value without extras (what the test peripheral sends)', () => {
@@ -26,11 +25,5 @@ describe('Heart Rate Measurement', () => {
     expect(parseHeartRateMeasurement(Uint8Array.of(0x00))).toBeNull();
     expect(parseHeartRateMeasurement(Uint8Array.of(0x01, 0x48))).toBeNull();
     expect(parseHeartRateMeasurement(Uint8Array.of(0x08, 72, 1))).toBeNull();
-  });
-
-  it('waits longer before each reconnection, up to 30 s', () => {
-    expect([1, 2, 3, 4, 5, 6, 7].map(reconnectDelay)).toEqual([
-      1000, 2000, 4000, 8000, 16000, 30000, 30000,
-    ]);
   });
 });

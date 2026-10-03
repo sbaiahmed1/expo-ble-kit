@@ -1,7 +1,7 @@
 import { Platform } from 'react-native';
 
 import { BleError } from '../errors';
-import type { ConnectOptions } from '../types';
+import type { ConnectOptions, ReconnectPolicy } from '../types';
 
 export const DEFAULT_CONNECT_TIMEOUT_MS = 15_000;
 /** Discovery is one queued operation, slower than the 10 s default (plan §4.9). */
@@ -12,13 +12,33 @@ export const MAX_MTU = 517;
 /** Android asks for this after connecting unless `android.requestMtu` says otherwise (Q3). */
 export const DEFAULT_REQUESTED_MTU = 517;
 
+/** A `ReconnectPolicy` with the defaults applied; `maxAttempts` null means no limit. */
+export interface NativeReconnectPolicy {
+  maxAttempts: number | null;
+  initialDelayMs: number;
+  maxDelayMs: number;
+  backoff: 'exponential' | 'fixed';
+}
+
 /** What the native `connect` takes. `timeoutMs` null means no timeout, never "default". */
 export interface NativeConnectOptions {
   timeoutMs: number | null;
   autoDiscover: boolean;
+  /** Null: no reconnection (P2-01). */
+  reconnect: NativeReconnectPolicy | null;
+  restoreSubscriptionsOnReconnect: boolean;
   /** `requestMtu` null asks for no MTU exchange. */
   android: { autoConnect?: boolean; requestMtu: number | null };
-  ios: { notifyOnDisconnection: boolean };
+  ios: { notifyOnDisconnection: boolean; enableAutoReconnect: boolean };
+}
+
+export const DEFAULT_RECONNECT_INITIAL_DELAY_MS = 1_000;
+export const DEFAULT_RECONNECT_MAX_DELAY_MS = 30_000;
+
+/** The wait before reconnection attempt `attempt` (1-based), as the native cores compute it. */
+export function reconnectDelay(policy: NativeReconnectPolicy, attempt: number): number {
+  if (policy.backoff === 'fixed') return policy.initialDelayMs;
+  return Math.min(policy.maxDelayMs, policy.initialDelayMs * 2 ** Math.min(attempt - 1, 20));
 }
 
 function invalid(option: string, problem: string): BleError {
@@ -44,16 +64,56 @@ function notYet(option: string): BleError {
   return new BleError('NOT_SUPPORTED', `Connect option ${option} isn't supported yet`);
 }
 
+function delay(option: string, value: unknown, fallback: number): number {
+  if (value === undefined) return fallback;
+  if (typeof value !== 'number' || !Number.isFinite(value) || value < 0) {
+    throw invalid(option, 'expected a number of milliseconds, 0 or more');
+  }
+  return value;
+}
+
+/** Validates `reconnect` (plan §5.4) and applies its defaults; null when it is unset or false. */
+function toNativeReconnectPolicy(
+  value: ReconnectPolicy | false | undefined
+): NativeReconnectPolicy | null {
+  if (value === undefined || value === false) return null;
+  if (typeof value !== 'object' || value === null) {
+    throw invalid('reconnect', 'expected a ReconnectPolicy object or false');
+  }
+  const { maxAttempts = Infinity, backoff = 'exponential' } = value;
+  if (maxAttempts !== Infinity && (!Number.isInteger(maxAttempts) || maxAttempts < 1)) {
+    throw invalid('reconnect.maxAttempts', 'expected an integer of 1 or more, or Infinity');
+  }
+  if (backoff !== 'exponential' && backoff !== 'fixed') {
+    throw invalid('reconnect.backoff', "expected 'exponential' or 'fixed'");
+  }
+  const initialDelayMs = delay(
+    'reconnect.initialDelayMs',
+    value.initialDelayMs,
+    DEFAULT_RECONNECT_INITIAL_DELAY_MS
+  );
+  const maxDelayMs = delay(
+    'reconnect.maxDelayMs',
+    value.maxDelayMs,
+    Math.max(DEFAULT_RECONNECT_MAX_DELAY_MS, initialDelayMs)
+  );
+  if (maxDelayMs < initialDelayMs) {
+    throw invalid('reconnect.maxDelayMs', 'expected at least reconnect.initialDelayMs');
+  }
+  return {
+    maxAttempts: maxAttempts === Infinity ? null : maxAttempts,
+    initialDelayMs,
+    maxDelayMs,
+    backoff,
+  };
+}
+
 /**
- * Options of later tasks (plan §7): `reconnect` and `ios.enableAutoReconnect` (P2-01),
- * `keepAliveInBackground` (P3-03), `android.phy` (P5-02). Setting one rejects with NOT_SUPPORTED
- * rather than being ignored; platform options only on their platform.
+ * Options of later tasks (plan §7): `keepAliveInBackground` (P3-03), `android.phy` (P5-02).
+ * Setting one rejects with NOT_SUPPORTED rather than being ignored; platform options only on their
+ * platform.
  */
 function checkImplemented(options: ConnectOptions): void {
-  if (options.reconnect !== undefined && options.reconnect !== false) {
-    throw notYet('reconnect');
-  }
-  optionalBoolean('restoreSubscriptionsOnReconnect', options.restoreSubscriptionsOnReconnect);
   if (optionalBoolean('keepAliveInBackground', options.keepAliveInBackground)) {
     throw notYet('keepAliveInBackground');
   }
@@ -63,13 +123,6 @@ function checkImplemented(options: ConnectOptions): void {
   }
   if (Platform.OS === 'android' && Array.isArray(phy) && phy.length > 0) {
     throw notYet('android.phy');
-  }
-  const autoReconnect = optionalBoolean(
-    'ios.enableAutoReconnect',
-    options.ios?.enableAutoReconnect
-  );
-  if (Platform.OS === 'ios' && autoReconnect) {
-    throw notYet('ios.enableAutoReconnect');
   }
 }
 
@@ -92,9 +145,26 @@ export function toNativeConnectOptions(options: ConnectOptions = {}): NativeConn
   checkImplemented(options);
   const autoConnect = optionalBoolean('android.autoConnect', options.android?.autoConnect);
   const requestMtu = options.android?.requestMtu;
+  const reconnect = toNativeReconnectPolicy(options.reconnect);
+  const restoreSubscriptionsOnReconnect = optionalBoolean(
+    'restoreSubscriptionsOnReconnect',
+    options.restoreSubscriptionsOnReconnect
+  );
+  const enableAutoReconnect = optionalBoolean(
+    'ios.enableAutoReconnect',
+    options.ios?.enableAutoReconnect
+  );
+  if (enableAutoReconnect && !reconnect) {
+    throw invalid(
+      'ios.enableAutoReconnect',
+      'needs reconnect, the policy used when iOS stops reconnecting'
+    );
+  }
   return {
     timeoutMs: timeoutMs === undefined ? DEFAULT_CONNECT_TIMEOUT_MS : timeoutMs,
     autoDiscover: optionalBoolean('autoDiscover', options.autoDiscover) ?? true,
+    reconnect,
+    restoreSubscriptionsOnReconnect: restoreSubscriptionsOnReconnect ?? true,
     android: {
       ...(autoConnect === undefined ? {} : { autoConnect }),
       requestMtu:
@@ -107,6 +177,7 @@ export function toNativeConnectOptions(options: ConnectOptions = {}): NativeConn
     ios: {
       notifyOnDisconnection:
         optionalBoolean('ios.notifyOnDisconnection', options.ios?.notifyOnDisconnection) ?? false,
+      enableAutoReconnect: enableAutoReconnect ?? false,
     },
   };
 }

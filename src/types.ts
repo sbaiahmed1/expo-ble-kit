@@ -27,8 +27,9 @@ export type PermissionStatus = 'granted' | 'denied' | 'undetermined';
 
 /**
  * The state of a connection. `connected` means ready for GATT operations: the link is up and the
- * setup after connecting (service discovery, the Android MTU request) is done.
- * `reconnecting` is reserved for reconnection policies, which a later version adds.
+ * setup after connecting (service discovery, the Android MTU request, restored subscriptions) is
+ * done. `reconnecting` follows an unexpected link loss when `connect()` had a `reconnect` policy:
+ * it covers the waits and the attempts, until `connected` again or `disconnected` when it gives up.
  */
 export type ConnectionState =
   'disconnected' | 'connecting' | 'connected' | 'disconnecting' | 'reconnecting';
@@ -177,9 +178,18 @@ export interface ConnectOptions extends Omit<OpOptions, 'timeoutMs'> {
    * @defaultValue true
    */
   autoDiscover?: boolean;
-  /** Reconnection policy. Not supported yet: anything but `false` rejects with `NOT_SUPPORTED`. */
+  /**
+   * Reconnect after the link to a connected device is lost unexpectedly (out of range, peripheral
+   * restarted). A failed first connect still rejects. `disconnect()` stops reconnecting.
+   * @defaultValue false
+   */
   reconnect?: ReconnectPolicy | false;
-  /** Resubscribe after a reconnect (with `reconnect`). Has no effect yet. */
+  /**
+   * With `reconnect`: keep the subscriptions and turn their notifications on again before
+   * `connected`. One that can't be restored ends (`active` turns false). False ends them all when
+   * the link is lost.
+   * @defaultValue true
+   */
   restoreSubscriptionsOnReconnect?: boolean;
   /** Keep the connection while the app is in the background. Not supported yet: `true` rejects. */
   keepAliveInBackground?: boolean;
@@ -197,22 +207,36 @@ export interface ConnectOptions extends Omit<OpOptions, 'timeoutMs'> {
   };
   /** iOS-only options; ignored on Android. */
   ios?: {
-    /** iOS 17 system reconnection. Not supported yet: `true` rejects. */
+    /**
+     * iOS 17+: the system reconnects by itself, also while the app is suspended. Needs `reconnect`,
+     * whose waits and attempts then only apply if iOS stops reconnecting. Ignored before iOS 17.
+     */
     enableAutoReconnect?: boolean;
     /** Show a system alert when the peripheral disconnects while the app is suspended. */
     notifyOnDisconnection?: boolean;
   };
 }
 
-/** How to reconnect after a link loss (a later version). */
+/**
+ * How to reconnect after a link loss. Each attempt waits first: `initialDelayMs`, then twice as long
+ * after each failure up to `maxDelayMs` (`exponential`), or `initialDelayMs` every time (`fixed`).
+ * Each attempt has the connect's `timeoutMs`. On Android the first attempt connects directly and
+ * later ones use `autoConnect`.
+ */
 export interface ReconnectPolicy {
-  /** @defaultValue Infinity */
+  /**
+   * Attempts before giving up; the connection then ends with the last attempt's error.
+   * @defaultValue Infinity
+   */
   maxAttempts?: number;
   /** @defaultValue 1000 */
   initialDelayMs?: number;
-  /** @defaultValue 30000 */
+  /** @defaultValue 30000 (or initialDelayMs when that is larger) */
   maxDelayMs?: number;
-  /** How the delay grows between attempts. */
+  /**
+   * How the wait grows between attempts.
+   * @defaultValue 'exponential'
+   */
   backoff?: 'exponential' | 'fixed';
 }
 
@@ -311,7 +335,7 @@ export interface SubscribeOptions extends OpOptions {
  *   with INVALID_ARGUMENT.
  */
 export interface CharacteristicSubscription extends Subscription {
-  /** False once unsubscribed, or once the connection ended. */
+  /** False once unsubscribed, once the connection ended, or once a reconnection couldn't restore it. */
   readonly active: boolean;
   /** Stops delivery immediately. If this was the last subscriber, disables the CCCD and rejects with a coded error if that write fails. */
   unsubscribe(options?: OpOptions): Promise<void>;

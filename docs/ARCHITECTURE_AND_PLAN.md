@@ -1,6 +1,6 @@
 # Expo BLE (`expo-ble-kit`) — Architecture & Implementation Plan
 
-> **Status:** Draft v0.28 · **Date:** 2026-10-02 · **Scope:** proposition #3, an Expo-first Bluetooth Low Energy module · **Changes:** Appendix D
+> **Status:** Draft v0.29 · **Date:** 2026-10-03 · **Scope:** proposition #3, an Expo-first Bluetooth Low Energy module · **Changes:** Appendix D
 >
 > **Package name:** `expo-ble-kit` (D0a, decided 2026-10-02) · native module `ExpoBleKit` · Android package `expo.modules.blekit`.
 >
@@ -215,7 +215,7 @@ iOS platform rules:
 - There is no MTU API. Report `mtu = maximumWriteValueLength(for: .withoutResponse) + 3`.
 - Bonding is implicit: it is triggered when an encrypted attribute is accessed. There is no `createBond` on iOS.
 - A pending `connect` never times out on its own. Our connect timeout MUST call `cancelPeripheralConnection`.
-- On iOS 17+, use the auto-reconnect connect option and the `isReconnecting` disconnect callback ⚠️ VERIFY.
+- On iOS 17+, use the auto-reconnect connect option and the `isReconnecting` disconnect callback (implemented in P2-01 behind `ios.enableAutoReconnect`; ⚠️ VERIFY on a device).
 - Background scanning requires service UUID filters, and duplicates are coalesced. Background advertising drops the local name and moves service UUIDs to the overflow area.
 - Apps the user force-quit are not relaunched for state restoration. Document this.
 
@@ -285,23 +285,26 @@ stateDiagram-v2
   connecting --> connected: link up
   connecting --> disconnected: timeout / failure / cancel
   connected --> discovering: discover() or autoDiscover
-  discovering --> ready: services cached (+ MTU request on Android)
+  discovering --> ready: services cached (+ MTU request on Android, subscription restore)
   ready --> disconnecting: disconnect()
   connected --> disconnecting: disconnect()
   disconnecting --> disconnected: link down
   connected --> disconnected: link loss
   discovering --> disconnected: link loss
-  ready --> disconnected: link loss
-  disconnected --> reconnecting: ReconnectPolicy active
-  reconnecting --> connecting: backoff elapsed
-  reconnecting --> disconnected: attempts exhausted / disconnect()
+  ready --> disconnected: link loss, no ReconnectPolicy
+  ready --> reconnecting: link loss, ReconnectPolicy set
+  reconnecting --> connecting: delay elapsed (next attempt)
+  connecting --> reconnecting: attempt failed, attempts left
+  reconnecting --> disconnected: attempts exhausted / disconnect() / Bluetooth off
 ```
+
+During a reconnection attempt, a failure or link loss in `connecting`, `connected` or `discovering` counts as a failed attempt: the session waits again in `reconnecting`, or ends in `disconnected` with that error after the last attempt.
 
 The JS-visible `ConnectionState` maps the native states as follows:
 
 | Native | JS |
 |---|---|
-| `connecting`, `connected`, `discovering` | `connecting` |
+| `connecting`, `connected`, `discovering` | `connecting` (`reconnecting` during a reconnection attempt) |
 | `ready` | `connected` |
 | `disconnecting` | `disconnecting` |
 | `disconnected` | `disconnected` |
@@ -312,8 +315,9 @@ The JS-visible `ConnectionState` maps the native states as follows:
 Invariants:
 
 - Entering `disconnected` rejects every queued and in-flight op with `DISCONNECTED`, marks subscriptions inactive and, on Android, calls `gatt.close()` exactly once.
-- `reconnecting` is only reachable when a `ReconnectPolicy` is set. Calling `disconnect()` from JS cancels it.
-- With `restoreSubscriptionsOnReconnect`, CCCDs are re-enabled natively before `connect()` resolves or the reconnected event fires.
+- Entering `reconnecting` rejects every queued and in-flight op with `DISCONNECTED` (and closes the Android GATT client); ops issued while reconnecting reject with `DISCONNECTED` too.
+- `reconnecting` is only reachable from `ready`, and only when a `ReconnectPolicy` is set. Calling `disconnect()` from JS cancels it.
+- With `restoreSubscriptionsOnReconnect`, CCCDs are re-enabled natively before `connected` is emitted again (and before a `connect()` that joined the reconnection resolves).
 
 ### 4.9 GATT operation queue
 
@@ -778,7 +782,7 @@ Subscription rules (decided in P1-08):
 - `mode: 'auto'` takes notifications when a characteristic has both. A characteristic with neither, or without the asked mode, is `NOT_SUPPORTED`; Android also needs its CCCD to be discovered (`DESCRIPTOR_NOT_FOUND`). An explicit mode different from the active one is `INVALID_ARGUMENT`, as is an id already in use. Unsubscribing an unknown id, or after the connection ended, resolves.
 - An `unsubscribe` while the enabling write is still in flight rejects that subscriber's `subscribe` with `OPERATION_CANCELLED`, and the CCCD is disabled again after it is enabled, so nothing stays on.
 - Indications are acknowledged by the stack on both platforms.
-- A disconnect ends every subscription without writing (the link is gone); restoring them on reconnect is P2-01's (`restoreSubscriptionsOnReconnect`).
+- A disconnect ends every subscription without writing (the link is gone). A reconnection keeps them (`restoreSubscriptionsOnReconnect`, P2-01; rules below).
 
 MTU and RSSI rules (decided in P1-09):
 
@@ -791,11 +795,21 @@ MTU and RSSI rules (decided in P1-09):
 
 API rules (decided in P1-12):
 
-- Connect options of later tasks reject with `NOT_SUPPORTED` instead of being ignored: `reconnect` (other than `false`) and `ios.enableAutoReconnect: true` on iOS (P2-01), `keepAliveInBackground: true` (P3-03), a non-empty `android.phy` on Android (P5-02). `restoreSubscriptionsOnReconnect` is accepted and has no effect without `reconnect`.
+- Connect options of later tasks reject with `NOT_SUPPORTED` instead of being ignored: `keepAliveInBackground: true` (P3-03), a non-empty `android.phy` on Android (P5-02). (`reconnect` and `ios.enableAutoReconnect` landed with P2-01.) `restoreSubscriptionsOnReconnect` is accepted and has no effect without `reconnect`.
 - Every rejection is a `BleError`. Peripheral calls carry `peripheralId`, and attribute calls `serviceUUID` and `characteristicUUID`. Invalid input rejects with `INVALID_ARGUMENT` before any native call; synchronous calls (`startScan`, `getPeripheral`, listeners) throw it.
 - Notifications are fanned out in JS: each subscriber gets every value of its characteristic. A subscriber callback that throws doesn't stop the others; the error is rethrown asynchronously. A disconnect marks every subscription inactive.
 - `getPeripheral(id)` returns the same object for the same id while it is in use. `getKnownPeripherals` and `getSystemConnectedPeripherals` resolve with those objects; both use the manager without showing a prompt, so they reject like `connect()` when it can't be used. Android keeps every valid address in `getKnownPeripherals` (§4.12).
 - `getDiagnostics()` combines the native snapshot with the permissions (all `undetermined` when they can't be read, the error then being among the recent errors) and the last 100 errors the API returned (`recentErrors`, kept in JS).
+
+Reconnection rules (decided in P2-01):
+
+- A policy applies only after a ready connection is lost unexpectedly. A first connect that fails still rejects; `disconnect()` stops a reconnection, and a `connect()` called during one joins it (and rejects with `OPERATION_CANCELLED` if `disconnect()` stops it). Bluetooth turning off ends it with `BLUETOOTH_POWERED_OFF`.
+- JS sees `connected` → `reconnecting` (with the error that ended the link) → `connected`, or → `disconnected` with the last attempt's error after `maxAttempts`. The listener hears each JS state once: the setup states of an attempt all read `reconnecting`.
+- The wait before attempt n is `min(initialDelayMs × 2^(n−1), maxDelayMs)` (`'fixed'`: `initialDelayMs`); `maxAttempts` defaults to no limit (null natively). Each attempt has the connect's `timeoutMs`. The TS layer validates and fills the policy (`src/internal/connectOptions.ts`); native gets every field.
+- Android: attempt 1 connects directly, later attempts use `autoConnect` (the stack then waits for the device without the 30 s direct-connect cap; our timeout still applies). Each attempt opens a fresh GATT client, and the previous one is closed once.
+- iOS 17+: `ios.enableAutoReconnect: true` (only with `reconnect`, else `INVALID_ARGUMENT`) passes `CBConnectPeripheralOptionEnableAutoReconnect`. A disconnect with `isReconnecting == true` enters `reconnecting` without our attempts, and the system's wait has no timeout; when the system reconnects, discovery and restore run as usual; when it fails, our policy takes over from attempt 2. Earlier iOS versions ignore the option.
+- Subscriptions are kept through `reconnecting`. Each attempt discovers again (even with `autoDiscover: false`, so the restored characteristics are found), re-enables the CCCDs through the queue and only then emits `connected`. A subscription that can't be restored (characteristic gone, CCCD write failed) ends alone: native emits `subscriptionEnded { subscriptionId, code, message }`, JS marks it inactive and records the error, and the connection still becomes ready. With `restoreSubscriptionsOnReconnect: false`, every subscription ends with `subscriptionEnded` (`DISCONNECTED`) when the link is lost.
+- `useCharacteristicValue` doesn't rely on restore: it drops its subscription when the state leaves `connected` and subscribes again on `connected` (§5.7).
 
 ### 5.5 Peripheral role (P4)
 
@@ -1182,10 +1196,10 @@ Parallelism: P0-06/P0-07 can run alongside P0-03/P0-04. With two people, P4 can 
   **Accept:** both work against Bumble (emulator) and the nRF52840 on iOS and Android devices; Maestro flows `explorer-basic.yaml` and `heart-rate.yaml` pass; example screens have Jest tests using the fake adapter.
   **Progress 2026-10-03 (open: waits for a test peripheral and an iPhone):** the example app now has tabs for Explorer, Heart Rate and the developer checks (`example/App.tsx`, `example/src/screens/`).
   - Explorer: a live scan list (named devices first), then a device page with connect, MTU and RSSI, and every service and characteristic. Each characteristic offers read, write (UTF-8 or hex, with or without response) and subscribe, and shows values as hex and UTF-8; descriptors can be read too. Names come from the SIG list and from `profile.json`.
-  - Heart Rate: scans for `0x180D`, parses the measurement (8- and 16-bit values, skin contact, energy, RR intervals), and shows the live BPM and the last 40 readings. It stays connected with an app-level reconnection loop (`useKeepConnected`) using a `ReconnectPolicy`'s backoff (1 s doubling to 30 s, 5 attempts), which `connect({ reconnect })` replaces once P2-01 lands. A "Reconnected n×" count shows that it worked, and on the test peripheral a button makes it drop the link (`CONTROL` `DISCONNECT_AFTER`).
+  - Heart Rate: scans for `0x180D`, parses the measurement (8- and 16-bit values, skin contact, energy, RR intervals), and shows the live BPM and the last 40 readings. It stays connected with `connect({ reconnect: { maxAttempts: 5 } })` (P2-01; an app-level loop until then). A "Reconnected n×" count shows that it worked, and on the test peripheral a button makes it drop the link (`CONTROL` `DISCONNECT_AFTER`).
   - Demo mode: a header switch installs the fake adapter with the test peripheral built from `profile.json` (values, descriptors, Heart Rate). A small driver plays the peripheral's side: notifications, `ECHO_WRITE` → `ECHO_READ`, `DISCONNECT_AFTER`. The screens then work without hardware.
   - The test profile now advertises `0x180D` (§8.3); Bumble and its tests follow (26 pass).
-  - Tests: 18 Jest tests in `example/` (the screens against the demo device, the byte and Heart Rate parsers, the backoff), with the library mapped from `../src`; CI runs them. The Maestro flows `e2e/maestro/explorer-basic.yaml` and `heart-rate.yaml` take `DEVICE_NAME` and `DEMO`.
+  - Tests: 17 Jest tests in `example/` (the screens against the demo device, the byte and Heart Rate parsers), with the library mapped from `../src`; CI runs them. The Maestro flows `e2e/maestro/explorer-basic.yaml` and `heart-rate.yaml` take `DEVICE_NAME` and `DEMO`.
   - Verified on the Galaxy A52 (debug build with Metro): both Maestro flows pass in demo mode (Explorer twice in a row), and Explorer lists real nearby devices.
   - Pending: the flows against Bumble on a USB dongle (the emulator option is ruled out) or the nRF52840, and both screens on an iPhone.
 - [ ] **P1-16 Docs v1** — deps: P1-12.
@@ -1199,6 +1213,12 @@ Parallelism: P0-06/P0-07 can run alongside P0-03/P0-04. With two people, P4 can 
 - [ ] **P2-01 Reconnection policies** — deps: P1-05, P1-08.
   Exponential/fixed backoff, iOS 17+ auto-reconnect, Android direct-then-`autoConnect` strategy, subscription restore, the `reconnecting` state.
   **Accept:** power-cycling the peripheral 20 times reconnects every time and notifications resume; the state listener sees `reconnecting` → `connected`; a read issued from the `connected` listener succeeds (no `CHARACTERISTIC_NOT_FOUND`).
+  **Progress 2026-10-03 (open: waits for a test peripheral and an iPhone):** `connect({ reconnect, restoreSubscriptionsOnReconnect, ios: { enableAutoReconnect } })` works on both platforms and in the fake (rules in §5.4, states in §4.8).
+  - Native: `ReconnectPolicy` and the reconnection cycle in `PeripheralSession` (Android: direct, then `autoConnect`; iOS: `PeripheralSession+Reconnect.swift`, iOS 17 system auto-reconnect first). Subscriptions are restored before `connected`; one that can't be ends with the new `subscriptionEnded` event.
+  - TS: policy validation and defaults (`src/internal/connectOptions.ts`), `reconnecting` in `ConnectionState`, `subscriptionEnded` handling in `Peripheral`, and the same cycle in `FakeBleAdapter`. The Heart Rate example uses `connect({ reconnect })` instead of its own loop; the getting-started guide has a "Staying connected" section.
+  - Tests: 11 Android (`ReconnectTest`), 10 iOS (`ReconnectTests`), Jest for the options and the fake's cycle, and the Heart Rate screen tests (reconnect, give up after 5 attempts, try again).
+  - Verified on the Galaxy A52 (debug build): both Maestro flows pass in demo mode, so the screen and the TS layer reconnect; the iOS binding compiles.
+  - Pending: the acceptance runs against the test peripheral (20 power cycles, a read from the `connected` listener) on Android and an iPhone, including iOS 17 auto-reconnect.
 - [ ] **P2-02 Write-without-response flow control** — deps: P1-07.
   **Accept:** 1 MB sent through repeated writes arrives complete (peripheral byte counter) on every matrix device.
 - [ ] **P2-03 `writeStream()`** — deps: P2-02.
@@ -1577,3 +1597,4 @@ Submit results (`BluetoothStatusCodes`, API 33+): 1 not enabled → `BLUETOOTH_P
 | v0.26 | 2026-10-02 | P1-12 done: `BleManager`, `Peripheral` and the hooks; §5 says which members later tasks add, and a test holds the types to it. Native `name`, `getKnownPeripherals`, `getSystemConnectedPeripherals` and `AbortSignal` cancellation (§4.5, §4.9). API rules in §5.4, hook rules in §5.7, fake rules in §5.8, the Android `getSystemConnectedPeripherals` difference in §6. The default export is gone (§4.6) |
 | v0.27 | 2026-10-02 | P1-16 docs written (getting started, permissions, troubleshooting, README) and the TypeDoc reference, which fails on undocumented symbols; publishing `0.1.0` waits for the maintainer |
 | v0.28 | 2026-10-03 | P1-15 in progress: Explorer and Heart Rate screens with demo mode, example Jest tests, the two Maestro flows (passing in demo mode on the Galaxy A52). The test profile advertises Heart Rate (§8.3) |
+| v0.29 | 2026-10-03 | P2-01 in progress: reconnection policies on both platforms and in the fake. §4.8 diagram and invariants for `reconnecting` (entered from `ready` only, failed attempts wait again), reconnection rules in §5.4 (Android direct-then-`autoConnect`, iOS 17 auto-reconnect, subscription restore and `subscriptionEnded`); the Heart Rate example drops its app-level loop |

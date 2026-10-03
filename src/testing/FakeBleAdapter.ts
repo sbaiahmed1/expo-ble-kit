@@ -6,7 +6,7 @@ import type {
 import { BleError, BleErrorCode } from '../errors';
 import type { NativeAttributeRequest, NativeSubscribeMode } from '../internal/attributeRequest';
 import type { NativeConnectOptions } from '../internal/connectOptions';
-import { DEFAULT_DISCOVERY_TIMEOUT_MS } from '../internal/connectOptions';
+import { DEFAULT_DISCOVERY_TIMEOUT_MS, reconnectDelay } from '../internal/connectOptions';
 import {
   GattQueue,
   type GattOperation,
@@ -329,6 +329,11 @@ class FakePeripheralHandle implements NativePeripheralPort {
   private cancelConnectTimeout: (() => void) | null = null;
   /** Bumped when a connection attempt ends, so its scheduled steps do nothing. */
   private attempt = 0;
+  /** The reconnection attempt running or waiting (1-based); 0 when not reconnecting (P2-01). */
+  private reconnectAttempt = 0;
+  /** A reconnection attempt is setting up the link (rather than waiting for its delay). */
+  private attemptRunning = false;
+  private cancelReconnect: (() => void) | null = null;
   /** One CCCD per characteristic, shared by its subscribers (plan §5.4). */
   private subscriptions = new Map<
     string,
@@ -373,7 +378,7 @@ class FakePeripheralHandle implements NativePeripheralPort {
       return Promise.resolve();
     }
     return new Promise((resolve, reject) => {
-      if (this.state === 'connecting') {
+      if (this.state === 'connecting' || this.state === 'reconnecting') {
         this.connectWaiters.push({ resolve, reject });
       } else if (this.state === 'disconnecting') {
         this.disconnectWaiters.push(() => this.connect(options).then(resolve, reject));
@@ -396,6 +401,12 @@ class FakePeripheralHandle implements NativePeripheralPort {
           return this.finish(
             null,
             fail(BleErrorCode.OPERATION_CANCELLED, 'disconnect() cancelled the connection attempt')
+          );
+        case 'reconnecting':
+          this.disconnectWaiters.push(resolve);
+          return this.finish(
+            null,
+            fail(BleErrorCode.OPERATION_CANCELLED, 'disconnect() stopped reconnecting')
           );
         default: {
           this.disconnectWaiters.push(resolve);
@@ -630,9 +641,9 @@ class FakePeripheralHandle implements NativePeripheralPort {
     }
   }
 
-  /** The device started advertising: a pending connect completes. */
+  /** The device started advertising: a pending connect (or reconnection attempt) completes. */
   deviceAppeared(): void {
-    if (this.state === 'connecting') {
+    if (this.settingUp()) {
       this.linkUp(this.attempt);
     }
   }
@@ -640,7 +651,12 @@ class FakePeripheralHandle implements NativePeripheralPort {
   linkLost(reason: 'peer' | 'linkLoss'): void {
     if (this.state === 'connected' || this.state === 'disconnecting') {
       const message = reason === 'peer' ? 'The peripheral disconnected' : 'The link was lost';
-      this.finish(fail(BleErrorCode.DISCONNECTED, message));
+      const error = fail(BleErrorCode.DISCONNECTED, message);
+      if (this.state === 'connected' && this.connectOptions?.reconnect) {
+        this.startReconnecting(error);
+      } else {
+        this.finish(error);
+      }
     }
   }
 
@@ -658,14 +674,19 @@ class FakePeripheralHandle implements NativePeripheralPort {
   }
 
   private startConnect(options: NativeConnectOptions): void {
-    const attempt = ++this.attempt;
     this.connectOptions = options;
     this.setState('connecting');
-    if (options.timeoutMs !== null) {
-      const timeoutMs = options.timeoutMs;
+    this.beginAttempt();
+  }
+
+  /** The first connect, or a reconnection attempt: link up when the device advertises, or time out. */
+  private beginAttempt(): void {
+    const attempt = ++this.attempt;
+    const timeoutMs = this.connectOptions?.timeoutMs ?? null;
+    if (timeoutMs !== null) {
       this.cancelConnectTimeout = this.scheduler.scheduleAfter(timeoutMs, () => {
-        if (attempt === this.attempt && this.state === 'connecting') {
-          this.finish(
+        if (attempt === this.attempt && this.settingUp()) {
+          this.failAttempt(
             fail(BleErrorCode.CONNECTION_TIMEOUT, `Connecting timed out after ${timeoutMs} ms`)
           );
         }
@@ -677,14 +698,106 @@ class FakePeripheralHandle implements NativePeripheralPort {
     }
   }
 
+  /** Connecting, or a reconnection attempt that is past its delay. */
+  private settingUp(): boolean {
+    return this.state === 'connecting' || (this.state === 'reconnecting' && this.attemptRunning);
+  }
+
+  /** A failed connect rejects; a failed reconnection attempt waits for the next one (P2-01). */
+  private failAttempt(error: BleError): void {
+    if (this.reconnectAttempt > 0) {
+      this.retryReconnect(error);
+    } else {
+      this.finish(error);
+    }
+  }
+
+  /** A ready connection was lost and a policy is set: wait, then try again. */
+  private startReconnecting(error: BleError): void {
+    this.resetLink();
+    this.reconnectAttempt = 1;
+    this.setState('reconnecting', error);
+    if (this.connectOptions?.restoreSubscriptionsOnReconnect) {
+      this.subscriptions.forEach((entry) => (entry.enabled = false));
+    } else {
+      [...this.subscriptions].forEach(([key, entry]) => this.endSubscription(key, entry, error));
+    }
+    this.scheduleReconnect();
+  }
+
+  private retryReconnect(error: BleError): void {
+    this.resetLink();
+    const policy = this.connectOptions?.reconnect;
+    const next = this.reconnectAttempt + 1;
+    if (!policy || (policy.maxAttempts !== null && next > policy.maxAttempts)) {
+      return this.finish(error);
+    }
+    this.reconnectAttempt = next;
+    this.subscriptions.forEach((entry) => (entry.enabled = false));
+    this.scheduleReconnect();
+  }
+
+  private scheduleReconnect(): void {
+    const policy = this.connectOptions?.reconnect;
+    if (!policy) return;
+    this.cancelReconnect = this.scheduler.scheduleAfter(
+      reconnectDelay(policy, this.reconnectAttempt),
+      () => {
+        this.cancelReconnect = null;
+        if (this.state === 'reconnecting' && !this.attemptRunning) {
+          this.attemptRunning = true;
+          this.beginAttempt();
+        }
+      }
+    );
+  }
+
+  /** The link is down: pending operations fail, and the peripheral forgets the CCCDs. */
+  private resetLink(): void {
+    this.attempt++;
+    this.attemptRunning = false;
+    this.cancelConnectTimeout?.();
+    this.cancelConnectTimeout = null;
+    this.services = [];
+    this.mtu = MIN_MTU;
+    this.queue.failAll(fail(BleErrorCode.DISCONNECTED, 'Disconnected'));
+    this.queue = new GattQueue(this.scheduler);
+    this.device()?.clientDisconnected();
+  }
+
+  /** Enables the CCCDs again after a reconnection; a failure (injected `subscribe`) ends one alone. */
+  private restoreSubscriptions(): void {
+    for (const [key, entry] of [...this.subscriptions]) {
+      const error = this.adapter.takeError('subscribe', this.id, entry.characteristic.uuid);
+      if (error) {
+        this.endSubscription(key, entry, error);
+        continue;
+      }
+      entry.characteristic.cccd = entry.indicate ? 'indicate' : 'notify';
+      entry.enabled = true;
+    }
+  }
+
+  private endSubscription(key: string, entry: { subscribers: Set<number> }, error: BleError): void {
+    this.subscriptions.delete(key);
+    entry.subscribers.forEach((subscriptionId) => {
+      this.subscriptionKeys.delete(subscriptionId);
+      this.emitter.emit('subscriptionEnded', {
+        subscriptionId,
+        code: error.code,
+        message: error.message,
+      });
+    });
+  }
+
   private linkUp(attempt: number): void {
     this.scheduler.schedule(() => {
-      if (attempt !== this.attempt || this.state !== 'connecting') {
+      if (attempt !== this.attempt || !this.settingUp()) {
         return;
       }
       const injected = this.adapter.takeError('connect', this.id);
       if (injected) {
-        return this.finish(injected);
+        return this.failAttempt(injected);
       }
       if (!this.connectOptions?.autoDiscover) {
         return this.exchangeMtu(attempt);
@@ -702,8 +815,8 @@ class FakePeripheralHandle implements NativePeripheralPort {
             );
           }),
         (result) => {
-          if (attempt !== this.attempt || this.state !== 'connecting') return;
-          if (!result.ok) return this.finish(result.error);
+          if (attempt !== this.attempt || !this.settingUp()) return;
+          if (!result.ok) return this.failAttempt(result.error);
           this.services = this.device()?.serviceList() ?? [];
           this.exchangeMtu(attempt);
         }
@@ -733,7 +846,7 @@ class FakePeripheralHandle implements NativePeripheralPort {
           );
         }),
       (result) => {
-        if (attempt !== this.attempt || this.state !== 'connecting') return;
+        if (attempt !== this.attempt || !this.settingUp()) return;
         if (result.ok) {
           this.mtu = result.value;
         } else {
@@ -759,6 +872,9 @@ class FakePeripheralHandle implements NativePeripheralPort {
   private becomeReady(): void {
     this.cancelConnectTimeout?.();
     this.cancelConnectTimeout = null;
+    this.restoreSubscriptions();
+    this.reconnectAttempt = 0;
+    this.attemptRunning = false;
     // Once connected, the name the device reports about itself is known.
     this.adapter.recordName(this.id, this.device()?.name ?? null);
     this.setState('connected');
@@ -773,6 +889,10 @@ class FakePeripheralHandle implements NativePeripheralPort {
     this.attempt++;
     this.cancelConnectTimeout?.();
     this.cancelConnectTimeout = null;
+    this.cancelReconnect?.();
+    this.cancelReconnect = null;
+    this.reconnectAttempt = 0;
+    this.attemptRunning = false;
     this.services = [];
     this.mtu = MIN_MTU;
     // The state changes first, so callbacks of the operations failed below see the final state.

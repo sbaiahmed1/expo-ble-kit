@@ -7,29 +7,49 @@ import {
   useCharacteristicValue,
   usePeripheral,
   useScan,
+  type BleError,
+  type ConnectionState,
   type Peripheral,
 } from 'expo-ble-kit';
 
 import { TestProfile } from '../lib/gattNames';
 import { parseHeartRateMeasurement } from '../lib/heartRate';
-import { useKeepConnected, type LinkStatus } from '../lib/useKeepConnected';
 import { ActionButton, BluetoothGate, Card, Chip, colors, text } from '../ui';
 
 const HISTORY = 40;
 
-function statusLine(status: LinkStatus): string {
-  switch (status.phase) {
-    case 'idle':
-      return 'Not connected';
+// After a lost link the library tries again after 1, 2, 4, 8 and 16 s, then gives up.
+const RECONNECT = { maxAttempts: 5 };
+
+/** `failure`: why the last connection failed or ended, when the user didn't stop it. */
+function statusLine(state: ConnectionState, failure: BleError | null): string {
+  switch (state) {
     case 'connecting':
-      return status.attempt === 0 ? 'Connecting…' : `Reconnecting (attempt ${status.attempt})…`;
+      return 'Connecting…';
     case 'connected':
       return 'Connected';
-    case 'waiting':
-      return `Connection lost. Retrying in ${status.delayMs / 1000} s (attempt ${status.attempt})`;
-    case 'gaveUp':
-      return `Gave up${status.error ? ` (${status.error.code})` : ''}`;
+    case 'reconnecting':
+      return 'Connection lost. Reconnecting…';
+    case 'disconnecting':
+      return 'Disconnecting…';
+    case 'disconnected':
+      return failure ? `Not connected: ${failure.code}` : 'Not connected';
   }
+}
+
+/** How many times the link came back by itself after it was lost. */
+function useReconnectCount(peripheral: Peripheral | null): number {
+  const [count, setCount] = useState(0);
+  useEffect(() => {
+    if (!peripheral) return;
+    let lost = false;
+    const listener = peripheral.addConnectionStateListener((state) => {
+      if (state === 'connected' && lost) setCount((n) => n + 1);
+      lost = state === 'reconnecting';
+    });
+    return () => listener.remove();
+  }, [peripheral]);
+  return count;
 }
 
 /** Heart-rate monitors nearby: anything advertising the Heart Rate service (0x180D). */
@@ -77,10 +97,10 @@ function hasControl(peripheral: Peripheral): boolean {
 }
 
 function Monitor(props: { id: string; onClose: () => void }) {
-  const { peripheral } = usePeripheral(props.id);
+  const { peripheral, state, error: linkError } = usePeripheral(props.id);
   const [wanted, setWanted] = useState(true);
   const [retryToken, setRetryToken] = useState(0);
-  const status = useKeepConnected(peripheral, wanted, retryToken);
+  const reconnects = useReconnectCount(peripheral);
   const { value, error } = useCharacteristicValue(
     peripheral,
     GattServices.HeartRate,
@@ -88,6 +108,15 @@ function Monitor(props: { id: string; onClose: () => void }) {
   );
   const measurement = value ? parseHeartRateMeasurement(value) : null;
   const [history, setHistory] = useState<number[]>([]);
+  const failure = wanted ? linkError : null;
+
+  // The library keeps the link: after a loss it reconnects and restores the subscription (P2-01).
+  // A failed first connect shows its error and a Try again button.
+  useEffect(() => {
+    if (peripheral && wanted) {
+      peripheral.connect({ timeoutMs: 10_000, reconnect: RECONNECT }).catch(() => {});
+    }
+  }, [peripheral, wanted, retryToken]);
 
   // One entry per notification: each value is a new array.
   useEffect(() => {
@@ -129,8 +158,8 @@ function Monitor(props: { id: string; onClose: () => void }) {
         <Text style={text.muted}>beats per minute</Text>
         <Text
           testID="hr-status"
-          style={[text.body, status.phase === 'waiting' && { color: colors.signal }]}>
-          {statusLine(status)}
+          style={[text.body, state === 'reconnecting' && { color: colors.signal }]}>
+          {statusLine(state, failure)}
         </Text>
         <View style={styles.chips}>
           {measurement?.sensorContact === false && <Chip label="No skin contact" tone="signal" />}
@@ -141,9 +170,9 @@ function Monitor(props: { id: string; onClose: () => void }) {
           {measurement?.energyExpendedKj != null && (
             <Chip label={`${measurement.energyExpendedKj} kJ`} />
           )}
-          {status.reconnects > 0 && (
+          {reconnects > 0 && (
             <View testID="hr-reconnects">
-              <Chip label={`Reconnected ${status.reconnects}×`} tone="signal" />
+              <Chip label={`Reconnected ${reconnects}×`} tone="signal" />
             </View>
           )}
         </View>
@@ -176,14 +205,14 @@ function Monitor(props: { id: string; onClose: () => void }) {
             onPress={() => setWanted(true)}
           />
         )}
-        {status.phase === 'gaveUp' && (
+        {state === 'disconnected' && failure && (
           <ActionButton
             title="Try again"
             testID="hr-retry"
             onPress={() => setRetryToken((n) => n + 1)}
           />
         )}
-        {status.phase === 'connected' && peripheral && hasControl(peripheral) && (
+        {state === 'connected' && peripheral && hasControl(peripheral) && (
           <ActionButton title="Drop the link (test device)" testID="hr-drop" onPress={dropLink} />
         )}
       </View>

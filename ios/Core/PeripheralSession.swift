@@ -12,6 +12,8 @@ enum SessionState {
   /// Link up and setup done: what JS calls `connected`.
   case ready
   case disconnecting
+  /// Waiting before the next reconnection attempt (P2-01). JS also sees the attempts as this.
+  case reconnecting
 
   /// JS `ConnectionState` (plan §4.8).
   var js: String {
@@ -24,6 +26,8 @@ enum SessionState {
       return "connected"
     case .disconnecting:
       return "disconnecting"
+    case .reconnecting:
+      return "reconnecting"
     }
   }
 }
@@ -36,6 +40,12 @@ struct ConnectSpec {
   var notifyOnDisconnection = false
   /// Discover every service before the connection counts as ready (plan §4.8).
   var autoDiscover = true
+  /// Reconnect after an unexpected link loss of a ready connection; nil never does (P2-01).
+  var reconnect: ReconnectPolicy?
+  /// With `reconnect`: enable the subscriptions again before the connection counts as ready.
+  var restoreSubscriptions = true
+  /// iOS 17+: let the system reconnect (CBConnectPeripheralOptionEnableAutoReconnect), with `reconnect`.
+  var enableAutoReconnect = false
 }
 
 /// One peripheral's connection (plan §4.3, §4.8): connect with a timeout that cancels the pending
@@ -74,10 +84,25 @@ final class PeripheralSession: PeripheralLikeDelegate {
   var onMtuChange: ((Int) -> Void)?
   /// The name iOS cached for the peripheral: when the connection is ready, then on each change.
   var onNameChange: ((String?) -> Void)?
+  /// Subscriptions that end while the connection lives on (reconnecting): a reconnection without
+  /// subscription restore, or a restore that failed.
+  var onSubscriptionEnded: ((_ subscriptionId: Int, CoreError) -> Void)?
 
-  private let central: CentralManaging
-  private let scheduler: Scheduling
-  private var connectTimeout: CancellableWork?
+  /// The reconnection attempt running or waiting (1-based); 0 when not reconnecting (P2-01).
+  var reconnectAttempt = 0
+  /// The system reconnects on its own (iOS 17 auto-reconnect); no attempts of ours run.
+  var systemReconnecting = false
+  var reconnect: ReconnectPolicy?
+  var restoreSubscriptions = true
+  var connectTimeoutValue: TimeInterval?
+  var connectOptions: [String: Any]?
+  var reconnectTimer: CancellableWork?
+  /// The state the listener last heard, as JS sees it.
+  private var reported = SessionState.disconnected
+
+  let central: CentralManaging
+  let scheduler: Scheduling
+  var connectTimeout: CancellableWork?
   private var disconnectTimeout: CancellableWork?
   private var connectWaiters: [Completion] = []
   private var disconnectWaiters: [() -> Void] = []
@@ -115,30 +140,47 @@ final class PeripheralSession: PeripheralLikeDelegate {
     switch state {
     case .ready:
       completion(nil)
-    case .connecting, .connected, .discovering:
+    case .connecting, .connected, .discovering, .reconnecting:
       connectWaiters.append(completion)
     case .disconnecting:
       disconnectWaiters.append { [weak self] in self?.connect(spec, completion: completion) }
     case .disconnected:
       connectWaiters.append(completion)
       autoDiscover = spec.autoDiscover
+      reconnect = spec.reconnect
+      restoreSubscriptions = spec.restoreSubscriptions
+      connectTimeoutValue = spec.timeout
+      connectOptions = Self.options(for: spec)
       setState(.connecting, nil)
-      if let timeout = spec.timeout {
-        connectTimeout = scheduler.schedule(after: timeout) { [weak self] in
-          guard let self else {
-            return
-          }
-          connectTimeout = nil
-          let milliseconds = Int(timeout * 1000)
-          failConnect(CoreError(.connectionTimeout, "Connecting timed out after \(milliseconds) ms"))
-        }
-      }
-      var options: [String: Any] = [:]
-      if spec.notifyOnDisconnection {
-        options[CBConnectPeripheralOptionNotifyOnDisconnectionKey] = true
-      }
-      central.connect(peripheral, options: options.isEmpty ? nil : options)
+      startConnectTimeout()
+      central.connect(peripheral, options: connectOptions)
     }
+  }
+
+  /// Fails the connect, or the reconnection attempt, once the spec's timeout passes.
+  func startConnectTimeout() {
+    guard let timeout = connectTimeoutValue else {
+      return
+    }
+    connectTimeout = scheduler.schedule(after: timeout) { [weak self] in
+      guard let self else {
+        return
+      }
+      connectTimeout = nil
+      let milliseconds = Int(timeout * 1000)
+      failConnect(CoreError(.connectionTimeout, "Connecting timed out after \(milliseconds) ms"))
+    }
+  }
+
+  private static func options(for spec: ConnectSpec) -> [String: Any]? {
+    var options: [String: Any] = [:]
+    if spec.notifyOnDisconnection {
+      options[CBConnectPeripheralOptionNotifyOnDisconnectionKey] = true
+    }
+    if spec.reconnect != nil, spec.enableAutoReconnect, #available(iOS 17, macOS 14, *) {
+      options[CBConnectPeripheralOptionEnableAutoReconnect] = true
+    }
+    return options.isEmpty ? nil : options
   }
 
   /// Completes once disconnected. During a connect, it cancels the attempt, which then fails with
@@ -152,6 +194,9 @@ final class PeripheralSession: PeripheralLikeDelegate {
     case .connecting, .connected, .discovering:
       disconnectWaiters.append(completion)
       failConnect(nil, connectError: CoreError(.operationCancelled, "disconnect() cancelled the connection attempt"))
+    case .reconnecting:
+      disconnectWaiters.append(completion)
+      finishDisconnected(nil, connectError: CoreError(.operationCancelled, "disconnect() stopped reconnecting"))
     case .ready:
       disconnectWaiters.append(completion)
       setState(.disconnecting, nil)
@@ -179,17 +224,20 @@ final class PeripheralSession: PeripheralLikeDelegate {
     case .connecting:
       // The connect timeout keeps running through setup: connect() covers it all (plan §4.8).
       setState(.connected, nil)
-      guard autoDiscover else {
-        return becomeReady()
+      // Restoring subscriptions needs their characteristics, whatever autoDiscover says.
+      let restoring = reconnectAttempt > 0 && !subscriptions.isEmpty
+      guard autoDiscover || restoring else {
+        return restoreSubscriptions { [weak self] in self?.becomeReady() }
       }
       setState(.discovering, nil)
-      discover(nil, timeout: nil) { [weak self] result in
+      let filter = autoDiscover ? nil : Array(Set(subscriptions.values.map(\.serviceUUID.fullUUIDString)))
+      discover(filter, timeout: nil) { [weak self] result in
         guard let self, state == .discovering else {
           return
         }
         switch result {
         case .success:
-          becomeReady()
+          restoreSubscriptions { [weak self] in self?.becomeReady() }
         case let .failure(error):
           failConnect(error)
         }
@@ -209,18 +257,26 @@ final class PeripheralSession: PeripheralLikeDelegate {
     failConnect(Self.connectionError(error))
   }
 
-  func didDisconnect(_ error: Error?) {
+  /// `isReconnecting`: iOS 17 auto-reconnect will connect again by itself.
+  func didDisconnect(_ error: Error?, isReconnecting: Bool = false) {
     switch state {
     case .connecting, .connected, .discovering:
-      // Before ready, a dropped link is a failed connect.
+      // Before ready, a dropped link is a failed connect (or reconnection attempt).
       failConnect(Self.connectionError(error))
     case .ready:
       let lost = error.map(CoreBluetoothErrorMapping.coreError(from:))
         ?? CoreError(.disconnected, "The peripheral disconnected")
-      finishDisconnected(lost)
+      if reconnect != nil {
+        startReconnecting(lost, system: isReconnecting)
+      } else {
+        if isReconnecting {
+          central.cancelPeripheralConnection(peripheral)
+        }
+        finishDisconnected(lost)
+      }
     case .disconnecting:
       finishDisconnected(nil)
-    case .disconnected:
+    case .disconnected, .reconnecting:
       break
     }
   }
@@ -230,6 +286,8 @@ final class PeripheralSession: PeripheralLikeDelegate {
   private func becomeReady() {
     connectTimeout?.cancel()
     connectTimeout = nil
+    reconnectAttempt = 0
+    systemReconnecting = false
     mtu = derivedMtu
     onNameChange?(peripheral.name)
     setState(.ready, nil)
@@ -255,17 +313,26 @@ final class PeripheralSession: PeripheralLikeDelegate {
   }
 
   /// Ends a connect attempt. `error` goes to the state listener; `connectError` to connect() callers.
-  private func failConnect(_ error: CoreError?, connectError: CoreError? = nil) {
+  /// A failed reconnection attempt waits for the next one instead.
+  func failConnect(_ error: CoreError?, connectError: CoreError? = nil) {
     // CoreBluetooth keeps a pending connect forever unless it is cancelled (plan §4.3).
     central.cancelPeripheralConnection(peripheral)
-    finishDisconnected(error, connectError: connectError)
+    if reconnectAttempt > 0, let error {
+      retryReconnect(error)
+    } else {
+      finishDisconnected(error, connectError: connectError)
+    }
   }
 
-  private func finishDisconnected(_ error: CoreError?, connectError: CoreError? = nil) {
+  func finishDisconnected(_ error: CoreError?, connectError: CoreError? = nil) {
     connectTimeout?.cancel()
     connectTimeout = nil
     disconnectTimeout?.cancel()
     disconnectTimeout = nil
+    reconnectTimer?.cancel()
+    reconnectTimer = nil
+    reconnectAttempt = 0
+    systemReconnecting = false
     pendingWriteWithoutResponse = nil
     // Handles, the database and the MTU can differ on the next connection.
     mtu = Self.defaultMtu
@@ -276,7 +343,7 @@ final class PeripheralSession: PeripheralLikeDelegate {
     // The state changes first, so callbacks of the operations failed below see the final state.
     setState(.disconnected, error)
     queue.failAll(CoreError(.disconnected, "Disconnected"))
-    // Subscriptions end with the connection (plan §4.8); restoring them is P2-01's.
+    // Subscriptions end with the connection (plan §4.8); a reconnection keeps them (P2-01).
     subscriptions.removeAll()
     subscriptionKeys.removeAll()
     let connectFailure = connectError ?? error
@@ -289,11 +356,19 @@ final class PeripheralSession: PeripheralLikeDelegate {
     disconnects.forEach { $0() }
   }
 
-  private func setState(_ newState: SessionState, _ error: CoreError?) {
-    let previous = state
+  /// The listener hears changes of the JS state only (plan §4.8 maps several native states to one).
+  func setState(_ newState: SessionState, _ error: CoreError?) {
     state = newState
-    if newState.js != previous.js {
-      onStateChange?(newState, error)
+    let now = visibleState
+    if now.js != reported.js {
+      reported = now
+      onStateChange?(now, error)
     }
+  }
+
+  /// The state as JS sees it: the setup steps of a reconnection read as `reconnecting` (plan §4.8).
+  var visibleState: SessionState {
+    let settingUp = state == .connecting || state == .connected || state == .discovering
+    return reconnectAttempt > 0 && settingUp ? .reconnecting : state
   }
 }

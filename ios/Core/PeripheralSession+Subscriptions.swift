@@ -12,15 +12,21 @@ enum SubscribeMode: String {
 
 /// The subscribers of one characteristic and the state of its CCCD.
 final class CharacteristicSubscriptions {
-  let characteristic: CharacteristicLike
+  /// Replaced after a reconnection: discovery creates new characteristic objects.
+  var characteristic: CharacteristicLike
+  /// For finding the characteristic again after a reconnection (P2-01).
+  let serviceUUID: CBUUID
+  let characteristicUUID: CBUUID
   let indicate: Bool
   var subscribers: Set<Int> = []
   /// Subscribers waiting for the CCCD write that enables delivery.
   var waiting: [Int: (Result<Void, CoreError>) -> Void] = [:]
   var enabled = false
 
-  init(characteristic: CharacteristicLike, indicate: Bool) {
+  init(characteristic: CharacteristicLike, serviceUUID: CBUUID, indicate: Bool) {
     self.characteristic = characteristic
+    self.serviceUUID = serviceUUID
+    characteristicUUID = characteristic.uuid
     self.indicate = indicate
   }
 }
@@ -137,7 +143,7 @@ extension PeripheralSession {
       }
       return existing
     }
-    return CharacteristicSubscriptions(characteristic: characteristic, indicate: indicate)
+    return CharacteristicSubscriptions(characteristic: characteristic, serviceUUID: serviceUUID, indicate: indicate)
   }
 
   /// CoreBluetooth picks notifications when a characteristic has both, so `indicate` needs a
@@ -163,7 +169,7 @@ extension PeripheralSession {
     }
   }
 
-  private func setNotify(
+  func setNotify(
     _ enable: Bool,
     for entry: CharacteristicSubscriptions,
     timeout: TimeInterval?,

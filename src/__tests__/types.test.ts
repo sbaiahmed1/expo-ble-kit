@@ -75,14 +75,13 @@ describe('native values match the public types (plan §5.1)', () => {
 });
 
 describe('native connection states are ConnectionState values (plan §4.8)', () => {
-  // `reconnecting` arrives with reconnect policies (P2-01).
   const states = allOf<ConnectionState>()([
     'disconnected',
     'connecting',
     'connected',
     'disconnecting',
     'reconnecting',
-  ]).filter((state) => state !== 'reconnecting');
+  ]);
 
   it.each([
     ['iOS', 'ios/Core/PeripheralSession.swift', /return "(\w+)"/g],

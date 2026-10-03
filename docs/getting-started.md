@@ -124,7 +124,26 @@ const subscription = await device.subscribe(
 await subscription.unsubscribe();
 ```
 
-Several subscriptions to one characteristic share it: the peripheral's notifications are turned off when the last one is removed. A subscription ends with the connection.
+Several subscriptions to one characteristic share it: the peripheral's notifications are turned off when the last one is removed. A subscription ends with the connection, unless the connection reconnects (below).
+
+## Staying connected
+
+Pass a `reconnect` policy and the library brings a lost connection back by itself:
+
+```ts
+await device.connect({ reconnect: { maxAttempts: 5 } }); // waits 1, 2, 4, 8, 16 s between attempts
+
+device.addConnectionStateListener((state, error) => {
+  // 'connected' → 'reconnecting' (error: why the link was lost) → 'connected'
+  // or, after the last attempt, 'disconnected' with the last attempt's error
+});
+```
+
+- Reconnection starts only after an established connection is lost unexpectedly. A first `connect()` that fails still rejects, and `disconnect()` stops reconnecting.
+- While reconnecting, operations reject with `DISCONNECTED`; services are discovered again before the state reads `connected`.
+- Subscriptions are kept: notifications are turned on again before `connected`, and the same callbacks keep receiving values. One that can't be restored ends alone: its `active` turns false, and the reason is kept in `getDiagnostics().recentErrors`. `restoreSubscriptionsOnReconnect: false` ends them when the link is lost instead.
+- `backoff: 'fixed'` waits `initialDelayMs` each time; the default doubles it up to `maxDelayMs` (30 s). `maxAttempts` defaults to no limit.
+- On iOS 17 and later, `ios: { enableAutoReconnect: true }` lets the system reconnect first, which also works while the app is suspended.
 
 ## With React hooks
 
@@ -205,6 +224,6 @@ The fake answers on later timer ticks, like a radio; Jest fake timers work (`awa
 
 ## Not in this version yet
 
-Reconnection policies, background operation, the peripheral role (advertising, GATT server), chunked writes (`writeStream`), notification batching and logging come in later versions. Options for them reject with `NOT_SUPPORTED` rather than being ignored.
+Background operation, the peripheral role (advertising, GATT server), chunked writes (`writeStream`), notification batching and logging come in later versions. Options for them reject with `NOT_SUPPORTED` rather than being ignored.
 
 Problems? See [troubleshooting](troubleshooting.md).

@@ -32,6 +32,8 @@ final class CentralEngine: CentralManagingDelegate {
   /// Called on `queue` when a peripheral's JS connection state changes; `error` is set when the
   /// connection ended or failed unexpectedly.
   var onConnectionStateChange: ((_ peripheralId: String, SessionState, CoreError?) -> Void)?
+  /// A subscription ended while its connection reconnects (P2-01), on `queue`.
+  var onSubscriptionEnded: ((_ peripheralId: String, _ subscriptionId: Int, CoreError) -> Void)?
   /// A notification or indication, on `queue`; the timestamp is epoch milliseconds (plan §4.10).
   var onNotification: ((_ peripheralId: String, _ service: String, _ characteristic: String, Data, Double) -> Void)?
   /// The MTU of a ready connection changed (P1-09), on `queue`.
@@ -321,6 +323,9 @@ extension CentralEngine {
     session.onStateChange = { [weak self, weak session] state, error in
       self?.publishConnectionState(identifier.uuidString, state, error, mtu: session?.mtu)
     }
+    session.onSubscriptionEnded = { [weak self] id, error in
+      self?.onSubscriptionEnded?(identifier.uuidString, id, error)
+    }
     session.onNameChange = { [weak self] name in
       self?.names[identifier.uuidString] = name
     }
@@ -379,8 +384,8 @@ extension CentralEngine {
     isReconnecting: Bool,
     error: Error?
   ) {
-    // iOS 17 auto-reconnect (`isReconnecting`) is opt-in and arrives with P2-01.
-    sessions[peripheral.identifier]?.didDisconnect(error)
+    // `isReconnecting`: iOS 17 auto-reconnect (opt-in, ConnectSpec.enableAutoReconnect) connects again.
+    sessions[peripheral.identifier]?.didDisconnect(error, isReconnecting: isReconnecting)
   }
 
   private func runPendingConnects(_ result: Result<CentralManaging, CoreError>) {

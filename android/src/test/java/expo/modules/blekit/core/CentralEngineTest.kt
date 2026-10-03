@@ -49,6 +49,8 @@ class CentralEngineTest {
 
         override fun onMtuChange(peripheralId: String, mtu: Int) = Unit
 
+        override fun onSubscriptionEnded(peripheralId: String, subscriptionId: Int, error: CoreError) = Unit
+
         override fun onConnectionStateChange(peripheralId: String, state: SessionState, error: CoreError?) {
           connections += "$peripheralId ${state.js}${error?.let { " ${it.code}" } ?: ""}"
         }

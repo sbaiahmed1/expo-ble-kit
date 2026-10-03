@@ -31,6 +31,7 @@ const profile = {
 };
 
 const settle = () => jest.advanceTimersByTimeAsync(10);
+const wait = (ms: number) => jest.advanceTimersByTimeAsync(ms);
 
 async function errorOf(promise: Promise<unknown>): Promise<BleError | null> {
   try {
@@ -110,17 +111,20 @@ describe('Peripheral', () => {
     });
 
     it('rejects options of later tasks and invalid ones', async () => {
-      expect(await codeOf(peripheral.connect({ reconnect: { maxAttempts: 3 } }))).toBe(
-        'NOT_SUPPORTED'
-      );
       expect(await codeOf(peripheral.connect({ keepAliveInBackground: true }))).toBe(
         'NOT_SUPPORTED'
       );
-      const platformOption =
-        Platform.OS === 'android'
-          ? { android: { phy: ['le2m' as const] } }
-          : { ios: { enableAutoReconnect: true } };
-      expect(await codeOf(peripheral.connect(platformOption))).toBe('NOT_SUPPORTED');
+      if (Platform.OS === 'android') {
+        expect(await codeOf(peripheral.connect({ android: { phy: ['le2m'] } }))).toBe(
+          'NOT_SUPPORTED'
+        );
+      }
+      expect(await codeOf(peripheral.connect({ reconnect: { maxAttempts: 0 } }))).toBe(
+        'INVALID_ARGUMENT'
+      );
+      expect(await codeOf(peripheral.connect({ ios: { enableAutoReconnect: true } }))).toBe(
+        'INVALID_ARGUMENT'
+      );
       expect(await codeOf(peripheral.connect({ timeoutMs: -1 }))).toBe('INVALID_ARGUMENT');
       expect(await codeOf(peripheral.connect({ signal: {} as AbortSignal }))).toBe(
         'INVALID_ARGUMENT'
@@ -203,6 +207,94 @@ describe('Peripheral', () => {
       const pending = codeOf(peripheral.read(TEST_SERVICE, STATIC_READ));
       device.disconnect('linkLoss');
       expect(await pending).toBe('DISCONNECTED');
+    });
+  });
+
+  describe('reconnection', () => {
+    const reconnect = { maxAttempts: 3, initialDelayMs: 1000 };
+
+    it('reconnects after a link loss, and a read from the connected listener succeeds', async () => {
+      const states: string[] = [];
+      let readInListener: Promise<Uint8Array> | null = null;
+      peripheral.addConnectionStateListener((state, error) => {
+        states.push(error ? `${state} ${error.code}` : state);
+        if (state === 'connected' && states.includes('reconnecting DISCONNECTED')) {
+          readInListener = peripheral.read(TEST_SERVICE, STATIC_READ);
+        }
+      });
+      await run(peripheral.connect({ reconnect }));
+      device.disconnect('linkLoss');
+      expect(peripheral.state).toBe('reconnecting');
+      await wait(1100);
+      expect(states).toEqual(['connecting', 'connected', 'reconnecting DISCONNECTED', 'connected']);
+      expect(await run(readInListener!)).toEqual(new Uint8Array([1, 2, 3]));
+    });
+
+    it('keeps subscriptions and restores their CCCD before connected', async () => {
+      await run(peripheral.connect({ reconnect }));
+      const values: number[] = [];
+      const subscription = await run(
+        peripheral.subscribe(TEST_SERVICE, STREAM, (v) => values.push(v[0]))
+      );
+      device.disconnect('linkLoss');
+      expect(subscription.active).toBe(true);
+      expect(device.isNotifying(TEST_SERVICE, STREAM)).toBe(false);
+      await wait(1100);
+      expect(device.isNotifying(TEST_SERVICE, STREAM)).toBe(true);
+      device.notify(TEST_SERVICE, STREAM, new Uint8Array([9]));
+      expect(values).toEqual([9]);
+    });
+
+    it('ends subscriptions that are not restored, or fail to restore', async () => {
+      await run(peripheral.connect({ reconnect, restoreSubscriptionsOnReconnect: false }));
+      const dropped = await run(peripheral.subscribe(TEST_SERVICE, STREAM, () => {}));
+      device.disconnect('linkLoss');
+      expect(dropped.active).toBe(false);
+      await wait(1100);
+      expect(device.isNotifying(TEST_SERVICE, STREAM)).toBe(false);
+
+      await run(peripheral.disconnect());
+      await run(peripheral.connect({ reconnect }));
+      const failing = await run(peripheral.subscribe(TEST_SERVICE, STREAM, () => {}));
+      fake.injectError({ op: 'subscribe', characteristic: STREAM }, 'GATT_ERROR');
+      device.disconnect('linkLoss');
+      await wait(1100);
+      expect(peripheral.state).toBe('connected');
+      expect(failing.active).toBe(false);
+      const diagnostics = await BleManager.getDiagnostics();
+      expect(diagnostics.recentErrors.at(-1)).toMatchObject({
+        code: 'GATT_ERROR',
+        characteristicUUID: STREAM,
+      });
+    });
+
+    it('gives up after maxAttempts with the last error', async () => {
+      const states: string[] = [];
+      peripheral.addConnectionStateListener((state, error) =>
+        states.push(error ? `${state} ${error.code}` : state)
+      );
+      await run(peripheral.connect({ timeoutMs: 1000, reconnect: { maxAttempts: 2 } }));
+      device.advertise(false);
+      device.disconnect('linkLoss');
+      await wait(1000 + 1000 + 2000 + 1000);
+      expect(states.at(-1)).toBe('disconnected CONNECTION_TIMEOUT');
+      expect(states.filter((s) => s.startsWith('reconnecting'))).toHaveLength(1);
+    });
+
+    it('a connect during reconnection joins it; disconnect stops it', async () => {
+      await run(peripheral.connect({ reconnect }));
+      device.disconnect('linkLoss');
+      const joined = peripheral.connect();
+      await wait(1100);
+      await joined;
+      expect(peripheral.state).toBe('connected');
+
+      device.disconnect('linkLoss');
+      const cancelled = codeOf(peripheral.connect());
+      await run(peripheral.disconnect());
+      expect(await cancelled).toBe('OPERATION_CANCELLED');
+      await wait(60_000);
+      expect(peripheral.state).toBe('disconnected');
     });
   });
 

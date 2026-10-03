@@ -17,6 +17,7 @@ final class FakeCentralManager: CentralManaging {
   weak var delegate: CentralManagingDelegate?
   private(set) var calls: [Call] = []
   private(set) var lastScanOptions: [String: Any]?
+  private(set) var lastConnectOptions: [String: Any]?
   /// Peripherals the "system" knows (for retrieve calls).
   var knownPeripherals: [UUID: FakePeripheral] = [:]
 
@@ -33,6 +34,7 @@ final class FakeCentralManager: CentralManaging {
 
   func connect(_ peripheral: PeripheralLike, options: [String: Any]?) {
     calls.append(.connect(peripheral.identifier))
+    lastConnectOptions = options
     if let fake = peripheral as? FakePeripheral {
       fake.state = .connecting
     }
