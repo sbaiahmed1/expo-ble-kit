@@ -1,6 +1,6 @@
 # Expo BLE (`expo-ble-kit`) — Architecture & Implementation Plan
 
-> **Status:** Draft v0.38 · **Date:** 2026-10-03 · **Scope:** proposition #3, an Expo-first Bluetooth Low Energy module · **Changes:** Appendix D
+> **Status:** Draft v0.39 · **Date:** 2026-10-03 · **Scope:** proposition #3, an Expo-first Bluetooth Low Energy module · **Changes:** Appendix D
 >
 > **Package name:** `expo-ble-kit` (D0a, decided 2026-10-02) · native module `ExpoBleKit` · Android package `expo.modules.blekit`.
 >
@@ -98,7 +98,7 @@
 | ADR-005 | Three layers: native core (no Expo/React imports) → thin binding → TypeScript API | Accepted |
 | ADR-006 | Exactly one in-flight GATT operation per connection on **both** platforms (FIFO queue + timeouts) | Accepted |
 | ADR-007 | One JS event per native event by default; opt-in native batching for notifications and scan results | Accepted |
-| ADR-008 | Background events go through an `expo-task-manager` consumer, backed by a native event buffer | Proposed → spike P0-05 |
+| ADR-008 | Background events go through an `expo-task-manager` consumer, backed by a native event buffer | Proposed → spike P0-05. Android's consumer is in place since P3-04 (background scans); iOS waits for the spike |
 | ADR-009 | License: MIT, personal ownership (github.com/sbaiahmed1), no CLA | Accepted 2026-10-02 (D2) |
 | ADR-010 | Four-layer test pyramid, including a public fake adapter and a Bumble virtual peripheral | Accepted |
 | ADR-011 | **Stable releases only.** Every branch, spikes included, builds against the latest stable Expo SDK (57 today) and stable packages. No beta, alpha, RC, canary or `next`-tagged versions, and no experimental or undocumented features of a stable SDK, unless the maintainer explicitly asks. The repo moves to SDK 58 when it is stable | Accepted 2026-10-02, tightened the same day |
@@ -181,7 +181,7 @@ expo-ble-kit/
 │   │                                 # GattServer, Advertiser, L2cap, BondManager, ConnectionService,
 │   │                                 # BackgroundScans, Companion, Errors, Uuids, Log, BtAbstractions
 │   └── binding/                      # ExpoBleKitModule, PeripheralObject, GattServerObject,
-│                                     # LifecycleListener, TaskConsumer, ScanResultReceiver
+│                                     # LifecycleListener, BackgroundScanTaskConsumer
 ├── android/src/test/                 # JVM unit tests with fakes
 ├── example/                          # Expo app: Explorer, HeartRate, PhoneAsPeripheral, Throughput, Background.
 │                                     # Uses CNG: example/ios and example/android are gitignored and
@@ -233,7 +233,7 @@ iOS platform rules:
 | `Advertiser` | `BluetoothLeAdvertiser` and `AdvertisingSet` (extended advertising when `isLeExtendedAdvertisingSupported`) |
 | `GattServer` | `BluetoothGattServer`, request handling, `notifyCharacteristicChanged` gated by `onNotificationSent` |
 | `ConnectionService` | Foreground service of type `connectedDevice` (Android 14+ also needs `FOREGROUND_SERVICE_CONNECTED_DEVICE`). Runs while at least one session has `keepAliveInBackground`. Android 12+ refuses foreground-service starts from the background (`ForegroundServiceStartNotAllowedException`; exemptions include CompanionDeviceManager apps holding `REQUEST_COMPANION_START_FOREGROUND_SERVICES_FROM_BACKGROUND` or `REQUEST_COMPANION_RUN_IN_BACKGROUND`, verified in [Restrictions on starting a foreground service from the background](https://developer.android.com/develop/background-work/services/fgs/restrictions-bg-start)), so the service starts when a `keepAliveInBackground` connect is issued while the app is in the foreground. It then stays up through link loss and reconnects until the last such session ends, and never needs a restart from the background. If a start is refused, emit a `warning` (`FOREGROUND_SERVICE_FAILED`) and continue without keep-alive. Implementation (P3-03): `AndroidKeepAlive` starts it with `startService` (refused at once from the background) and the service calls `startForeground(id, notification, FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE)` in `onStartCommand`. Unlike `startForegroundService`, a refused promotion can't crash the app with `ForegroundServiceDidNotStartInTimeException` ([troubleshooting](https://developer.android.com/develop/background-work/services/fgs/troubleshooting)). Android 14+ throws `SecurityException` there unless a Bluetooth runtime permission is granted ([service types](https://developer.android.com/develop/background-work/services/fgs/service-types)); connecting already needs `BLUETOOTH_CONNECT`. `START_NOT_STICKY`: after the process dies there's no connection to keep. Observed on Android 14 (A52): Android allows a background start for 10 s after the adapter's `ACTION_STATE_CHANGED` broadcast (`code:BLUETOOTH_BROADCAST` in ActivityManager's log), so reconnecting with keep-alive when Bluetooth comes back on works. Without `POST_NOTIFICATIONS` (Android 13+) the service still runs and its notice only shows in the Task Manager ([notification permission](https://developer.android.com/develop/ui/views/notifications/notification-permission)) |
-| `BackgroundScans` | `startScan(filters, settings, PendingIntent)` (API 26+) → `ScanResultReceiver` → TaskManager. Works even when the process is dead |
+| `BackgroundScans` | `startScan(filters, settings, PendingIntent)` (API 26+) → TaskManager → the JS task. Works even when the process is dead. The PendingIntent comes from TaskManager (`TaskManagerUtilsInterface.createTaskIntent`: a mutable broadcast to expo-task-manager's own `TaskBroadcastReceiver`, which restores the task and calls the consumer's `didReceiveBroadcast`, the path expo-location takes for geofencing), so the library declares no receiver (P3-04 replaced the planned `ScanResultReceiver`). Low power, first match where the controller filters, else 10 s batches. `AndroidBackgroundScanner` (core) starts, stops and reads the scan; `BackgroundScanTaskConsumer` (binding) is the TaskManager glue |
 | `Companion` | `CompanionDeviceManager` association (system picker) and device presence observation ⚠️ VERIFY API levels (31 / 33 / 36 differ) |
 | `BtAbstractions` | Interfaces over adapter, scanner, GATT client and GATT server for JVM unit tests |
 
@@ -255,7 +255,7 @@ GATT cache (P2-06):
 - Cancellation (P1-12): operations an `AbortSignal` may cancel carry a JS-assigned `operationId` (in the attribute request record, or as the last argument of `discover`, `requestMtu` and `readRssi`), and `cancelOperation(operationId)` on the peripheral object cancels it in the session's queue. Calls run in order, so a cancel never overtakes its operation.
 - Lookups (P1-12): `getKnownPeripherals(ids)` and `getSystemConnectedPeripherals(services)` resolve with ids, which the TS layer turns into peripherals with `getPeripheral`. `name` is a synchronous snapshot: the latest advertised name seen in a scan, then the name the device reports once connected (iOS: `CBPeripheral.name`, also on `peripheralDidUpdateName`), kept for the 1,000 most recent peripherals.
 - Lifecycle: an iOS app-delegate subscriber (declared in `expo-module.config.json`) creates engines early when restoration is enabled. An Android application lifecycle listener wires receivers and the service. Under SDK 58's scene life cycle, Expo forwards app-delegate events to subscribers; the background relaunch path is confirmed in spike P0-05.
-- TaskManager consumer for headless background delivery on both platforms ⚠️ VERIFY that third-party consumers are supported on the target SDK (the interfaces live in `expo-modules-core`).
+- TaskManager consumer for headless background delivery on both platforms. Verified on Android for SDK 57 (P3-04) in the sources of `expo-modules-core` 57.0.20 and `expo-task-manager` 57.0.21: the interfaces (`TaskConsumer`, `TaskInterface`, `TaskManagerUtilsInterface`) live in `expo-modules-core`; a module gets the task manager with `appContext.legacyModule<TaskManagerInterface>()`, as `ExpoTaskManager` itself does; TaskService creates any consumer class by name (`Class.forName`, a `(Context, TaskManagerUtilsInterface)` constructor, a static `VERSION`), so the library ships ProGuard keep rules for it. iOS ⚠️ VERIFY with P3-02.
 
 ### 4.6 TypeScript layer
 
@@ -474,9 +474,8 @@ export type ExpoBleKitPluginProps = {
     neverForLocation?: boolean;        // default true
     requireBleHardware?: boolean;      // <uses-feature android:required>, default false
     advertise?: boolean;               // adds BLUETOOTH_ADVERTISE
-    foregroundService?: boolean;       // declares ConnectionService + FGS permissions
-    backgroundScanReceiver?: boolean;  // declares ScanResultReceiver
-    backgroundLocation?: boolean;      // ACCESS_BACKGROUND_LOCATION (maxSdkVersion 30), see §4.13
+    foregroundService?: boolean;       // declares ConnectionService + FGS permissions (P3-03)
+    backgroundLocation?: boolean;      // ACCESS_BACKGROUND_LOCATION (maxSdkVersion 30), see §4.13 (P3-04)
     companionDevice?: boolean;         // CompanionDeviceManager declarations
   };
 };
@@ -912,6 +911,7 @@ export interface Advertisement { stop(): Promise<void> }
 ### 5.6 Background and onboarding
 
 ```ts
+/** A background task's `data`. Delivered so far: `scanResults` on Android (P3-04). */
 export type BleBackgroundEvent =
   | { type: 'restored'; peripheralIds: string[] }
   | { type: 'scanResults'; results: ScanResult[] }
@@ -923,8 +923,8 @@ export type BleBackgroundEvent =
 export interface ForegroundServiceNotification { title?: string; text?: string; channelName?: string; smallIcon?: string /* drawable name */ }
 
 export interface BackgroundTaskOptions {
-  events: Array<BleBackgroundEvent['type']>;
-  /** Android: filters for PendingIntent background scans. */
+  events: Array<BleBackgroundEvent['type']>; // Android so far: 'scanResults'; other events NOT_SUPPORTED until their task; iOS NOT_SUPPORTED until P3-02
+  /** Android: filters for PendingIntent background scans. `services` or `manufacturerData` required (controller filtering); `namePrefix` checked on delivery. */
   scan?: Pick<ScanOptions, 'services' | 'manufacturerData' | 'namePrefix'>;
 }
 
@@ -1359,8 +1359,17 @@ Parallelism: P0-06/P0-07 can run alongside P0-03/P0-04. With two people, P4 can 
 - [ ] **P3-04 Android background scans** — deps: P1-04.
   PendingIntent scans, `ScanResultReceiver`, TaskManager headless delivery, `ACCESS_BACKGROUND_LOCATION` handling on API 29–30 (§4.13).
   **Accept:** S-B4 passes, including on an API 29 or 30 device with background location granted; without it, `registerBackgroundTask` rejects with `PERMISSION_DENIED` naming the missing permission.
+  **Progress 2026-10-03 (open: S-B4 on an API 29 or 30 device, and against the test peripheral):** background scans work on Android; the TaskManager ⚠️ VERIFY of §4.5 is resolved for Android (sources named there).
+  - Design change: the scan's PendingIntent targets expo-task-manager's own `TaskBroadcastReceiver` (`createTaskIntent`), which wakes the app and calls the consumer, so the planned `ScanResultReceiver` and the plugin option `android.backgroundScanReceiver` are dropped (§4.4, §4.15, P3-05).
+  - Core: `BackgroundScanning` (settings: low power, first match where the controller filters, else 10 s batches; the `backgroundScan` checks of §4.13, with Android 10–11's `ACCESS_BACKGROUND_LOCATION` named in `PERMISSION_DENIED`; the options TaskManager persists as JSON) and `AndroidBackgroundScanner` (start, stop and read a PendingIntent scan, filtering by name prefix on delivery). `CentralEngine.checkBackgroundScan`.
+  - Binding: `BackgroundScanTaskConsumer` (TaskManager consumer, VERSION 1, ProGuard keep rules in `consumer-rules.pro`): starts the scan on registration, leaves it alone when TaskManager restores the task in a new process within 60 s of the last start (a restart on every wake would hit the scan-start limit), restarts it after an app update or a boot, runs the task with `{ type: 'scanResults', results }` (the foreground `ScanResult` shape; bytes arrive as `Uint8Array`), and stops it on unregistration. Module functions `registerBackgroundTask` (`MISCONFIGURED` without expo-task-manager) and `unregisterBackgroundTask` (idempotent).
+  - JS: `BleManager.registerBackgroundTask` / `unregisterBackgroundTask`, `BackgroundTaskOptions`, `BleBackgroundEvent`; only `scanResults` so far (other events `NOT_SUPPORTED`), iOS `NOT_SUPPORTED` until P3-02; a scan needs `services` or `manufacturerData`. The fake keeps registered tasks behind the same preconditions.
+  - Plugin: `android.backgroundLocation` (from P3-05) declares `ACCESS_BACKGROUND_LOCATION` with `maxSdkVersion="30"`, never changing an entry the app declared; snapshot-free assertions and `bare-setup.md` entries kept in sync by a test.
+  - Example: `src/background/scanTask.ts` (the task, imported first in `index.ts`), a **Background scan** group (`src/screens/BackgroundScanChecks.tsx`); the example installs `expo-task-manager` and enables `android.backgroundLocation`. Script `e2e/maestro/background-scan.sh` (S-B4: register, `am kill`, wait for the headless delivery, unregister).
+  - Tests: 4 Android (`BackgroundScanningTest`: settings by controller support, Android 10–11 declarations and permissions, Android 12+ and the adapter, the persisted options), 11 Jest, 2 example Jest, 2 plugin.
+  - Galaxy A52 (Android 14, debug build, filtered on Apple manufacturer data, no test peripheral): **S-B4 passes**: after `am kill`, a matching advertisement started a new process (pid 18086 → 18366) and the headless task logged the results; `dumpsys bluetooth_manager` showed the scan registered with `pid=0`, LowPower, OnFound, filter `ManufacturerId=4c`. It survived Bluetooth off and on (this Samsung keeps LE on, `BLE_ON`; a phone whose Bluetooth turns fully off may drop it), and the next kill was again followed by a delivery with the bytes as `Uint8Array(4)`. Repeated wakes caused no "scanning too frequently". Unregistering removed the scan.
 - [ ] **P3-05 Plugin options and background guide** — deps: P3-01, P3-03, P3-04.
-  Options `ios.backgroundModes: ['central']`, `ios.restoreIdentifier`, `android.foregroundService`, `android.backgroundScanReceiver`, `android.backgroundLocation`, and the matching bare-setup entries. The guide includes App Store review notes for background modes and the Google Play background-location declaration.
+  Options `ios.backgroundModes: ['central']`, `ios.restoreIdentifier`, and the matching bare-setup entries (`android.foregroundService` landed with P3-03 and `android.backgroundLocation` with P3-04; `android.backgroundScanReceiver` is gone, TaskManager declares its receiver). The guide includes App Store review notes for background modes and the Google Play background-location declaration.
   **Accept:** snapshot tests; guide reviewed by a human.
 - [ ] **P3-06 Background example and scenario suite** — deps: P3-02 … P3-05.
   The Background example screen hosts scenarios S-B1 … S-B6.
@@ -1715,3 +1724,4 @@ Submit results (`BluetoothStatusCodes`, API 33+): 1 not enabled → `BLUETOOTH_P
 | v0.36 | 2026-10-03 | P2-08 in progress: `docs/benchmarks.md` (transfers, timing, how to run, results table), the native reference apps in `benchmarks/` (repo layout §4.2), the example's Throughput tab; §8.5 points to the benchmarks doc |
 | v0.37 | 2026-10-03 | P2-09 in progress: the soak suite (`docs/soak.md`, `e2e/soak/`, the Soak group of the developer checks, Maestro flows); the connect-cycle bar is now §8.5's (≥ 99 %, no open client, no zombie session); §8.5 points to the soak doc; the Galaxy A52 passes 50 Bluetooth toggles without a peripheral and, after a fix, the 45-minute scan; the first long scan found an Android crash (scan callbacks on the main thread), fixed in the scanner adapter, §4.4 notes the thread hop |
 | v0.38 | 2026-10-03 | P3-03 in progress: Android's keep-alive foreground service (§4.4 implementation notes and verified sources, §4.15 Play Console note), `keepAliveInBackground` on Android, `BleManager.android.setForegroundServiceNotification` and `ForegroundServiceNotification` (§5.2, §5.6), `Diagnostics.android.foregroundService` (§5.7), `FOREGROUND_SERVICE_FAILED` (§4.11), the plugin option `android.foregroundService` brought forward from P3-05, a §6 row for background connections |
+| v0.39 | 2026-10-03 | P3-04 in progress: Android background scans through an expo-task-manager consumer (§4.4: TaskManager's receiver replaces `ScanResultReceiver`; §4.5: TaskManager ⚠️ VERIFY resolved for Android; ADR-008 note), `registerBackgroundTask` / `unregisterBackgroundTask`, `BackgroundTaskOptions` and `BleBackgroundEvent` notes (§5.6), plugin option `android.backgroundLocation` brought forward and `android.backgroundScanReceiver` dropped (§4.15, P3-05) |

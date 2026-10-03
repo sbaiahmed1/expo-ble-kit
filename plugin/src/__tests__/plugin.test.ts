@@ -18,6 +18,7 @@ import {
   MIN_ANDROID_SDK,
   applyAndroidManifest,
   applyGradleProperties,
+  BACKGROUND_LOCATION,
   blePermissions,
   CONNECTION_SERVICE,
   foregroundServicePermissions,
@@ -57,7 +58,8 @@ describe('validateProps', () => {
     [{ bluetoothPermission: 'typo' }, 'unknown option "bluetoothPermission"'],
     [{ android: { neverForLocations: true } }, 'unknown option "android.neverForLocations"'],
     [{ ios: { restoreIdentifier: 'x' } }, '"ios" is not available in this version yet'],
-    [{ android: { backgroundLocation: true } }, '"android.backgroundLocation" is not available'],
+    [{ android: { companionDevice: true } }, '"android.companionDevice" is not available'],
+    [{ android: { backgroundLocation: 1 } }, '"android.backgroundLocation" must be a boolean'],
     [{ android: { foregroundService: 'yes' } }, '"android.foregroundService" must be a boolean'],
     [{ bluetoothAlwaysPermission: 3 }, 'must be a string or false'],
     [{ android: { requireBleHardware: 'yes' } }, '"android.requireBleHardware" must be a boolean'],
@@ -135,6 +137,29 @@ describe('Android manifest', () => {
       applyAndroidManifest(applyAndroidManifest(await parseManifest(TEMPLATE_MANIFEST)))
     );
     expect(twice).toBe(once);
+  });
+
+  it('android.backgroundLocation declares background location up to Android 11', async () => {
+    const without = permissionsOf(applyAndroidManifest(await parseManifest(TEMPLATE_MANIFEST)));
+    expect(without.map((p) => p['android:name'])).not.toContain(BACKGROUND_LOCATION.name);
+    const manifest = applyAndroidManifest(await parseManifest(TEMPLATE_MANIFEST), {
+      android: { backgroundLocation: true },
+    });
+    expect(
+      permissionsOf(manifest).filter((p) => p['android:name'] === BACKGROUND_LOCATION.name)
+    ).toEqual([{ 'android:name': BACKGROUND_LOCATION.name, 'android:maxSdkVersion': '30' }]);
+    // An app that declared it itself (for location features) keeps its entry, uncapped.
+    const own = await parseManifest(
+      TEMPLATE_MANIFEST.replace(
+        'android.permission.INTERNET',
+        'android.permission.ACCESS_BACKGROUND_LOCATION'
+      )
+    );
+    expect(
+      permissionsOf(applyAndroidManifest(own, { android: { backgroundLocation: true } })).filter(
+        (p) => p['android:name'] === BACKGROUND_LOCATION.name
+      )
+    ).toEqual([{ 'android:name': BACKGROUND_LOCATION.name }]);
   });
 
   describe('android.foregroundService', () => {
@@ -303,13 +328,23 @@ describe('bare setup guide', () => {
   });
 
   it('lists the keep-alive service entries of android.foregroundService', () => {
-    const section = guide.slice(keepAliveSection, guide.indexOf('## Android: minimum SDK'));
+    const section = guide.slice(keepAliveSection, guide.indexOf('## Android: background scans'));
     expect(permissionsIn(section)).toEqual(
       foregroundServicePermissions().map((p) => ({ 'android:name': p.name }))
     );
     expect(section).toContain(
       `<service android:name="${CONNECTION_SERVICE}" android:exported="false" android:foregroundServiceType="connectedDevice" />`
     );
+  });
+
+  it('lists the background location entry of android.backgroundLocation', () => {
+    const section = guide.slice(
+      guide.indexOf('## Android: background scans'),
+      guide.indexOf('## Android: minimum SDK')
+    );
+    expect(permissionsIn(section)).toEqual([
+      { 'android:name': BACKGROUND_LOCATION.name, 'android:maxSdkVersion': '30' },
+    ]);
   });
 
   it('lists the feature, the Info.plist key and the minimum SDK', () => {

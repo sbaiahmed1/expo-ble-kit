@@ -1,0 +1,18 @@
+# Part of background-scan.sh: back in the app, unregisters the task so the scan stops.
+appId: expo.modules.blekit.example
+---
+- launchApp:
+    stopApp: false
+- tapOn:
+    id: tab-checks
+- scrollUntilVisible:
+    element:
+      id: background-scan-unregister
+    timeout: 60000
+- tapOn:
+    id: background-scan-unregister
+- extendedWaitUntil:
+    visible:
+      id: background-scan-status
+      text: "Unregister: ok; task not registered"
+    timeout: 10000

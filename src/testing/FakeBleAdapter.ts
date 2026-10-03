@@ -9,6 +9,7 @@ import type {
   NativeBatch,
   NativeSubscribeMode,
 } from '../internal/attributeRequest';
+import type { NativeBackgroundTaskOptions } from '../internal/backgroundTask';
 import type { NativeConnectOptions } from '../internal/connectOptions';
 import { DEFAULT_DISCOVERY_TIMEOUT_MS, reconnectDelay } from '../internal/connectOptions';
 import {
@@ -1465,6 +1466,25 @@ export class FakeBleAdapter implements NativeBleKitPort {
     this.logForwarding = enabled;
   }
 
+  /**
+   * Background tasks (P3-04), as Android registers them: the `backgroundScan` permission and an
+   * adapter that is on. The fake has no TaskManager to deliver to, so it only keeps them.
+   */
+  readonly backgroundTasks = new Map<string, NativeBackgroundTaskOptions>();
+
+  async registerBackgroundTask(
+    taskName: string,
+    options: NativeBackgroundTaskOptions
+  ): Promise<void> {
+    const precondition = adapterError(this.state) ?? this.permissionError('backgroundScan');
+    if (precondition) throw precondition;
+    this.backgroundTasks.set(taskName, options);
+  }
+
+  async unregisterBackgroundTask(taskName: string): Promise<void> {
+    this.backgroundTasks.delete(taskName);
+  }
+
   /** Android's keep-alive notification (P3-03). The fake keeps it; it has no service to show it. */
   foregroundServiceNotification: ForegroundServiceNotification = {};
 
@@ -1488,7 +1508,7 @@ export class FakeBleAdapter implements NativeBleKitPort {
     if (name) this.names.set(id, name);
   }
 
-  permissionError(capability: 'scan' | 'connect'): BleError | null {
+  permissionError(capability: 'scan' | 'connect' | 'backgroundScan'): BleError | null {
     return this.permissions[capability] === 'granted'
       ? null
       : fail(

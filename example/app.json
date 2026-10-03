@@ -28,7 +28,8 @@
         "../app.plugin.js",
         {
           "android": {
-            "foregroundService": true
+            "foregroundService": true,
+            "backgroundLocation": true
           }
         }
       ],

@@ -173,6 +173,10 @@ class CentralEngine(
     logger.log(LogLevel.INFO) { "scan session $sessionId started" }
   }
 
+  /** Throws unless a background scan can be registered now (plan §4.13, P3-04). */
+  fun checkBackgroundScan() =
+    BackgroundScanning.check(permissionPolicy(), permissionSystem::isGranted, adapterError(adapter.state))
+
   fun stopScan(sessionId: Int) {
     scanController.stop(sessionId)
     logger.log(LogLevel.INFO) { "scan session $sessionId stopped" }

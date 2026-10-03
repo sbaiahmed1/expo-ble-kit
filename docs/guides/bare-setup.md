@@ -62,6 +62,18 @@ Inside `<application>`:
 - Google Play asks apps that target Android 14 or later to declare each foreground service type they use, with a description and a video (Play Console → App content → Foreground service permissions).
 - On Android 13 and later, the service's notification only appears in the notification drawer once the user grants `POST_NOTIFICATIONS`; without it, the notice only shows in the Task Manager. Your app asks for it (for example with `PermissionsAndroid`); the service runs either way.
 
+## Android: background scans (optional)
+
+`registerBackgroundTask` with `scanResults` needs `expo-task-manager` in the app (it declares its own receiver). On Android 10 and 11 it also needs background location; the plugin writes this with `android: { backgroundLocation: true }`. Inside `<manifest>`:
+
+```xml
+<uses-permission android:name="android.permission.ACCESS_BACKGROUND_LOCATION" android:maxSdkVersion="30" />
+```
+
+- Without it, registering on Android 10 or 11 rejects with `MISCONFIGURED`; declared but not granted, with `PERMISSION_DENIED`. `requestPermissionsAsync({ backgroundScan: true })` asks for it after foreground location, as Android requires. Android 12 and later don't need it.
+- Google Play asks apps that declare background location to justify it in Play Console.
+- To restart background scans after a reboot, also declare the `android.permission.RECEIVE_BOOT_COMPLETED` permission (the plugin doesn't); otherwise they restart the next time the app runs.
+
 ## Android: minimum SDK 26
 
 The library needs Android 8.0 (API 26). In `android/build.gradle`, set `minSdkVersion = 26` in `ext` (or `android.minSdkVersion=26` in `android/gradle.properties` for Expo autolinking projects).

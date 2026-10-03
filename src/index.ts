@@ -14,6 +14,8 @@ export {
   useCharacteristicValue,
 } from './hooks';
 export type {
+  BackgroundTaskOptions,
+  BleBackgroundEvent,
   BleManagerApi,
   BlePermissionRequest,
   BlePermissions,

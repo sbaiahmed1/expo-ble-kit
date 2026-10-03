@@ -1,0 +1,20 @@
+# Part of background-scan.sh: registers the background scan task (FILTER test or apple), then leaves
+# the app. Not a flow of its own.
+appId: expo.modules.blekit.example
+---
+- evalScript: "${output.registerButton = typeof FILTER !== 'undefined' && FILTER == 'apple' ? 'background-scan-apple' : 'background-scan-test'}"
+- runFlow: _setup.yaml
+- tapOn:
+    id: tab-checks
+- scrollUntilVisible:
+    element:
+      id: background-scan-unregister
+    timeout: 60000
+- tapOn:
+    id: ${output.registerButton}
+- extendedWaitUntil:
+    visible:
+      id: background-scan-status
+      text: "Register .*: ok; task registered"
+    timeout: 10000
+- pressKey: Home

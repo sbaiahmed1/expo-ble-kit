@@ -3,6 +3,7 @@ import { Platform } from 'react-native';
 import type { LogEvent, ScanErrorEvent, ScanResultsEvent } from './ExpoBleKit.types';
 import { PeripheralImpl } from './Peripheral';
 import { BleError, BleErrorCode } from './errors';
+import { checkTaskName, toNativeBackgroundTaskOptions } from './internal/backgroundTask';
 import { checkLogLevel, deliver, setHandler, setLevel } from './internal/log';
 import { getNativeModule } from './internal/native';
 import {
@@ -325,6 +326,29 @@ export const BleManager: BleManagerApi = {
         recentErrors: recentErrors(),
         ...(native.android && { android: native.android }),
       };
+    });
+  },
+
+  registerBackgroundTask(taskName, options) {
+    return guard(async () => {
+      const name = checkTaskName(taskName);
+      const native = toNativeBackgroundTaskOptions(options);
+      const module = getNativeModule();
+      if (!module.registerBackgroundTask) {
+        throw new BleError(
+          BleErrorCode.NOT_SUPPORTED,
+          "This platform doesn't run background tasks"
+        );
+      }
+      await module.registerBackgroundTask(name, native);
+    });
+  },
+
+  unregisterBackgroundTask(taskName) {
+    return guard(async () => {
+      const name = checkTaskName(taskName);
+      if (Platform.OS !== 'android') return;
+      await getNativeModule().unregisterBackgroundTask?.(name);
     });
   },
 

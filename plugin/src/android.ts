@@ -43,6 +43,15 @@ export function foregroundServicePermissions(): PermissionDeclaration[] {
   ];
 }
 
+/**
+ * `android.backgroundLocation` (P3-04, plan §4.13): background scans on Android 10 and 11 need
+ * background location; Android 12+ scans in the background with BLUETOOTH_SCAN alone.
+ */
+export const BACKGROUND_LOCATION: PermissionDeclaration = {
+  name: 'android.permission.ACCESS_BACKGROUND_LOCATION',
+  maxSdkVersion: 30,
+};
+
 /** The keep-alive service class (plan §4.4), declared only with `android.foregroundService`. */
 export const CONNECTION_SERVICE = 'expo.modules.blekit.core.ConnectionService';
 
@@ -79,6 +88,7 @@ export function applyAndroidManifest(
   for (const permission of [
     ...blePermissions(props),
     ...(foregroundService ? foregroundServicePermissions() : []),
+    ...(props.android?.backgroundLocation ? [BACKGROUND_LOCATION] : []),
   ]) {
     if (declared.has(permission.name)) {
       continue;

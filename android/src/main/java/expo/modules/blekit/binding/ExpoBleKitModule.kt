@@ -23,6 +23,7 @@ import expo.modules.blekit.core.normalizeAddress
 import expo.modules.interfaces.permissions.Permissions
 import expo.modules.interfaces.permissions.PermissionsResponse
 import expo.modules.interfaces.permissions.PermissionsStatus
+import expo.modules.interfaces.taskManager.TaskManagerInterface
 import expo.modules.kotlin.Promise
 import expo.modules.kotlin.exception.CodedException
 import expo.modules.kotlin.exception.Exceptions
@@ -325,6 +326,39 @@ class ExpoBleKitModule : Module() {
     }
 
     // Plan §4.16: the level applies to Logcat and to JS; JS gets `log` events only with a handler.
+    // Background scans (P3-04): a TaskManager task whose consumer runs a PendingIntent scan.
+    AsyncFunction("registerBackgroundTask") { taskName: String, options: Map<String, Any?>, promise: Promise ->
+      executor.execute {
+        settle(promise) {
+          engine.checkBackgroundScan()
+          val taskManager = taskManager()
+          try {
+            taskManager.registerTask(taskName, BackgroundScanTaskConsumer::class.java, options)
+          } catch (error: Exception) {
+            throw CoreError(CoreError.Code.INTERNAL, "TaskManager couldn't register $taskName: ${error.message}")
+          }
+          promise.resolve(null)
+        }
+      }
+    }
+
+    AsyncFunction("unregisterBackgroundTask") { taskName: String, promise: Promise ->
+      executor.execute {
+        settle(promise) {
+          val taskManager = taskManager()
+          // Unknown names and other libraries' tasks are left alone: unregistering is idempotent.
+          if (taskManager.taskHasConsumerOfClass(taskName, BackgroundScanTaskConsumer::class.java)) {
+            try {
+              taskManager.unregisterTask(taskName, BackgroundScanTaskConsumer::class.java)
+            } catch (error: Exception) {
+              throw CoreError(CoreError.Code.INTERNAL, "TaskManager couldn't unregister $taskName: ${error.message}")
+            }
+          }
+          promise.resolve(null)
+        }
+      }
+    }
+
     Function("setForegroundServiceNotification") { notification: ForegroundServiceNotificationRecord ->
       executor.execute { engine.setKeepAliveNotification(notification.toNotification()) }
     }
@@ -459,6 +493,13 @@ class ExpoBleKitModule : Module() {
   private fun attributeOperation(promise: Promise, block: () -> Unit) {
     executor.execute { settle(promise, block) }
   }
+
+  /** expo-task-manager's native side, which the app installs for background tasks. */
+  private fun taskManager(): TaskManagerInterface = appContext.legacyModule<TaskManagerInterface>()
+    ?: throw CoreError(
+      CoreError.Code.MISCONFIGURED,
+      "Background tasks need expo-task-manager: run npx expo install expo-task-manager, then rebuild the app",
+    )
 
   /** Runs [block] on the BLE thread, rejecting [promise] with whatever it throws. */
   private fun settle(promise: Promise, block: () -> Unit) {

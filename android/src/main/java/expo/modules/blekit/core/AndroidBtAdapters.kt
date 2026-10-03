@@ -27,7 +27,7 @@ import android.os.ParcelUuid
 // permissions before calling into these (P1-03), hence the MissingPermission suppressions.
 
 /** `ScanCallback.SCAN_FAILED_INTERNAL_ERROR`, reported when no scanner is available. */
-private const val SCAN_FAILED_INTERNAL_ERROR = 3
+internal const val SCAN_FAILED_INTERNAL_ERROR = 3
 
 @SuppressLint("MissingPermission")
 class AndroidBluetoothAdapterPort(private val context: Context, private val handler: Handler) : BluetoothAdapterPort {
@@ -363,7 +363,7 @@ private fun BluetoothGattService.toInfo(): GattServiceInfo = GattServiceInfo(
   },
 )
 
-private fun ScanResult.toRecord(context: Context, handler: Handler): ScanRecordData {
+internal fun ScanResult.toRecord(context: Context, handler: Handler): ScanRecordData {
   val record = scanRecord
   val manufacturer = record?.manufacturerSpecificData
   return ScanRecordData(
@@ -389,7 +389,7 @@ private fun ScanResult.toRecord(context: Context, handler: Handler): ScanRecordD
   )
 }
 
-private fun ScanFilterSpec.toPlatform(): ScanFilter = ScanFilter
+internal fun ScanFilterSpec.toPlatform(): ScanFilter = ScanFilter
   .Builder()
   .apply {
     serviceUuid?.let { setServiceUuid(ParcelUuid(it)) }
@@ -400,7 +400,7 @@ private fun ScanFilterSpec.toPlatform(): ScanFilter = ScanFilter
     }
   }.build()
 
-private fun ScanSettingsSpec.toPlatform(): ScanSettings = ScanSettings
+internal fun ScanSettingsSpec.toPlatform(): ScanSettings = ScanSettings
   .Builder()
   .setScanMode(scanMode)
   .setCallbackType(callbackType)

@@ -26,6 +26,8 @@ android {
     versionCode 1
     versionName packageJson.version
     testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
+    // Kept in the app's release build: TaskManager loads the background task consumer by name.
+    consumerProguardFiles "consumer-rules.pro"
   }
   sourceSets {
     androidTest.assets.srcDirs += testProfileAssetsDir.get().asFile

@@ -17,6 +17,7 @@ import type {
   Subscription,
 } from '../types';
 import type { NativeAttributeRequest, NativeSubscribeMode } from './attributeRequest';
+import type { NativeBackgroundTaskOptions } from './backgroundTask';
 import type { NativeConnectOptions } from './connectOptions';
 import type { NativeScanOptions } from './scanOptions';
 
@@ -46,6 +47,9 @@ export interface NativeBleKitPort {
   setLogLevel(level: LogLevel): void;
   /** While on, native log lines also arrive as `log` events. */
   setLogForwarding(enabled: boolean): void;
+  /** Android only (P3-04): a TaskManager task with a background scan. */
+  registerBackgroundTask?(taskName: string, options: NativeBackgroundTaskOptions): Promise<void>;
+  unregisterBackgroundTask?(taskName: string): Promise<void>;
   /** Android only (P3-03): the keep-alive notification, validated. */
   setForegroundServiceNotification?(notification: ForegroundServiceNotification): void;
   addListener<E extends keyof ExpoBleKitModuleEvents>(

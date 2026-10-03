@@ -63,7 +63,7 @@ function BluetoothGate({ children }: { children: React.ReactNode }) {
 
 - Scanning needs location permission (`ACCESS_FINE_LOCATION`), which `requestPermissionsAsync()` asks for. The `BLUETOOTH` and `BLUETOOTH_ADMIN` permissions need no prompt.
 - **Location services must be on** for scans to return results, even with the permission. See [troubleshooting](../troubleshooting.md).
-- Android 10–11 also have a background location permission for scanning in the background (`backgroundScan`); background scanning comes in a later version.
+- Android 10–11 also need background location for scanning in the background (`backgroundScan`, used by `registerBackgroundTask`): declare it with the plugin option `android.backgroundLocation`. `requestPermissionsAsync({ backgroundScan: true })` asks for it after foreground location, as Android requires; Android 11 sends the user to Settings for it.
 
 ## When something is missing
 

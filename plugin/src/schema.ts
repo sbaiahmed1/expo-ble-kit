@@ -1,7 +1,7 @@
 /**
- * Config plugin options (plan §4.15): the base declarations and Android's keep-alive foreground
- * service (P3-03). The other background, peripheral-role and onboarding options arrive with P3, P4
- * and P5.
+ * Config plugin options (plan §4.15): the base declarations, Android's keep-alive foreground
+ * service (P3-03) and background location for background scans (P3-04). The other background,
+ * peripheral-role and onboarding options arrive with P3, P4 and P5.
  */
 export type ExpoBleKitPluginProps = {
   /** iOS NSBluetoothAlwaysUsageDescription. `false` skips it (only for apps that set it elsewhere). */
@@ -16,19 +16,23 @@ export type ExpoBleKitPluginProps = {
      * permissions. Google Play asks apps to justify each service type they declare. Default false.
      */
     foregroundService?: boolean;
+    /**
+     * Declare ACCESS_BACKGROUND_LOCATION (up to Android 11), which background scans need on Android
+     * 10 and 11. Google Play asks apps that declare it to justify it. Default false.
+     */
+    backgroundLocation?: boolean;
   };
 };
 
 const TOP_LEVEL = new Set(['bluetoothAlwaysPermission', 'android']);
-const ANDROID = new Set(['neverForLocation', 'requireBleHardware', 'foregroundService']);
-/** Options from plan §4.15 that later versions add. */
-const NOT_YET = new Set([
-  'ios',
-  'android.advertise',
-  'android.backgroundScanReceiver',
-  'android.backgroundLocation',
-  'android.companionDevice',
+const ANDROID = new Set([
+  'neverForLocation',
+  'requireBleHardware',
+  'foregroundService',
+  'backgroundLocation',
 ]);
+/** Options from plan §4.15 that later versions add. */
+const NOT_YET = new Set(['ios', 'android.advertise', 'android.companionDevice']);
 
 function fail(message: string): never {
   throw new Error(`expo-ble-kit config plugin: ${message}`);

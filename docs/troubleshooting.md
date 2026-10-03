@@ -66,6 +66,13 @@ Some devices also change their address over time (privacy): then the saved id is
 
 On Android 13 and later, the foreground service's notification only shows in the drawer after the user allows notifications; request `POST_NOTIFICATIONS` (for example with `PermissionsAndroid`). Without it, the service still runs and Android lists it in the Task Manager. Users can also dismiss the notification on Android 14 and later; the service keeps running.
 
+## Android: the background task never runs
+
+- The app was force-stopped (Settings → Force stop, or swiped away on some phones): Android cancels its background scans until the app runs again. Android stopping the app by itself is fine.
+- `registerBackgroundTask` rejected: `MISCONFIGURED` means `expo-task-manager` isn't installed (or the app wasn't rebuilt), or on Android 10–11 that background location isn't declared; `PERMISSION_DENIED` names the permission to request.
+- The task must be defined at module scope, in a file the app imports at startup: Android starts the app without its UI.
+- A debug build loads its JavaScript from Metro, which must be running and reachable for the background start.
+
 ## Android 11 and earlier: scans find nothing
 
 On API 30 and below, scans return nothing while **location services** (the system "Location" switch) are off, even with the location permission granted. Ask the user to turn location on. Also check that `requestPermissionsAsync()` resolved with `scan: 'granted'`.

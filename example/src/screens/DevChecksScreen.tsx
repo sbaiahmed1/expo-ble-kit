@@ -25,13 +25,15 @@ import {
 } from '../lib/gattHygiene';
 import { describeMultipleDevices, runMultipleDevices } from '../lib/multipleDevices';
 import { abortStreamToSink, sendToSink, streamToSink, type SinkReport } from '../lib/sink';
+import { BackgroundScanChecks } from './BackgroundScanChecks';
 import { checkStyles as styles, Group } from './checksUi';
 import { KeepAliveChecks } from './KeepAliveChecks';
 import { SoakChecks } from './SoakChecks';
 
 // Developer checks on the public API (P1-12): adapter state, permissions, scanning, connections
 // to a device that isn't there, throughput, batching, several test peripherals at once, GATT
-// hygiene and the log (P2-02 to P2-07), the soak suite (P2-09) and keep-alive (P3-03).
+// hygiene and the log (P2-02 to P2-07), the soak suite (P2-09), keep-alive (P3-03) and background
+// scans (P3-04).
 
 const TEST_SERVICE = '0c6c1000-b347-4cfa-9827-1c5a13658519';
 const TEST_NAME = 'BleKit-Test';
@@ -425,6 +427,7 @@ export function DevChecksScreen() {
       </Group>
       <SoakChecks />
       <KeepAliveChecks />
+      <BackgroundScanChecks />
       <Group name="Scanning">
         <Button testID="scan-all" title="Scan all" onPress={() => startSession('all', {})} />
         <Button

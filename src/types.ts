@@ -306,6 +306,66 @@ export interface Diagnostics {
   };
 }
 
+/**
+ * What a background task receives as `data` (`TaskManager.defineTask`). Delivered so far:
+ * `scanResults` on Android. The others arrive with later versions.
+ */
+export type BleBackgroundEvent =
+  | {
+      /** iOS relaunched the app for Bluetooth and restored these connections. */
+      type: 'restored';
+      /** The restored peripherals. */
+      peripheralIds: string[];
+    }
+  | {
+      /** A background scan found matching devices. */
+      type: 'scanResults';
+      /** The advertisements, as a foreground scan reports them. */
+      results: ScanResult[];
+    }
+  | {
+      /** A connection changed state while the app was in the background. */
+      type: 'connectionStateChange';
+      /** The peripheral. */
+      peripheralId: string;
+      /** Its new state. */
+      state: ConnectionState;
+    }
+  | {
+      /** A notification or indication arrived while the app was in the background. */
+      type: 'notification';
+      /** The peripheral. */
+      peripheralId: string;
+      /** The service of the characteristic. */
+      service: UUID;
+      /** The characteristic. */
+      characteristic: UUID;
+      /** The value. */
+      value: Uint8Array;
+      /** When it arrived, in epoch milliseconds. */
+      timestamp: number;
+    }
+  | {
+      /** A companion device came into range or left it. */
+      type: 'devicePresence';
+      /** The peripheral. */
+      peripheralId: string;
+      /** Whether it is in range. */
+      present: boolean;
+    };
+
+/** What `BleManager.registerBackgroundTask` delivers to the task. */
+export interface BackgroundTaskOptions {
+  /** The events the task receives. Supported so far: `scanResults` (Android). */
+  events: BleBackgroundEvent['type'][];
+  /**
+   * The filters of the background scan, with `scanResults`. `services` or `manufacturerData` is
+   * required: Android filters a background scan in the Bluetooth controller, which can't match a
+   * name prefix (`namePrefix` is checked when the results arrive).
+   */
+  scan?: Pick<ScanOptions, 'services' | 'manufacturerData' | 'namePrefix'>;
+}
+
 /** What the notification of Android's keep-alive foreground service shows. */
 export interface ForegroundServiceNotification {
   /**
@@ -618,6 +678,24 @@ export interface BleManagerApi {
   setLogHandler(handler: ((entry: LogEntry) => void) | null): void;
   /** A snapshot for bug reports: state, permissions, connections and recent errors. */
   getDiagnostics(): Promise<Diagnostics>;
+
+  /**
+   * Delivers events to the `expo-task-manager` task `taskName`, also while the app isn't running:
+   * define it with `TaskManager.defineTask(taskName, ({ data, error }) => …)` at module scope; `data`
+   * is a {@link BleBackgroundEvent}. Registering a registered task again changes its options.
+   *
+   * Android: `scanResults` runs a background scan that wakes the app when a matching device
+   * advertises, even after the system killed it (not after a force stop). It needs the
+   * `backgroundScan` permission, which on Android 10–11 includes background location
+   * (`PERMISSION_DENIED` names what's missing), and `expo-task-manager` (`MISCONFIGURED` without
+   * it). The scan restarts by itself after an app update; after a reboot it restarts when the app
+   * next runs, or at boot if the app declares `RECEIVE_BOOT_COMPLETED`.
+   *
+   * iOS: not supported yet (rejects with `NOT_SUPPORTED`).
+   */
+  registerBackgroundTask(taskName: string, options: BackgroundTaskOptions): Promise<void>;
+  /** Stops delivering to `taskName` and its background scan. Unknown names do nothing. */
+  unregisterBackgroundTask(taskName: string): Promise<void>;
 
   /** Android-only calls; on iOS they do nothing. */
   readonly android: {

@@ -13,8 +13,6 @@ const LATER: Record<string, Record<string, string>> = {
   BleManagerApi: {
     openGattServer: 'P4-01',
     startAdvertising: 'P4-03',
-    registerBackgroundTask: 'P3-02',
-    unregisterBackgroundTask: 'P3-02',
     ios: 'P5-04',
   },
   Peripheral: {
@@ -33,7 +31,6 @@ const LATER_INTERFACES = new Set([
   'AdvertisingData',
   'AdvertisingOptions',
   'Advertisement',
-  'BackgroundTaskOptions',
   'AccessoryPickerItem',
   'CompanionDeviceFilter',
 ]);

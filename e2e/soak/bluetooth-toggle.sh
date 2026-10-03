@@ -66,7 +66,8 @@ bt_set ON
 maestro_flow _soak-toggle-start.yaml "Open Developer checks → Soak and tap \"Bluetooth toggle soak: start\""
 pid=$(dev shell pidof "$PACKAGE" || true)
 [ -n "$pid" ] || { echo "$PACKAGE isn't running" >&2; exit 1; }
-since=$(dev shell date +'%m-%d %H:%M:%S.000')
+# Epoch seconds: adb would split a date with a space before logcat sees it.
+since=$(dev shell date +%s).000
 pss_before=$(pss_kb)
 echo "App pid $pid, PSS ${pss_before} kB. $TOGGLES toggles, ${OFF_S} s off, ${ON_S} s on."
 
@@ -86,7 +87,7 @@ maestro_flow _soak-toggle-report.yaml "Tap \"Bluetooth toggle soak: stop and rep
 
 pid_after=$(dev shell pidof "$PACKAGE" || true)
 pss_after=$(pss_kb || echo 0)
-crashes=$(dev logcat -d -b crash -T "$since" 2>/dev/null | grep -c "$PACKAGE" || true)
+crashes=$(dev logcat -d -b crash -T "$since" | grep -c "$PACKAGE" || true)
 echo "PSS before ${pss_before} kB, after ${pss_after} kB."
 if [ "$pid_after" != "$pid" ] || [ "$crashes" -gt 0 ]; then
   echo "FAILED: the app crashed or restarted (pid $pid → ${pid_after:-none}, $crashes crash log lines)."

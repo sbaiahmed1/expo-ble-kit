@@ -206,6 +206,38 @@ await device.connect({ keepAliveInBackground: true, reconnect: { maxAttempts: 10
 - `getDiagnostics().android.foregroundService` tells whether it runs.
 - iOS: not supported yet (rejects with `NOT_SUPPORTED`); it comes with background modes.
 
+## Scanning in the background (Android)
+
+A background scan wakes your app when a device you care about advertises, even after Android stopped the app. The results go to an [`expo-task-manager`](https://docs.expo.dev/versions/latest/sdk/task-manager/) task, which you define at module scope (outside any component), because Android may start the app without its UI:
+
+```bash
+npx expo install expo-task-manager
+```
+
+```ts
+import * as TaskManager from 'expo-task-manager';
+import { BleManager, type BleBackgroundEvent } from 'expo-ble-kit';
+
+TaskManager.defineTask<BleBackgroundEvent>('sensor-nearby', async ({ data, error }) => {
+  if (data?.type === 'scanResults') {
+    console.log('found', data.results.map((r) => r.id)); // the same ScanResult as in the foreground
+  }
+});
+
+// Later, from a screen:
+await BleManager.requestPermissionsAsync({ backgroundScan: true });
+await BleManager.registerBackgroundTask('sensor-nearby', {
+  events: ['scanResults'],
+  scan: { services: [SENSOR_SERVICE] },
+});
+```
+
+- `scan` needs `services` or `manufacturerData`: the Bluetooth controller filters a background scan, and it can't match a name (`namePrefix` is checked when results arrive). It reports each device once when it appears, where the controller supports that.
+- Android 10 and 11 also need background location: add `android: { backgroundLocation: true }` to the plugin options; `requestPermissionsAsync({ backgroundScan: true })` asks for it. Otherwise registering rejects with `PERMISSION_DENIED` naming the permission. Android 12 and later need only the scan permission.
+- The scan survives Android stopping the app, but not a force stop from Settings. After an app update it restarts by itself; after a reboot, when the app next runs (or at boot, if the app declares `RECEIVE_BOOT_COMPLETED`).
+- `unregisterBackgroundTask('sensor-nearby')` stops it. Registering again changes its filters.
+- iOS: not supported yet (rejects with `NOT_SUPPORTED`).
+
 ## With React hooks
 
 ```tsx
@@ -294,6 +326,6 @@ The fake answers on later timer ticks, like a radio; Jest fake timers work (`awa
 
 ## Not in this version yet
 
-Background operation on iOS (background modes, state restoration), background scanning and background tasks, and the peripheral role (advertising, GATT server) come in later versions. Options for them reject with `NOT_SUPPORTED` rather than being ignored.
+Background operation on iOS (background modes, state restoration, background tasks), background events other than scan results, and the peripheral role (advertising, GATT server) come in later versions. Options for them reject with `NOT_SUPPORTED` rather than being ignored.
 
 Problems? See [troubleshooting](troubleshooting.md).
