@@ -113,6 +113,11 @@ extension PeripheralSession {
     complete(.setNotify, Self.key(characteristic), error, output: .none)
   }
 
+  /// Active subscriptions (their subscriber ids), for diagnostics.
+  var subscriptionCount: Int {
+    subscriptions.values.reduce(0) { $0 + $1.subscribers.count }
+  }
+
   /// Only subscribed characteristics deliver; a stray value after unsubscribing is dropped. Batched
   /// subscribers collect the value (P2-04); the others get it as it comes.
   func deliverNotification(_ value: Data, from characteristic: CharacteristicLike) {

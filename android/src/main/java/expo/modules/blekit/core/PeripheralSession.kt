@@ -143,6 +143,9 @@ class PeripheralSession(
 
   private val subscriptions = mutableMapOf<String, CharacteristicSubscriptions>()
 
+  /** Active subscriptions (their subscriber ids), for diagnostics. */
+  val subscriptionCount: Int get() = subscriptions.values.sumOf { it.subscribers.size }
+
   /** The batched subscribers' batchers, by subscription id (P2-04). */
   private val batchers = mutableMapOf<Int, NotificationBatcher>()
 

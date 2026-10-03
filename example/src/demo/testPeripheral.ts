@@ -33,10 +33,12 @@ function decode(value: ProfileValue | undefined): Uint8Array | undefined {
   return undefined;
 }
 
-/** The services present from the start, as a virtual peripheral. */
-export function testPeripheralConfig(): VirtualPeripheralConfig {
+/** The services present from the start, as a virtual peripheral named `name`. */
+export function testPeripheralConfig(
+  name = profile.advertising.localName
+): VirtualPeripheralConfig {
   return {
-    name: profile.advertising.localName,
+    name,
     mtu: 247,
     services: profile.services
       .filter((service) => service.presence === 'always')
@@ -130,9 +132,24 @@ export function driveTestPeripheral(device: VirtualPeripheral): () => void {
   };
 }
 
-/** Installs the fake with the test peripheral advertising, and starts its driver. */
-export function startDemo(): { ble: FakeBle; device: VirtualPeripheral; stop: () => void } {
+/** Test peripherals in demo mode: BleKit-Test, then BleKit-Test-2… like extra hardware instances. */
+export const DEMO_DEVICES = 5;
+
+/**
+ * Installs the fake with `count` test peripherals advertising (BleKit-Test first), and starts their
+ * drivers. `device` is BleKit-Test.
+ */
+export function startDemo(count = DEMO_DEVICES): {
+  ble: FakeBle;
+  device: VirtualPeripheral;
+  devices: VirtualPeripheral[];
+  stop: () => void;
+} {
   const ble = installFakeBle();
-  const device = ble.addPeripheral(testPeripheralConfig());
-  return { ble, device, stop: driveTestPeripheral(device) };
+  const name = profile.advertising.localName;
+  const devices = Array.from({ length: count }, (_, n) =>
+    ble.addPeripheral(testPeripheralConfig(n === 0 ? name : `${name}-${n + 1}`))
+  );
+  const stops = devices.map(driveTestPeripheral);
+  return { ble, device: devices[0], devices, stop: () => stops.forEach((stop) => stop()) };
 }

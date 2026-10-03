@@ -48,7 +48,7 @@ extension CentralEngine {
           "id": session.peripheral.identifier.uuidString,
           "state": session.visibleState.js,
           "queueDepth": session.queue.depth,
-          "subscriptions": 0
+          "subscriptions": session.subscriptionCount
         ] as [String: Any]
       }
     ]

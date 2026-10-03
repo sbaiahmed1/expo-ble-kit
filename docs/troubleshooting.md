@@ -35,6 +35,12 @@ Status 133 (`GATT_ERROR`) is Android's catch-all for a failed connection. expo-b
 - Disconnect cleanly before connecting again. Every connection attempt is closed, so leaks don't build up: `getDiagnostics()` shows `android.openGattClients`, which should come back to 0 when nothing is connected.
 - Turning Bluetooth off and on resets a stuck Android Bluetooth stack.
 
+## Android: some of several devices fail to connect
+
+- Android handles about 7 LE connections at once (the AOSP default; some phones allow fewer). Beyond that, connects fail (often with status 133).
+- Android 8 and 9 make direct connections one at a time: when you connect several devices at once and one isn't there, the others wait behind it and can time out. Connect them one after another on those versions, or give `connect()` a longer `timeoutMs`. Android 10 and later connect them together.
+- Each device has its own operation queue, so a slow device doesn't hold up the others.
+
 ## Android: reconnecting by a saved id fails or times out
 
 On Android the id is the device's address. Many devices use a **random address**, and Android can only connect to one reliably if it has seen it in a scan since the app started: an address alone doesn't say which kind it is. Run a short scan before connecting to a stored id:

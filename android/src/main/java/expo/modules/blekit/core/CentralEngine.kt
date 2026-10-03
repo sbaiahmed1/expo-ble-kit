@@ -361,7 +361,12 @@ class CentralEngine(
   fun diagnostics(): Map<String, Any?> = mapOf(
     "state" to state.js,
     "sessions" to sessions.values.map {
-      mapOf("id" to it.address, "state" to it.visibleState.js, "queueDepth" to it.queue.depth, "subscriptions" to 0)
+      mapOf(
+        "id" to it.address,
+        "state" to it.visibleState.js,
+        "queueDepth" to it.queue.depth,
+        "subscriptions" to it.subscriptionCount,
+      )
     },
     "android" to mapOf("openGattClients" to sessions.values.count { it.hasOpenClient }),
   )

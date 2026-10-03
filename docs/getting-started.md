@@ -125,6 +125,8 @@ await device.writeStream(MY_SERVICE, FIRMWARE_CHARACTERISTIC, image, {
 
 Chunks go without response by default; `withResponse: true` waits for the peripheral to acknowledge each one (some firmware-update protocols need it), and `chunkSize` makes them smaller. `timeoutMs` applies to each chunk. Other operations issued during a stream wait until it ends.
 
+Several devices can be connected at once: each `Peripheral` has its own operation queue and connection, so a slow or lost device doesn't affect the others. Android handles about 7 connections at once (see [troubleshooting](troubleshooting.md#android-some-of-several-devices-fail-to-connect)).
+
 ## Notifications
 
 ```ts

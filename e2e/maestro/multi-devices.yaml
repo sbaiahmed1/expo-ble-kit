@@ -1,0 +1,26 @@
+# P2-05: every test peripheral around (5+) connected at once, each streaming; one drops itself
+# (CONTROL DISCONNECT_AFTER) and the others keep streaming and answering reads.
+#   maestro test e2e/maestro/multi-devices.yaml               # 5+ Bumble instances or boards
+#   maestro test -e DEMO=true e2e/maestro/multi-devices.yaml  # the app's five virtual test peripherals
+appId: expo.modules.blekit.example
+name: Multiple devices
+---
+- runFlow: _setup.yaml
+- tapOn:
+    id: tab-checks
+- scrollUntilVisible:
+    element:
+      id: multi-devices
+- tapOn:
+    id: multi-devices
+- extendedWaitUntil:
+    visible:
+      id: sink-status
+      text: "Multiple devices (OK|FAILED).*"
+    timeout: 120000
+- copyTextFrom:
+    id: sink-status
+- evalScript: ${console.log(maestro.copiedText)}
+- assertVisible:
+    id: sink-status
+    text: "Multiple devices OK: .*"

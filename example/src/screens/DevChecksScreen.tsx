@@ -15,11 +15,12 @@ import {
 } from 'expo-ble-kit';
 
 import { describeBatchedStream, runBatchedStream } from '../lib/batchedStream';
+import { describeMultipleDevices, runMultipleDevices } from '../lib/multipleDevices';
 import { abortStreamToSink, sendToSink, streamToSink, type SinkReport } from '../lib/sink';
 
 // Developer checks on the public API (P1-12): adapter state, permissions, scanning, connections
-// to a device that isn't there, and throughput and batching with the test peripheral (P2-02 to
-// P2-04).
+// to a device that isn't there, and throughput, batching and several test peripherals at once
+// (P2-02 to P2-05).
 
 const TEST_SERVICE = '0c6c1000-b347-4cfa-9827-1c5a13658519';
 const TEST_NAME = 'BleKit-Test';
@@ -291,6 +292,16 @@ export function DevChecksScreen() {
       return describeBatchedStream(report);
     });
 
+  // P2-05 accept: 5+ test peripherals at once; one dropping doesn't affect the others.
+  async function multipleDevices() {
+    try {
+      const report = await runMultipleDevices({ onStatus: setSinkStatus });
+      setSinkStatus(describeMultipleDevices(report));
+    } catch (error) {
+      setSinkStatus(describeError(error));
+    }
+  }
+
   async function scanForTest() {
     addLog('scanFor TEST service, 10 s');
     try {
@@ -358,6 +369,11 @@ export function DevChecksScreen() {
           testID="batch-stop"
           title="Stop the batched stream"
           onPress={() => batchRun.current?.abort()}
+        />
+        <Button
+          testID="multi-devices"
+          title="All test peripherals at once (5+)"
+          onPress={multipleDevices}
         />
       </Group>
       <Group name="Scanning">

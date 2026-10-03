@@ -1,6 +1,6 @@
 # Expo BLE (`expo-ble-kit`) — Architecture & Implementation Plan
 
-> **Status:** Draft v0.32 · **Date:** 2026-10-03 · **Scope:** proposition #3, an Expo-first Bluetooth Low Energy module · **Changes:** Appendix D
+> **Status:** Draft v0.33 · **Date:** 2026-10-03 · **Scope:** proposition #3, an Expo-first Bluetooth Low Energy module · **Changes:** Appendix D
 >
 > **Package name:** `expo-ble-kit` (D0a, decided 2026-10-02) · native module `ExpoBleKit` · Android package `expo.modules.blekit`.
 >
@@ -809,6 +809,12 @@ API rules (decided in P1-12):
 - `getPeripheral(id)` returns the same object for the same id while it is in use. `getKnownPeripherals` and `getSystemConnectedPeripherals` resolve with those objects; both use the manager without showing a prompt, so they reject like `connect()` when it can't be used. Android keeps every valid address in `getKnownPeripherals` (§4.12).
 - `getDiagnostics()` combines the native snapshot with the permissions (all `undetermined` when they can't be read, the error then being among the recent errors) and the last 100 errors the API returned (`recentErrors`, kept in JS).
 
+Multi-device rules (decided in P2-05):
+
+- Every peripheral has its own session: state, `GattQueue`, discovery cache, subscriptions, timers and (Android) GATT client. Sessions share only the BLE thread (Android) or the engine's queue (iOS), where no call blocks, so an operation waiting on one device never delays another, and a link loss, a 133 retry or a reconnection on one device leaves the others untouched. `getDiagnostics()` lists every session with its queue depth and subscription count.
+- Android limits, from AOSP (`bt_target.h`, `android-9.0.0_r1` and `android14-release`): `GATT_MAX_PHY_CHANNEL` 7 LE links by default (OEMs may override it, and controllers may support fewer) and `GATT_MAX_APPS` 32 GATT client registrations per phone (2 internal), one per `BluetoothGatt`. Beyond the link limit a connect fails, often with status 133, which the session retries and then reports as `CONNECTION_FAILED`.
+- Android 8–9 allow "only one BLE connection request outstanding at a time" (`l2c_ble.cc`): direct connects queue in the stack, so concurrent connects wait behind a device that isn't there, and their timeouts (which start at `connect()`) can fire first. Android 10+ (`connection_manager.cc`) puts every target on the accept list with a 30 s direct-connect timeout each, so they connect together. The library doesn't serialize connects itself (a connect's timeout keeps meaning "from the call"); the docs tell apps to connect one after another on Android 8–9.
+
 Stream rules (decided in P2-03):
 
 - `writeStream(service, characteristic, data, options)` takes any length of `data` and writes it natively, one chunk per write, without a JS round trip per chunk. The native function is `writeStream(request, data, chunkSize | null)` with a JS-assigned `operationId` in the request; the TS layer validates the input (`chunkSize` an integer ≥ 1, `onProgress` a function, `data` a `Uint8Array`) and applies `withResponse: false`.
@@ -1031,7 +1037,8 @@ hrm.notify(GattServices.HeartRate, GattCharacteristics.HeartRateMeasurement, Uin
 | Connect / GATT client | ✅ | ✅ | ✅ Chromium browsers |
 | MTU negotiation | ❌ automatic | ✅ up to 517 | ❌ |
 | `getSystemConnectedPeripherals(services)` | ✅ filtered by services | Every LE device connected at the OS level: services can't be read without connecting, so they don't filter | ❌ |
-| Write-without-response flow control | ✅ | ✅ (API 33+ status codes, legacy pacing below) | Partial |
+| Write-without-response flow control | ✅ | ✅ (busy and congestion statuses, §4.9) | Partial |
+| Several connections at once | ✅ (no documented limit) | ✅ 7 LE links by default (AOSP `GATT_MAX_PHY_CHANNEL`; OEMs and controllers may allow fewer). Android 8–9 make direct connections one at a time | ✅ |
 | Connection priority / PHY | ❌ | ✅ | ❌ |
 | Explicit bonding | ❌ implicit | ✅ | ❌ |
 | Indications on a characteristic that also notifies | ❌ CoreBluetooth picks notifications (`mode: 'indicate'` rejects with `NOT_SUPPORTED`) | ✅ | ❌ |
@@ -1261,6 +1268,10 @@ Parallelism: P0-06/P0-07 can run alongside P0-03/P0-04. With two people, P4 can 
   - Tests: 6 Android and 6 iOS (one batch per interval with arrival times, batched and unbatched sharing a characteristic, drop-oldest with one warning, unsubscribe, disconnect delivering first, 10 virtual minutes of 100 Hz × 20 B: ≤ 63 batches/s, in order, none dropped), 8 Jest on the public API (60 virtual seconds), 2 example Jest.
 - [ ] **P2-05 Multiple devices** — deps: P1-05.
   **Accept:** 5+ concurrent connections (several Bumble devices or boards) with independent queues; one device dropping doesn't affect the others.
+  **Progress 2026-10-03 (open: waits for 5+ test peripherals and the device matrix):** the sessions were already independent; P2-05 proves it and documents the platform limits (multi-device rules in §5.4, a §6 row, a troubleshooting entry).
+  - Fix: `getDiagnostics().sessions[].subscriptions` was always 0 on both platforms and in the fake; it counts the active subscriptions now.
+  - Tests: 4 Android and 3 iOS with six connections (all ready with their own client, a stuck operation on one device doesn't delay the others, one link loss leaves the others connected, delivering and answering, a 133 retry on one device), 3 Jest through the public API.
+  - Example: demo mode has five test peripherals (`BleKit-Test`, `BleKit-Test-2`…, like extra hardware instances). "All test peripherals at once (5+)" in the developer checks connects every test peripheral it finds, streams 20 Hz from each, drops the first (`DISCONNECT_AFTER`) and checks the others kept streaming and answer reads. Maestro flow `e2e/maestro/multi-devices.yaml`; 2 example Jest tests.
 - [ ] **P2-06 Android GATT hygiene** — deps: P1-05.
   `close()` audit, service-changed handling (API 31+ callback), opt-in cache refresh.
   **Accept:** 500-cycle soak with a stable GATT client count; a service change on the peripheral invalidates the cache and emits `servicesChanged`.
@@ -1634,3 +1645,4 @@ Submit results (`BluetoothStatusCodes`, API 33+): 1 not enabled → `BLUETOOTH_P
 | v0.30 | 2026-10-03 | P2-02 in progress: write-without-response flow control verified (Apple docs, AOSP sources) and written in §4.9, closing its ⚠️ VERIFY: Android congestion statuses (0x8F success, 0x81 resend), legacy refusals retried as busy, iOS waiting packets tied to their op. Appendix A.1 rows for 0x8F and 0x81 on writes without response; the example's 1 MB sink check |
 | v0.31 | 2026-10-03 | P2-03 in progress: `writeStream` on both platforms and in the fake. Stream rules in §5.4 (one packet per chunk by default for both write types, per-chunk timeouts, progress about every 1 % with the final report made by the TS layer), the queue's `first` option and the stream ordering rule in §4.9, two queue contract cases; the example's stream and abort checks |
 | v0.32 | 2026-10-03 | P2-04 in progress: native notification batching on both platforms and in the fake. §4.10 rules (per-subscriber batchers, the first value starts the interval, no per-value event without unbatched subscribers, one buffer plus lengths per batch event, collected values delivered when the link ends, drop-oldest with one `BUFFER_OVERFLOW` warning), the batch options in the subscribe request (§5.4), `BUFFER_OVERFLOW` in §4.11; the example's batched-stream check |
+| v0.33 | 2026-10-03 | P2-05 in progress: multi-device rules in §5.4 (independent sessions, Android link and registration limits, Android 8–9 queuing direct connects, all from AOSP), a §6 row for several connections, `getDiagnostics()` subscription counts fixed; the example's demo mode has five test peripherals and a multi-device check |

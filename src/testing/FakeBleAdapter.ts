@@ -375,6 +375,13 @@ class FakePeripheralHandle implements NativePeripheralPort {
     return this.emitter.addListener(event, listener);
   }
 
+  /** Active subscriptions (their subscriber ids), for diagnostics. */
+  get subscriptionCount(): number {
+    let count = 0;
+    this.subscriptions.forEach((entry) => (count += entry.subscribers.size));
+    return count;
+  }
+
   get queueDepth(): number {
     return this.queue.depth;
   }
@@ -1259,7 +1266,7 @@ export class FakeBleAdapter implements NativeBleKitPort {
         id: handle.id,
         state: handle.state,
         queueDepth: handle.queueDepth,
-        subscriptions: 0,
+        subscriptions: handle.subscriptionCount,
       })),
     };
   }
