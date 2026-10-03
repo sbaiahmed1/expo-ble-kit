@@ -8,11 +8,13 @@ import { startDemo } from './src/demo/testPeripheral';
 import { DevChecksScreen } from './src/screens/DevChecksScreen';
 import { ExplorerScreen } from './src/screens/ExplorerScreen';
 import { HeartRateScreen } from './src/screens/HeartRateScreen';
+import { ThroughputScreen } from './src/screens/ThroughputScreen';
 import { colors } from './src/ui';
 
 const TABS = [
   { key: 'explorer', title: 'Explorer', Screen: ExplorerScreen },
   { key: 'heart-rate', title: 'Heart Rate', Screen: HeartRateScreen },
+  { key: 'throughput', title: 'Throughput', Screen: ThroughputScreen },
   { key: 'checks', title: 'Checks', Screen: DevChecksScreen },
 ] as const;
 

@@ -1,0 +1,32 @@
+apply plugin: 'com.android.application'
+apply plugin: 'org.jetbrains.kotlin.android'
+
+android {
+  namespace 'expo.modules.blekit.reference'
+  compileSdk 36
+
+  defaultConfig {
+    applicationId 'expo.modules.blekit.reference'
+    minSdk 26
+    targetSdk 36
+    versionCode 1
+    versionName '1.0'
+  }
+
+  buildTypes {
+    // Benchmarks run release builds on both sides; the debug key keeps it installable.
+    release {
+      signingConfig signingConfigs.debug
+      minifyEnabled false
+    }
+  }
+
+  compileOptions {
+    sourceCompatibility JavaVersion.VERSION_17
+    targetCompatibility JavaVersion.VERSION_17
+  }
+
+  kotlinOptions {
+    jvmTarget = '17'
+  }
+}

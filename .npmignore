@@ -49,3 +49,6 @@ __tests__
 
 # Generated API reference (yarn docs)
 /typedoc.json
+
+# Native reference apps for docs/benchmarks.md
+/benchmarks/

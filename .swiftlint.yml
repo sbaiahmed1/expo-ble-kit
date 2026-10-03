@@ -1,5 +1,6 @@
 included:
   - ios
+  - benchmarks/ios-reference
 excluded:
   - ios/build
   - ios/.build

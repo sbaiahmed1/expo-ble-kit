@@ -1,0 +1,29 @@
+# P2-08: the Throughput tab runs the transfers of docs/benchmarks.md against the test peripheral and
+# shows one result per transfer. Compare release builds with the native reference apps (benchmarks/).
+#   maestro test e2e/maestro/throughput.yaml               # Bumble or the nRF52840 advertising
+#   maestro test -e DEMO=true e2e/maestro/throughput.yaml  # the app's virtual test peripheral
+appId: expo.modules.blekit.example
+name: Throughput
+---
+- runFlow: _setup.yaml
+- tapOn:
+    id: tab-throughput
+- tapOn:
+    id: throughput-run
+- extendedWaitUntil:
+    visible:
+      id: throughput-status
+      text: "Throughput done.*"
+    timeout: 300000
+- scrollUntilVisible:
+    element:
+      id: result-writeWithoutResponse
+- scrollUntilVisible:
+    element:
+      id: result-writeWithResponse
+- scrollUntilVisible:
+    element:
+      id: result-notifications
+- scrollUntilVisible:
+    element:
+      id: result-notificationsUnbatched

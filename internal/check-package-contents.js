@@ -14,7 +14,7 @@ const FORBIDDEN = [
   /^ios\/Package\.swift$/,
   /^android\/src\/(test|androidTest)\//,
   /^android\/build\//,
-  /^(docs|example|e2e|test-peripherals|test-contracts|internal)\//,
+  /^(docs|example|e2e|test-peripherals|test-contracts|internal|benchmarks)\//,
   /(^|\/)__tests__\//,
 ];
 const MAX_FILES = 300;

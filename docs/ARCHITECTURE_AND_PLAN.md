@@ -1,6 +1,6 @@
 # Expo BLE (`expo-ble-kit`) — Architecture & Implementation Plan
 
-> **Status:** Draft v0.35 · **Date:** 2026-10-03 · **Scope:** proposition #3, an Expo-first Bluetooth Low Energy module · **Changes:** Appendix D
+> **Status:** Draft v0.36 · **Date:** 2026-10-03 · **Scope:** proposition #3, an Expo-first Bluetooth Low Energy module · **Changes:** Appendix D
 >
 > **Package name:** `expo-ble-kit` (D0a, decided 2026-10-02) · native module `ExpoBleKit` · Android package `expo.modules.blekit`.
 >
@@ -191,6 +191,7 @@ expo-ble-kit/
 │   ├── bumble/                       # Python virtual peripheral for the Android emulator (netsim)
 │   └── zephyr/                       # nRF52840 firmware implementing the same profile
 ├── e2e/maestro/                      # E2E flows for the example app
+├── benchmarks/                       # native reference apps (Kotlin, Swift) for docs/benchmarks.md (P2-08)
 └── skills/                           # co-located agent skill (P6) ⚠️ VERIFY Expo convention
 ```
 
@@ -1311,6 +1312,10 @@ Parallelism: P0-06/P0-07 can run alongside P0-03/P0-04. With two people, P4 can 
 - [ ] **P2-08 Throughput example and benchmarks** — deps: P2-03, P2-04.
   Minimal native reference apps (Swift and Kotlin) using the same profile.
   **Accept:** `docs/benchmarks.md`; `writeStream` and notify throughput ≥ 80% of the native reference.
+  **Progress 2026-10-03 (open: the measurements wait for a test peripheral and an iPhone):** the method, the apps on both sides and the results table are ready.
+  - `docs/benchmarks.md`: the transfers (1 MiB without response, 256 KiB with response, 10 s of `STREAM` at 1000 Hz, plus unbatched notifications for comparison), what is timed, release builds, three runs and the median, and the results table to fill.
+  - Reference apps in `benchmarks/` (not shipped): `android-reference` (Kotlin, `android.bluetooth`, no AndroidX; built offline with the example's AGP 8.12.0 and Kotlin 2.1.20) and `ios-reference` (SwiftUI and CoreBluetooth; a small Xcode project with a folder-synchronized group, iOS 17). Both use the platform's own flow control and print the same result lines; `yarn lint:native` covers them.
+  - Example: a **Throughput** tab (`src/screens/ThroughputScreen.tsx`, `src/lib/throughput.ts`) runs the same transfers through `writeStream` and `subscribeBatched`. Maestro flow `e2e/maestro/throughput.yaml`; 4 example Jest tests.
 - [ ] **P2-09 OEM pass and soak** — deps: P2-01 … P2-08.
   **Accept:** soak suite (§8.5) green on the matrix. Publish `0.2.0`.
 
@@ -1449,7 +1454,7 @@ The standard Heart Rate service (`0x180D` / `0x2A37`) is also exposed for demos,
 - 500 connect/disconnect cycles: ≥ 99% success against a stable peripheral, no GATT client leak, no zombie sessions.
 - Bluetooth toggled off and on 50 times during active ops: every pending promise settles with a coded error, no crash.
 - A filtered scan left running for 45 minutes with the screen on keeps delivering results on Android (long-scan restart, §4.4).
-- `writeStream` and notification throughput ≥ 80% of the native reference apps on the same device pair.
+- `writeStream` and notification throughput ≥ 80% of the native reference apps on the same device pair (method and results: `docs/benchmarks.md`).
 
 ### 8.6 CI pipeline
 
@@ -1679,3 +1684,4 @@ Submit results (`BluetoothStatusCodes`, API 33+): 1 not enabled → `BLUETOOTH_P
 | v0.33 | 2026-10-03 | P2-05 in progress: multi-device rules in §5.4 (independent sessions, Android link and registration limits, Android 8–9 queuing direct connects, all from AOSP), a §6 row for several connections, `getDiagnostics()` subscription counts fixed; the example's demo mode has five test peripherals and a multi-device check |
 | v0.34 | 2026-10-03 | P2-06 in progress: service-change rules in §5.4 (rediscovery ahead of queued operations, subscriptions restored or ended, then `servicesChanged`), §4.4 allows `BluetoothGatt.refresh()` behind `android.refreshGattCache()` only (rule 11), `android.resetAfterTimeouts` in §4.9 and §5.4, a §6 row for service changes, `VirtualPeripheral.setServices` in §5.8; the example's service-change and 500-cycle checks |
 | v0.35 | 2026-10-03 | P2-07 in progress: logging rules in §4.16 (default `warn`, what each level writes, op lines with id, kind, status and duration, Logcat and `os.Logger` output, JS forwarding only with a handler), `setLogLevel` / `setLogHandler` land; a diagnostics snapshot test |
+| v0.36 | 2026-10-03 | P2-08 in progress: `docs/benchmarks.md` (transfers, timing, how to run, results table), the native reference apps in `benchmarks/` (repo layout §4.2), the example's Throughput tab; §8.5 points to the benchmarks doc |

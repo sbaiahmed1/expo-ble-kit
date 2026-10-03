@@ -1,0 +1,19 @@
+// Same Android Gradle plugin and Kotlin as the example app (React Native 0.86), so the build needs
+// nothing new.
+buildscript {
+  repositories {
+    google()
+    mavenCentral()
+  }
+  dependencies {
+    classpath 'com.android.tools.build:gradle:8.12.0'
+    classpath 'org.jetbrains.kotlin:kotlin-gradle-plugin:2.1.20'
+  }
+}
+
+allprojects {
+  repositories {
+    google()
+    mavenCentral()
+  }
+}

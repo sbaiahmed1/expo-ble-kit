@@ -26,6 +26,7 @@ if (found) {
 - [Permissions](docs/guides/permissions.md): what each platform asks for.
 - [Bare React Native setup](docs/guides/bare-setup.md): for apps without prebuild.
 - [Troubleshooting](docs/troubleshooting.md): Android status 133, reconnecting by id, location services, the iOS Simulator.
+- [Benchmarks](docs/benchmarks.md): throughput compared with native reference apps, and how to measure it.
 - API reference: `yarn docs` builds it into `docs/api/`.
 
 ## Why expo-ble-kit

@@ -1,0 +1,3 @@
+// The Android reference app of docs/benchmarks.md (plan P2-08): plain Kotlin and android.bluetooth.
+rootProject.name = 'blekit-reference'
+include ':app'

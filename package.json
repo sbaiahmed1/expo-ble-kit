@@ -28,7 +28,7 @@
     "build:plugin": "node internal/module_scripts/build.js plugin",
     "clean": "node internal/module_scripts/clean.js",
     "lint": "eslint src/ plugin/src/",
-    "lint:native": "swiftlint lint --strict && ktlint \"android/src/**/*.kt\"",
+    "lint:native": "swiftlint lint --strict && ktlint \"android/src/**/*.kt\" \"benchmarks/android-reference/app/src/**/*.kt\"",
     "format:check": "prettier --check \"src/**/*.{ts,tsx}\" \"plugin/src/**/*.ts\"",
     "typecheck": "tsc --noEmit && tsc --noEmit -p plugin",
     "check:package": "node internal/check-package-contents.js",

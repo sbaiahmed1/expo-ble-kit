@@ -41,7 +41,7 @@ export async function resetCounters(peripheral: Peripheral): Promise<void> {
  * Reads SINK_COUNTER until it reaches `sent` or stops growing: packets the phone's stack took may
  * still be on their way.
  */
-async function settledCounter(peripheral: Peripheral, sent: number): Promise<number> {
+export async function settledCounter(peripheral: Peripheral, sent: number): Promise<number> {
   let received = await readSinkCounter(peripheral);
   for (let still = 0; received < sent && still < 5;) {
     await sleep(200);
@@ -53,7 +53,7 @@ async function settledCounter(peripheral: Peripheral, sent: number): Promise<num
 }
 
 /** The bytes 0, 1, 2… 255, 0… of the test payloads, starting at byte `from`. */
-function payload(length: number, from = 0): Uint8Array {
+export function payload(length: number, from = 0): Uint8Array {
   return Uint8Array.from({ length }, (_, i) => (from + i) % 256);
 }
 
