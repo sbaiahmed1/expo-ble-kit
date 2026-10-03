@@ -1,6 +1,6 @@
 # Expo BLE (`expo-ble-kit`) — Architecture & Implementation Plan
 
-> **Status:** Draft v0.27 · **Date:** 2026-10-02 · **Scope:** proposition #3, an Expo-first Bluetooth Low Energy module · **Changes:** Appendix D
+> **Status:** Draft v0.28 · **Date:** 2026-10-02 · **Scope:** proposition #3, an Expo-first Bluetooth Low Energy module · **Changes:** Appendix D
 >
 > **Package name:** `expo-ble-kit` (D0a, decided 2026-10-02) · native module `ExpoBleKit` · Android package `expo.modules.blekit`.
 >
@@ -1180,6 +1180,14 @@ Parallelism: P0-06/P0-07 can run alongside P0-03/P0-04. With two people, P4 can 
 - [ ] **P1-15 Explorer and Heart Rate examples** — deps: P1-12.
   Explorer: scan list → device → services → read / write / subscribe, with hex and UTF-8 views. Heart Rate: scan for `0x180D`, connect with a reconnect policy, live BPM.
   **Accept:** both work against Bumble (emulator) and the nRF52840 on iOS and Android devices; Maestro flows `explorer-basic.yaml` and `heart-rate.yaml` pass; example screens have Jest tests using the fake adapter.
+  **Progress 2026-10-03 (open: waits for a test peripheral and an iPhone):** the example app now has tabs for Explorer, Heart Rate and the developer checks (`example/App.tsx`, `example/src/screens/`).
+  - Explorer: a live scan list (named devices first), then a device page with connect, MTU and RSSI, and every service and characteristic. Each characteristic offers read, write (UTF-8 or hex, with or without response) and subscribe, and shows values as hex and UTF-8; descriptors can be read too. Names come from the SIG list and from `profile.json`.
+  - Heart Rate: scans for `0x180D`, parses the measurement (8- and 16-bit values, skin contact, energy, RR intervals), and shows the live BPM and the last 40 readings. It stays connected with an app-level reconnection loop (`useKeepConnected`) using a `ReconnectPolicy`'s backoff (1 s doubling to 30 s, 5 attempts), which `connect({ reconnect })` replaces once P2-01 lands. A "Reconnected n×" count shows that it worked, and on the test peripheral a button makes it drop the link (`CONTROL` `DISCONNECT_AFTER`).
+  - Demo mode: a header switch installs the fake adapter with the test peripheral built from `profile.json` (values, descriptors, Heart Rate). A small driver plays the peripheral's side: notifications, `ECHO_WRITE` → `ECHO_READ`, `DISCONNECT_AFTER`. The screens then work without hardware.
+  - The test profile now advertises `0x180D` (§8.3); Bumble and its tests follow (26 pass).
+  - Tests: 18 Jest tests in `example/` (the screens against the demo device, the byte and Heart Rate parsers, the backoff), with the library mapped from `../src`; CI runs them. The Maestro flows `e2e/maestro/explorer-basic.yaml` and `heart-rate.yaml` take `DEVICE_NAME` and `DEMO`.
+  - Verified on the Galaxy A52 (debug build with Metro): both Maestro flows pass in demo mode (Explorer twice in a row), and Explorer lists real nearby devices.
+  - Pending: the flows against Bumble on a USB dongle (the emulator option is ruled out) or the nRF52840, and both screens on an iPhone.
 - [ ] **P1-16 Docs v1** — deps: P1-12.
   Getting started (requirements: Expo SDK 57+, iOS 16.4+, Android 8.0 / API 26+; SDK 57 apps built with Xcode 27 need `ios.enableSceneSupport`), permissions, bare setup, API reference (TypeDoc), troubleshooting (Android 133, location services on API ≤ 30, reconnecting by id on Android (§4.12), no Bluetooth in the iOS Simulator).
   **Accept:** docs build; every public symbol is documented. Publish `0.1.0` on `next`.
@@ -1326,7 +1334,7 @@ All custom UUIDs derive from one random 128-bit base generated in P0-07. Every s
 | `L2CAP_PSM` | read | PSM of an L2CAP echo server (P5) |
 | `CONTROL` | write | Commands: set stream rate/size, disconnect after N ms, toggle a secondary service (service-changed tests), reset counters, send N indications |
 
-The standard Heart Rate service (`0x180D` / `0x2A37`) is also exposed for demos. A `SECONDARY` service appears and disappears on `CONTROL` toggles.
+The standard Heart Rate service (`0x180D` / `0x2A37`) is also exposed for demos, and advertised as a 16-bit service UUID like a real strap, so a scan filtered on Heart Rate finds the test peripheral (its service data moved to the scan response to make room). A `SECONDARY` service appears and disappears on `CONTROL` toggles.
 
 `test-peripherals/profile.json` holds the exact UUIDs, values, advertising data, command opcodes and error codes; `test-peripherals/README.md` summarizes them.
 
@@ -1568,3 +1576,4 @@ Submit results (`BluetoothStatusCodes`, API 33+): 1 not enabled → `BLUETOOTH_P
 | v0.25 | 2026-10-02 | P1-09 in progress: MTU and RSSI on both platforms and in the fake. MTU and RSSI rules in §5.4 (`mtuChange` only on ready connections, a failed setup exchange is a warning), `mtu` and `setRssi` in §5.8 |
 | v0.26 | 2026-10-02 | P1-12 done: `BleManager`, `Peripheral` and the hooks; §5 says which members later tasks add, and a test holds the types to it. Native `name`, `getKnownPeripherals`, `getSystemConnectedPeripherals` and `AbortSignal` cancellation (§4.5, §4.9). API rules in §5.4, hook rules in §5.7, fake rules in §5.8, the Android `getSystemConnectedPeripherals` difference in §6. The default export is gone (§4.6) |
 | v0.27 | 2026-10-02 | P1-16 docs written (getting started, permissions, troubleshooting, README) and the TypeDoc reference, which fails on undocumented symbols; publishing `0.1.0` waits for the maintainer |
+| v0.28 | 2026-10-03 | P1-15 in progress: Explorer and Heart Rate screens with demo mode, example Jest tests, the two Maestro flows (passing in demo mode on the Galaxy A52). The test profile advertises Heart Rate (§8.3) |

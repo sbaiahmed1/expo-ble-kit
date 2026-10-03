@@ -1,0 +1,81 @@
+# P1-15: Explorer against the test peripheral (test-peripherals/profile.json): scan, connect, read,
+# write and read back, subscribe, disconnect.
+#   maestro test e2e/maestro/explorer-basic.yaml               # Bumble or the nRF52840 advertising
+#   maestro test -e DEMO=true e2e/maestro/explorer-basic.yaml  # the app's virtual test peripheral
+appId: expo.modules.blekit.example
+name: Explorer basic
+---
+- runFlow: _setup.yaml
+- tapOn:
+    id: tab-explorer
+- extendedWaitUntil:
+    visible: ${output.deviceName}
+    timeout: 30000
+- tapOn: ${output.deviceName}
+- tapOn:
+    id: connect
+- extendedWaitUntil:
+    visible:
+      id: device-state
+      text: Connected.*
+    timeout: 20000
+
+# STATIC_READ: 20 bytes 00..13
+- scrollUntilVisible:
+    element:
+      id: read-0c6c1001-b347-4cfa-9827-1c5a13658519
+- tapOn:
+    id: read-0c6c1001-b347-4cfa-9827-1c5a13658519
+- extendedWaitUntil:
+    visible: 00 01 02 03 04 05 06 07 08 09 0a 0b 0c 0d 0e 0f 10 11 12 13
+    timeout: 10000
+
+# ECHO_WRITE, then ECHO_READ returns it
+- scrollUntilVisible:
+    element:
+      id: write-input-0c6c1003-b347-4cfa-9827-1c5a13658519
+- tapOn:
+    id: write-input-0c6c1003-b347-4cfa-9827-1c5a13658519
+- inputText: hello
+- hideKeyboard
+- tapOn:
+    id: write-0c6c1003-b347-4cfa-9827-1c5a13658519
+- extendedWaitUntil:
+    visible: Wrote 5 bytes
+    timeout: 10000
+- scrollUntilVisible:
+    element:
+      id: read-0c6c1004-b347-4cfa-9827-1c5a13658519
+- tapOn:
+    id: read-0c6c1004-b347-4cfa-9827-1c5a13658519
+- extendedWaitUntil:
+    visible: 68 65 6c 6c 6f
+    timeout: 10000
+
+# Heart Rate Measurement: notifications arrive
+- scrollUntilVisible:
+    element:
+      id: subscribe-00002a37-0000-1000-8000-00805f9b34fb
+    speed: 80
+    timeout: 60000
+    visibilityPercentage: 50
+- tapOn:
+    id: subscribe-00002a37-0000-1000-8000-00805f9b34fb
+- extendedWaitUntil:
+    visible: Subscribed \([2-9]\d*\)
+    timeout: 10000
+- tapOn: Subscribed \(\d+\)
+
+# Disconnect
+- scrollUntilVisible:
+    element:
+      id: disconnect
+    direction: UP
+    speed: 80
+    timeout: 60000
+- tapOn:
+    id: disconnect
+- extendedWaitUntil:
+    visible:
+      id: connect
+    timeout: 10000

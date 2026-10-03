@@ -14,8 +14,10 @@ from blekit_peripheral.profile import decode_value, stream_frame
 
 from .conftest import Devices, Rig
 
+AD_TYPE_COMPLETE_16_BIT_UUIDS = 0x03
 AD_TYPE_COMPLETE_128_BIT_UUIDS = 0x07
 AD_TYPE_COMPLETE_LOCAL_NAME = 0x09
+AD_TYPE_SERVICE_DATA_16_BIT_UUID = 0x16
 AD_TYPE_MANUFACTURER_SPECIFIC_DATA = 0xFF
 
 
@@ -56,10 +58,16 @@ def test_advertising_and_scan_response_fit_legacy_pdus(devices: Devices) -> None
     adv_fields = parse_ad(adv)
     test_service = UUID(devices.profile.uuid("TEST")).to_bytes()
     assert adv_fields[AD_TYPE_COMPLETE_128_BIT_UUIDS] == test_service
+    # Heart Rate is advertised like a real strap, so a scan filtered on 0x180D finds it.
+    assert adv_fields[AD_TYPE_COMPLETE_16_BIT_UUIDS] == bytes.fromhex("0d18")
 
     scan_fields = parse_ad(scan)
     assert scan_fields[AD_TYPE_COMPLETE_LOCAL_NAME] == b"BleKit-Test"
     assert scan_fields[AD_TYPE_MANUFACTURER_SPECIFIC_DATA] == bytes.fromhex("ffff424b0001")
+    assert scan_fields[AD_TYPE_SERVICE_DATA_16_BIT_UUID] == bytes.fromhex("0d180102")
+
+    long_name = devices.peripheral.scan_response_data("BleKit-Test-2")
+    assert len(long_name) <= 31
 
 
 async def test_scanner_sees_the_advertisement(devices: Devices) -> None:

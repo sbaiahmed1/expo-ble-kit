@@ -46,6 +46,7 @@ PERMISSIONS = {
 
 AD_FLAGS = {"leLimitedDiscoverable": 0x01, "leGeneralDiscoverable": 0x02, "brEdrNotSupported": 0x04}
 AD_TYPE_FLAGS = 0x01
+AD_TYPE_COMPLETE_16_BIT_UUIDS = 0x03
 AD_TYPE_COMPLETE_128_BIT_UUIDS = 0x07
 AD_TYPE_COMPLETE_LOCAL_NAME = 0x09
 AD_TYPE_TX_POWER_LEVEL = 0x0A
@@ -66,6 +67,14 @@ def uuid_to_le_bytes(value: str) -> bytes:
 def uuid16_to_le_bytes(value: str) -> bytes:
     """2-byte little-endian form of a Bluetooth SIG base UUID (0000xxxx-0000-1000-8000-00805f9b34fb)."""
     return int(value[4:8], 16).to_bytes(2, "little")
+
+
+def service_data_structures(fields: dict) -> bytes:
+    """The 16-bit service data AD structures of an advertising or scan response section."""
+    return b"".join(
+        ad_structure(AD_TYPE_SERVICE_DATA_16_BIT_UUID, uuid16_to_le_bytes(uuid) + bytes.fromhex(payload))
+        for uuid, payload in fields.get("serviceData", {}).items()
+    )
 
 
 class TestPeripheral:
@@ -158,11 +167,11 @@ class TestPeripheral:
             AD_TYPE_COMPLETE_128_BIT_UUIDS,
             b"".join(uuid_to_le_bytes(u) for u in adv["completeServiceUuids128"]),
         )
-        for service_uuid, payload in adv.get("serviceData", {}).items():
+        if uuids16 := adv.get("completeServiceUuids16"):
             data += ad_structure(
-                AD_TYPE_SERVICE_DATA_16_BIT_UUID,
-                uuid16_to_le_bytes(service_uuid) + bytes.fromhex(payload),
+                AD_TYPE_COMPLETE_16_BIT_UUIDS, b"".join(uuid16_to_le_bytes(u) for u in uuids16)
             )
+        data += service_data_structures(adv)
         if "txPowerLevel" in adv:
             data += ad_structure(AD_TYPE_TX_POWER_LEVEL, struct.pack("<b", adv["txPowerLevel"]))
         return data
@@ -176,7 +185,7 @@ class TestPeripheral:
                 AD_TYPE_MANUFACTURER_SPECIFIC_DATA,
                 struct.pack("<H", manufacturer["companyId"]) + bytes.fromhex(manufacturer["data"]),
             )
-        return data
+        return data + service_data_structures(scan)
 
     async def start(self, local_name: str | None = None) -> None:
         for key, spec in self.profile.services.items():

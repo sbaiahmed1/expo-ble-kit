@@ -1,0 +1,32 @@
+# Shared start of every flow: launch, demo mode when DEMO=true, and the Bluetooth permission.
+# Parameters (maestro test -e NAME=value): DEVICE_NAME (default BleKit-Test), DEMO (default false).
+appId: expo.modules.blekit.example
+---
+- evalScript: "${output.deviceName = typeof DEVICE_NAME === 'undefined' ? 'BleKit-Test' : DEVICE_NAME}"
+- evalScript: "${output.demo = typeof DEMO !== 'undefined' && DEMO == 'true'}"
+- launchApp:
+    stopApp: true
+# A debug build may still be loading its bundle from Metro.
+- extendedWaitUntil:
+    visible:
+      id: tab-explorer
+    timeout: 60000
+- runFlow:
+    when:
+      true: ${output.demo}
+    commands:
+      - tapOn:
+          id: demo-mode
+- runFlow:
+    when:
+      visible:
+        id: allow-bluetooth
+    commands:
+      - tapOn:
+          id: allow-bluetooth
+      # The system dialog: Android "Nearby devices", or the iOS Bluetooth prompt.
+      - runFlow:
+          when:
+            visible: Allow|Autoriser|OK
+          commands:
+            - tapOn: Allow|Autoriser|OK

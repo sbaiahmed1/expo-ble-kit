@@ -23,12 +23,14 @@ yarn docs                    # API reference into docs/api; fails on any undocum
 yarn changeset               # add a changeset for any user-facing change
 
 cd example && yarn install   # example app dependencies (separate lockfile)
+cd example && yarn test      # example screens against the fake adapter (Jest, library from ../src)
 cd example && npx expo prebuild --clean   # regenerate example/ios and example/android (gitignored)
 cd example && npx expo run:ios            # or run:android
 
 cd test-peripherals/bumble && uv run pytest              # test peripheral tests (no hardware)
 cd test-peripherals/bumble && uv run blekit-peripheral   # advertise on a running Android emulator
 e2e/android-netsim/run.sh    # L3: peripheral + instrumented tests on a running emulator (needs ANDROID_HOME and example/android)
+maestro test e2e/maestro/explorer-basic.yaml            # example flows; add -e DEMO=true to use the app's virtual test peripheral
 ```
 
 `test-peripherals/profile.json` is the single source of truth for the test GATT profile; change it before any implementation.

@@ -29,6 +29,9 @@ jobs:
       - run: yarn check:package
       - name: API reference (fails on any undocumented public symbol)
         run: yarn docs
+      - name: Example app tests (screens against the fake adapter)
+        run: yarn install --immutable && yarn test --ci
+        working-directory: example
 
   test-peripheral:
     name: Test peripheral (Bumble)

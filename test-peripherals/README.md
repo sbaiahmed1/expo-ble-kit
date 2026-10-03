@@ -36,7 +36,7 @@ CONTROL commands (opcode + little-endian parameters). Invalid commands fail with
 | 0x04 | `RESET_COUNTERS` | none (sink counter, stream and indication sequences) |
 | 0x05 | `SEND_INDICATIONS` | `count` u16 |
 
-Advertising: flags + `TEST` service UUID + service data `0x180D: 01 02` + TX power 0 dBm. Scan response: name `BleKit-Test` + manufacturer data `0xFFFF: 42 4B 00 01`.
+Advertising: flags + `TEST` service UUID + Heart Rate `0x180D` (16-bit list, so a scan filtered on Heart Rate finds it, like a real strap) + TX power 0 dBm. Scan response: name `BleKit-Test` + manufacturer data `0xFFFF: 42 4B 00 01` + service data `0x180D: 01 02`.
 
 ## Running the Bumble peripheral
 

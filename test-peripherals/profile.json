@@ -14,9 +14,9 @@
       "completeServiceUuids128": [
         "0c6c1000-b347-4cfa-9827-1c5a13658519"
       ],
-      "serviceData": {
-        "0000180d-0000-1000-8000-00805f9b34fb": "0102"
-      },
+      "completeServiceUuids16": [
+        "0000180d-0000-1000-8000-00805f9b34fb"
+      ],
       "txPowerLevel": 0
     },
     "scanResponseData": {
@@ -24,6 +24,9 @@
       "manufacturerData": {
         "companyId": 65535,
         "data": "424b0001"
+      },
+      "serviceData": {
+        "0000180d-0000-1000-8000-00805f9b34fb": "0102"
       }
     },
     "connectable": true,

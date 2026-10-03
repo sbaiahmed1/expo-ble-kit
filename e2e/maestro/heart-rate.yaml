@@ -1,0 +1,56 @@
+# P1-15: Heart Rate against the test peripheral, which serves the Heart Rate service: find it by
+# 0x180D, live BPM, reconnection after the device drops the link, disconnect.
+#   maestro test e2e/maestro/heart-rate.yaml               # Bumble or the nRF52840 advertising
+#   maestro test -e DEMO=true e2e/maestro/heart-rate.yaml  # the app's virtual test peripheral
+appId: expo.modules.blekit.example
+name: Heart rate
+---
+- runFlow: _setup.yaml
+- tapOn:
+    id: tab-heart-rate
+- extendedWaitUntil:
+    visible: ${output.deviceName}
+    timeout: 30000
+- tapOn: ${output.deviceName}
+- extendedWaitUntil:
+    visible:
+      id: hr-status
+      text: Connected
+    timeout: 20000
+
+# A reading arrives, then the next one differs
+- extendedWaitUntil:
+    visible:
+      id: bpm
+      text: \d+
+    timeout: 10000
+- copyTextFrom:
+    id: bpm
+- evalScript: ${output.firstBpm = maestro.copiedText}
+- extendedWaitUntil:
+    notVisible:
+      id: bpm
+      text: ${output.firstBpm}
+    timeout: 5000
+
+# The test device drops the link (CONTROL DISCONNECT_AFTER); the screen reconnects by itself
+# The lost state lasts about a second, so the flow checks the count of reconnections, which stays.
+- tapOn:
+    id: hr-drop
+- extendedWaitUntil:
+    visible: Reconnected 1×
+    timeout: 20000
+- assertVisible:
+    id: hr-status
+    text: Connected
+- extendedWaitUntil:
+    visible:
+      id: bpm
+      text: \d+
+    timeout: 10000
+
+- tapOn:
+    id: hr-disconnect
+- assertVisible:
+    id: hr-status
+    text: Not connected
