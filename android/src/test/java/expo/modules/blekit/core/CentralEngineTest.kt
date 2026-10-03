@@ -153,7 +153,7 @@ class CentralEngineTest {
     scanned.clients[0].callback.onConnectionStateChange(GATT_SUCCESS, ConnectionStates.CONNECTED)
     assertNull(result)
     assertEquals("connected", engine.connectionState("C0:FF:EE:00:00:01"))
-    assertEquals(mapOf("openGattClients" to 1), engine.diagnostics()["android"])
+    assertEquals(mapOf("openGattClients" to 1, "foregroundService" to false), engine.diagnostics()["android"])
 
     // Not scanned: getRemoteDevice.
     engine.connect("C0:FF:EE:00:00:02", ConnectSpec(15_000)) {}
@@ -162,7 +162,7 @@ class CentralEngineTest {
     adapter.simulateState(AdapterStates.TURNING_OFF)
     assertEquals("disconnected", engine.connectionState("C0:FF:EE:00:00:01"))
     assertTrue(connections.contains("C0:FF:EE:00:00:01 disconnected BLUETOOTH_POWERED_OFF"))
-    assertEquals(mapOf("openGattClients" to 0), engine.diagnostics()["android"])
+    assertEquals(mapOf("openGattClients" to 0, "foregroundService" to false), engine.diagnostics()["android"])
     assertEquals(1, scanned.clients[0].closeCount)
 
     var disconnected = false

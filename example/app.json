@@ -24,7 +24,14 @@
       "favicon": "./assets/favicon.png"
     },
     "plugins": [
-      "../app.plugin.js",
+      [
+        "../app.plugin.js",
+        {
+          "android": {
+            "foregroundService": true
+          }
+        }
+      ],
       [
         "expo-build-properties",
         {

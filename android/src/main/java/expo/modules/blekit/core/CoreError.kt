@@ -68,6 +68,7 @@ class CoreError(val code: Code, message: String, val gattStatus: Int? = null, re
     GATT_ERROR("GATT_ERROR"),
     BOND_FAILED("BOND_FAILED"),
     ADVERTISING_FAILED("ADVERTISING_FAILED"),
+    FOREGROUND_SERVICE_FAILED("FOREGROUND_SERVICE_FAILED"),
     L2CAP_FAILED("L2CAP_FAILED"),
     INTERNAL("INTERNAL"),
   }

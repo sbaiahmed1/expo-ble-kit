@@ -186,6 +186,26 @@ device.addServicesChangedListener(() => {
 
 Android reports service changes from Android 12. On older versions, or when a device's cached services are wrong, `await device.android.refreshGattCache()` clears Android's cache and discovers again (it uses a hidden Android API and resolves `false` where that isn't available).
 
+## Staying connected in the background (Android)
+
+Android may stop a backgrounded app at any time. `keepAliveInBackground` keeps it running while the connection is open, with a foreground service and its notification:
+
+```json
+{ "expo": { "plugins": [["expo-ble-kit", { "android": { "foregroundService": true } }]] } }
+```
+
+```ts
+BleManager.android.setForegroundServiceNotification({ title: 'My Sensor', text: 'Recording' });
+await device.connect({ keepAliveInBackground: true, reconnect: { maxAttempts: 10 } });
+```
+
+- The service starts with the connect and stops when the connection ends: `disconnect()`, a failed connect, or reconnection giving up. Reconnecting keeps it.
+- Connect while the app is in the foreground. Android 12 and later refuse to start the service from the background; the library then sends a `FOREGROUND_SERVICE_FAILED` warning to the log, and the connection goes on without the service.
+- Without the plugin option, `keepAliveInBackground: true` rejects with `MISCONFIGURED`. Google Play asks apps that declare the service type to describe it in Play Console.
+- On Android 13 and later, the notification appears in the drawer once the user allows notifications (`POST_NOTIFICATIONS`, which your app requests); the service runs either way.
+- `getDiagnostics().android.foregroundService` tells whether it runs.
+- iOS: not supported yet (rejects with `NOT_SUPPORTED`); it comes with background modes.
+
 ## With React hooks
 
 ```tsx
@@ -274,6 +294,6 @@ The fake answers on later timer ticks, like a radio; Jest fake timers work (`awa
 
 ## Not in this version yet
 
-Background operation, the peripheral role (advertising, GATT server), chunked writes (`writeStream`), notification batching and logging come in later versions. Options for them reject with `NOT_SUPPORTED` rather than being ignored.
+Background operation on iOS (background modes, state restoration), background scanning and background tasks, and the peripheral role (advertising, GATT server) come in later versions. Options for them reject with `NOT_SUPPORTED` rather than being ignored.
 
 Problems? See [troubleshooting](troubleshooting.md).

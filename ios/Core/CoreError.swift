@@ -35,6 +35,7 @@ struct CoreError: Error, Equatable {
     case gattError = "GATT_ERROR"
     case bondFailed = "BOND_FAILED"
     case advertisingFailed = "ADVERTISING_FAILED"
+    case foregroundServiceFailed = "FOREGROUND_SERVICE_FAILED"
     case l2capFailed = "L2CAP_FAILED"
     case `internal` = "INTERNAL"
   }

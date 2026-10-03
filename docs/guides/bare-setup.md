@@ -42,6 +42,26 @@ Inside `<manifest>`, which must declare `xmlns:tools="http://schemas.android.com
 - `neverForLocation` tells Android 12+ that your app doesn't derive location from scans. Without it, Android requires location permission for scanning. Drop the flag only if you do derive location from Bluetooth scans; some beacon advertisements are filtered while it is set. Without the flag, also remove `android:maxSdkVersion` from `ACCESS_FINE_LOCATION`; `requestPermissionsAsync` then asks for location too.
 - The `android.hardware.bluetooth` line matters: the legacy `BLUETOOTH` permission otherwise makes Google Play treat classic Bluetooth as *required*. Set `android:required="true"` on both features only if the app is useless without Bluetooth LE: Play then hides it from devices without it.
 
+## Android: keep-alive foreground service (optional)
+
+Only for `connect({ keepAliveInBackground: true })`; the plugin writes these with `android: { foregroundService: true }`. Inside `<manifest>`:
+
+```xml
+<uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+<uses-permission android:name="android.permission.FOREGROUND_SERVICE_CONNECTED_DEVICE" />
+<uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+```
+
+Inside `<application>`:
+
+```xml
+<service android:name="expo.modules.blekit.core.ConnectionService" android:exported="false" android:foregroundServiceType="connectedDevice" />
+```
+
+- Without these entries, `keepAliveInBackground: true` rejects with `MISCONFIGURED`.
+- Google Play asks apps that target Android 14 or later to declare each foreground service type they use, with a description and a video (Play Console → App content → Foreground service permissions).
+- On Android 13 and later, the service's notification only appears in the notification drawer once the user grants `POST_NOTIFICATIONS`; without it, the notice only shows in the Task Manager. Your app asks for it (for example with `PermissionsAndroid`); the service runs either way.
+
 ## Android: minimum SDK 26
 
 The library needs Android 8.0 (API 26). In `android/build.gradle`, set `minSdkVersion = 26` in `ext` (or `android.minSdkVersion=26` in `android/gradle.properties` for Expo autolinking projects).

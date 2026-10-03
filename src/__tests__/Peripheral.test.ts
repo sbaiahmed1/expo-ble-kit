@@ -111,9 +111,11 @@ describe('Peripheral', () => {
     });
 
     it('rejects options of later tasks and invalid ones', async () => {
-      expect(await codeOf(peripheral.connect({ keepAliveInBackground: true }))).toBe(
-        'NOT_SUPPORTED'
-      );
+      if (Platform.OS === 'ios') {
+        expect(await codeOf(peripheral.connect({ keepAliveInBackground: true }))).toBe(
+          'NOT_SUPPORTED'
+        );
+      }
       if (Platform.OS === 'android') {
         expect(await codeOf(peripheral.connect({ android: { phy: ['le2m'] } }))).toBe(
           'NOT_SUPPORTED'

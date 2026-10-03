@@ -31,6 +31,21 @@ export function blePermissions(props: ExpoBleKitPluginProps = {}): PermissionDec
   ];
 }
 
+/**
+ * `android.foregroundService` (P3-03, plan §4.13): the permissions of the keep-alive service. Android
+ * 13+ only shows its notification in the drawer with POST_NOTIFICATIONS, which the app requests.
+ */
+export function foregroundServicePermissions(): PermissionDeclaration[] {
+  return [
+    { name: 'android.permission.FOREGROUND_SERVICE' },
+    { name: 'android.permission.FOREGROUND_SERVICE_CONNECTED_DEVICE' },
+    { name: 'android.permission.POST_NOTIFICATIONS' },
+  ];
+}
+
+/** The keep-alive service class (plan §4.4), declared only with `android.foregroundService`. */
+export const CONNECTION_SERVICE = 'expo.modules.blekit.core.ConnectionService';
+
 export const BLE_FEATURE = 'android.hardware.bluetooth_le';
 /**
  * Declared explicitly because the legacy BLUETOOTH permission implies it as *required*, which would
@@ -60,7 +75,11 @@ export function applyAndroidManifest(
   const declared = new Set(permissions.map((item) => item.$['android:name']));
 
   const addsLocation = !declared.has(FINE_LOCATION);
-  for (const permission of blePermissions(props)) {
+  const foregroundService = props.android?.foregroundService ?? false;
+  for (const permission of [
+    ...blePermissions(props),
+    ...(foregroundService ? foregroundServicePermissions() : []),
+  ]) {
     if (declared.has(permission.name)) {
       continue;
     }
@@ -88,6 +107,21 @@ export function applyAndroidManifest(
   // location hardware a Play Store requirement. If the app declared location itself, it owns this.
   if (addsLocation && !features.some((item) => item.$['android:name'] === LOCATION_FEATURE)) {
     features.push({ $: { 'android:name': LOCATION_FEATURE, 'android:required': 'false' } });
+  }
+
+  if (foregroundService) {
+    root.application ??= [{ $: {} }];
+    const application = root.application[0] as ManifestItem & { service?: ManifestItem[] };
+    application.service ??= [];
+    if (!application.service.some((item) => item.$['android:name'] === CONNECTION_SERVICE)) {
+      application.service.push({
+        $: {
+          'android:name': CONNECTION_SERVICE,
+          'android:exported': 'false',
+          'android:foregroundServiceType': 'connectedDevice',
+        },
+      });
+    }
   }
   return manifest;
 }

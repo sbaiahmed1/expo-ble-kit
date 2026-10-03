@@ -13,8 +13,8 @@ interface PermissionSystem {
 }
 
 /**
- * Owns the adapter (plan §4.4): adapter state and permissions (P1-03), scanning (P1-04) and
- * peripheral sessions (P1-05).
+ * Owns the adapter (plan §4.4): adapter state and permissions (P1-03), scanning (P1-04),
+ * peripheral sessions (P1-05) and the foreground service that keeps them alive (P3-03).
  *
  * Threading (plan §4.7): call everything except [state] on the BLE thread ([executor]), where
  * adapter callbacks also arrive.
@@ -26,6 +26,8 @@ class CentralEngine(
   private val clock: EpochClock,
   /** Where log lines go besides JS: Logcat in the app ([BleLogger.logcat]), nowhere in JVM tests. */
   logOutput: (LogLevel, String) -> Unit = { _, _ -> },
+  /** The foreground service of `keepAliveInBackground` ([AndroidKeepAlive] in the app). */
+  private val keepAlive: KeepAlivePort = NoKeepAlive,
 ) {
   /** Engine events, delivered on the BLE thread. */
   interface Listener : ScanController.Events {
@@ -66,6 +68,11 @@ class CentralEngine(
   /** Advertised names from scans, then the device name once connected (plan §4.7). */
   private val names = PeripheralNames()
 
+  /** Sessions connected with `keepAliveInBackground`, until they end (plan §4.14). */
+  private val keepAliveSessions = mutableSetOf<String>()
+  private var keepAliveRunning = false
+  private var keepAliveNotification = KeepAliveNotification()
+
   private val scanController =
     ScanController(
       adapter,
@@ -90,6 +97,10 @@ class CentralEngine(
 
   fun start() {
     adapter.setStateListener(::onAdapterState)
+    keepAlive.onStopped = { error ->
+      keepAliveRunning = false
+      error?.let(::warn)
+    }
     refresh()
   }
 
@@ -98,6 +109,35 @@ class CentralEngine(
     val error = CoreError(CoreError.Code.OPERATION_CANCELLED, "The module was destroyed")
     scanController.stopAll(error)
     sessions.values.forEach { it.forceDisconnected(error) }
+    keepAliveSessions.clear()
+    updateKeepAlive()
+  }
+
+  /**
+   * Runs the foreground service while a keep-alive session is open (plan §4.14). Android only
+   * allows the start while the app is in the foreground; a refusal is a warning and the
+   * connection goes on without it.
+   */
+  private fun updateKeepAlive() {
+    if (keepAliveSessions.isEmpty() && keepAliveRunning) {
+      keepAlive.stop()
+      keepAliveRunning = false
+      logger.log(LogLevel.INFO) { "foreground service stopped" }
+    } else if (keepAliveSessions.isNotEmpty() && !keepAliveRunning) {
+      try {
+        keepAlive.start(keepAliveNotification)
+        keepAliveRunning = true
+        logger.log(LogLevel.INFO) { "foreground service started" }
+      } catch (error: CoreError) {
+        warn(error)
+      }
+    }
+  }
+
+  /** What the keep-alive notification shows; updates it when the service runs. */
+  fun setKeepAliveNotification(notification: KeepAliveNotification) {
+    keepAliveNotification = notification
+    if (keepAliveRunning) keepAlive.update(notification)
   }
 
   /**
@@ -169,6 +209,15 @@ class CentralEngine(
       )
     }
     adapterError(adapter.state)?.let { throw it }
+    if (spec.keepAliveInBackground) {
+      keepAlive.missingDeclaration()?.let { missing ->
+        throw CoreError(
+          CoreError.Code.MISCONFIGURED,
+          "keepAliveInBackground needs the foreground service: $missing. Set android.foregroundService " +
+            "in the expo-ble-kit config plugin, or ${CoreError.SETUP_GUIDE}",
+        )
+      }
+    }
     val session = sessions.getOrPut(address) {
       PeripheralSession(address, { seenDevice(address) ?: adapter.remoteDevice(address) }, executor) { state, error ->
         if (state == SessionState.READY) {
@@ -179,6 +228,8 @@ class CentralEngine(
           state.js + (error?.let { ": ${it.code.value} ${it.message}" } ?: "")
         }
         listener?.onConnectionStateChange(address, state, error)
+        // Reconnecting keeps the service; only the end of the connection releases it.
+        if (state == SessionState.DISCONNECTED && keepAliveSessions.remove(address)) updateKeepAlive()
       }.also { session ->
         session.logger = logger
         session.clock = { clock.epochMs(executor.nowMs()).toDouble() }
@@ -194,6 +245,11 @@ class CentralEngine(
       }
     }
     session.connect(spec, completion)
+    // A connect that failed right away has already ended: nothing to keep alive.
+    if (spec.keepAliveInBackground && session.visibleState != SessionState.DISCONNECTED) {
+      keepAliveSessions += address
+      updateKeepAlive()
+    }
   }
 
   /** The latest name seen for [peripheralId], or null. Safe to read from any thread. */
@@ -395,7 +451,10 @@ class CentralEngine(
         "subscriptions" to it.subscriptionCount,
       )
     },
-    "android" to mapOf("openGattClients" to sessions.values.count { it.hasOpenClient }),
+    "android" to mapOf(
+      "openGattClients" to sessions.values.count { it.hasOpenClient },
+      "foregroundService" to keepAliveRunning,
+    ),
   )
 
   private fun onAdapterState(adapterState: Int) {

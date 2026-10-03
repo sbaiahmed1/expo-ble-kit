@@ -11,6 +11,7 @@ import type {
   BleState,
   ConnectionState,
   Diagnostics,
+  ForegroundServiceNotification,
   LogLevel,
   Service,
   Subscription,
@@ -45,6 +46,8 @@ export interface NativeBleKitPort {
   setLogLevel(level: LogLevel): void;
   /** While on, native log lines also arrive as `log` events. */
   setLogForwarding(enabled: boolean): void;
+  /** Android only (P3-03): the keep-alive notification, validated. */
+  setForegroundServiceNotification?(notification: ForegroundServiceNotification): void;
   addListener<E extends keyof ExpoBleKitModuleEvents>(
     event: E,
     listener: ExpoBleKitModuleEvents[E]

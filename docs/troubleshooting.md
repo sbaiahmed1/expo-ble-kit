@@ -58,6 +58,14 @@ if (found) await BleManager.getPeripheral(found.id).connect();
 
 Some devices also change their address over time (privacy): then the saved id is useless, and the app has to find the device by its services, name or manufacturer data. Android accepts any well-formed address in `getKnownPeripherals()` and `getPeripheral()`, because it can't tell whether a device exists without connecting.
 
+## Android: `FOREGROUND_SERVICE_FAILED` warning
+
+`keepAliveInBackground` couldn't start its foreground service, so Android may stop the app in the background. Android 12 and later only allow the start while the app is in the foreground: connect from the screen the user is on, not from a background event. The connection itself goes on.
+
+## Android: no keep-alive notification
+
+On Android 13 and later, the foreground service's notification only shows in the drawer after the user allows notifications; request `POST_NOTIFICATIONS` (for example with `PermissionsAndroid`). Without it, the service still runs and Android lists it in the Task Manager. Users can also dismiss the notification on Android 14 and later; the service keeps running.
+
 ## Android 11 and earlier: scans find nothing
 
 On API 30 and below, scans return nothing while **location services** (the system "Location" switch) are off, even with the location permission granted. Ask the user to turn location on. Also check that `requestPermissionsAsync()` resolved with `scan: 'granted'`.

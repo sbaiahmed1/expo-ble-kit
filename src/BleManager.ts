@@ -1,3 +1,5 @@
+import { Platform } from 'react-native';
+
 import type { LogEvent, ScanErrorEvent, ScanResultsEvent } from './ExpoBleKit.types';
 import { PeripheralImpl } from './Peripheral';
 import { BleError, BleErrorCode } from './errors';
@@ -19,6 +21,7 @@ import type {
   BlePermissions,
   BleState,
   Diagnostics,
+  ForegroundServiceNotification,
   LogEntry,
   Peripheral,
   ScanOptions,
@@ -44,6 +47,27 @@ function peripheralFor(native: NativePeripheralPort): Peripheral {
 
 function invalid(option: string, problem: string): BleError {
   return new BleError(BleErrorCode.INVALID_ARGUMENT, `Invalid ${option}: ${problem}`);
+}
+
+const NOTIFICATION_FIELDS = ['title', 'text', 'channelName', 'smallIcon'] as const;
+
+/** Each field a non-empty string or left out; validated on every platform. */
+function checkNotification(
+  notification: ForegroundServiceNotification
+): ForegroundServiceNotification {
+  if (typeof notification !== 'object' || notification === null) {
+    throw invalid('notification', 'expected an object');
+  }
+  const checked: ForegroundServiceNotification = {};
+  for (const field of NOTIFICATION_FIELDS) {
+    const value: unknown = notification[field];
+    if (value === undefined) continue;
+    if (typeof value !== 'string' || value.trim() === '') {
+      throw invalid(`notification.${field}`, 'expected a non-empty string');
+    }
+    checked[field] = value;
+  }
+  return checked;
 }
 
 const PERMISSION_FLAGS = ['scan', 'connect', 'advertise', 'backgroundScan'] as const;
@@ -302,5 +326,12 @@ export const BleManager: BleManagerApi = {
         ...(native.android && { android: native.android }),
       };
     });
+  },
+
+  android: {
+    setForegroundServiceNotification(notification) {
+      const checked = checkNotification(notification);
+      if (Platform.OS === 'android') getNativeModule().setForegroundServiceNotification?.(checked);
+    },
   },
 };

@@ -19,6 +19,8 @@ import {
   applyAndroidManifest,
   applyGradleProperties,
   blePermissions,
+  CONNECTION_SERVICE,
+  foregroundServicePermissions,
 } from '../android';
 import { BLUETOOTH_ALWAYS_KEY, DEFAULT_BLUETOOTH_ALWAYS_PERMISSION, applyInfoPlist } from '../ios';
 import { validateProps } from '../schema';
@@ -43,11 +45,11 @@ describe('validateProps', () => {
     expect(
       validateProps({
         bluetoothAlwaysPermission: false,
-        android: { neverForLocation: false, requireBleHardware: true },
+        android: { neverForLocation: false, requireBleHardware: true, foregroundService: true },
       })
     ).toEqual({
       bluetoothAlwaysPermission: false,
-      android: { neverForLocation: false, requireBleHardware: true },
+      android: { neverForLocation: false, requireBleHardware: true, foregroundService: true },
     });
   });
 
@@ -55,7 +57,8 @@ describe('validateProps', () => {
     [{ bluetoothPermission: 'typo' }, 'unknown option "bluetoothPermission"'],
     [{ android: { neverForLocations: true } }, 'unknown option "android.neverForLocations"'],
     [{ ios: { restoreIdentifier: 'x' } }, '"ios" is not available in this version yet'],
-    [{ android: { foregroundService: true } }, '"android.foregroundService" is not available'],
+    [{ android: { backgroundLocation: true } }, '"android.backgroundLocation" is not available'],
+    [{ android: { foregroundService: 'yes' } }, '"android.foregroundService" must be a boolean'],
     [{ bluetoothAlwaysPermission: 3 }, 'must be a string or false'],
     [{ android: { requireBleHardware: 'yes' } }, '"android.requireBleHardware" must be a boolean'],
     ['oops', 'options must be an object'],
@@ -132,6 +135,42 @@ describe('Android manifest', () => {
       applyAndroidManifest(applyAndroidManifest(await parseManifest(TEMPLATE_MANIFEST)))
     );
     expect(twice).toBe(once);
+  });
+
+  describe('android.foregroundService', () => {
+    const props = { android: { foregroundService: true } };
+
+    it('declares the keep-alive service and its permissions', async () => {
+      const manifest = applyAndroidManifest(await parseManifest(TEMPLATE_MANIFEST), props);
+      expect(XML.format(manifest)).toMatchSnapshot();
+      const once = XML.format(manifest);
+      expect(XML.format(applyAndroidManifest(manifest, props))).toBe(once);
+    });
+
+    it('adds nothing without the option', async () => {
+      const manifest = applyAndroidManifest(await parseManifest(TEMPLATE_MANIFEST));
+      const names = permissionsOf(manifest).map((p) => p['android:name']);
+      for (const permission of foregroundServicePermissions()) {
+        expect(names).not.toContain(permission.name);
+      }
+      expect(XML.format(manifest)).not.toContain(CONNECTION_SERVICE);
+    });
+
+    it('keeps a service or permission the app already declared', async () => {
+      const manifest = await parseManifest(
+        TEMPLATE_MANIFEST.replace(
+          '<application android:name=".MainApplication" android:label="@string/app_name"/>',
+          `<uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>
+  <application android:name=".MainApplication" android:label="@string/app_name">
+    <service android:name="${CONNECTION_SERVICE}" android:exported="false" android:foregroundServiceType="connectedDevice" android:stopWithTask="true"/>
+  </application>`
+        )
+      );
+      const result = XML.format(applyAndroidManifest(manifest, props));
+      expect(result.match(/POST_NOTIFICATIONS/g)).toHaveLength(1);
+      expect(result.match(/ConnectionService/g)).toHaveLength(1);
+      expect(result).toContain('android:stopWithTask="true"');
+    });
   });
 });
 
@@ -244,10 +283,14 @@ describe('prebuild (real mod pipeline)', () => {
 describe('bare setup guide', () => {
   const guide = readFileSync(resolve(__dirname, '../../../docs/guides/bare-setup.md'), 'utf8');
 
-  it('lists exactly the permissions the plugin writes', () => {
-    const fromGuide = [...guide.matchAll(/<uses-permission ([^>]*?)\s*\/>/g)].map((m) =>
+  const keepAliveSection = guide.indexOf('## Android: keep-alive foreground service');
+  const permissionsIn = (text: string) =>
+    [...text.matchAll(/<uses-permission ([^>]*?)\s*\/>/g)].map((m) =>
       Object.fromEntries([...m[1].matchAll(/([\w:]+)="([^"]*)"/g)].map((a) => [a[1], a[2]]))
     );
+
+  it('lists exactly the permissions the plugin writes', () => {
+    const fromGuide = permissionsIn(guide.slice(0, keepAliveSection));
     const fromPlugin = blePermissions().map((p) => ({
       'android:name': p.name,
       ...(p.maxSdkVersion !== undefined && { 'android:maxSdkVersion': String(p.maxSdkVersion) }),
@@ -257,6 +300,16 @@ describe('bare setup guide', () => {
       }),
     }));
     expect(fromGuide).toEqual(fromPlugin);
+  });
+
+  it('lists the keep-alive service entries of android.foregroundService', () => {
+    const section = guide.slice(keepAliveSection, guide.indexOf('## Android: minimum SDK'));
+    expect(permissionsIn(section)).toEqual(
+      foregroundServicePermissions().map((p) => ({ 'android:name': p.name }))
+    );
+    expect(section).toContain(
+      `<service android:name="${CONNECTION_SERVICE}" android:exported="false" android:foregroundServiceType="connectedDevice" />`
+    );
   });
 
   it('lists the feature, the Info.plist key and the minimum SDK', () => {

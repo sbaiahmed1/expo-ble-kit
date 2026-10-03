@@ -27,6 +27,7 @@ import type {
   BleState,
   CharacteristicProperty,
   ConnectionState,
+  ForegroundServiceNotification,
   LogLevel,
   ScanResult,
   Service,
@@ -1462,6 +1463,13 @@ export class FakeBleAdapter implements NativeBleKitPort {
 
   setLogForwarding(enabled: boolean): void {
     this.logForwarding = enabled;
+  }
+
+  /** Android's keep-alive notification (P3-03). The fake keeps it; it has no service to show it. */
+  foregroundServiceNotification: ForegroundServiceNotification = {};
+
+  setForegroundServiceNotification(notification: ForegroundServiceNotification): void {
+    this.foregroundServiceNotification = notification;
   }
 
   log(level: LogLevel, message: string, peripheralId?: string, opId?: number): void {

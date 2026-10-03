@@ -1,0 +1,21 @@
+# Part of keep-alive-background-start.sh: arms a keep-alive connect for the first scan result 15 s
+# from now, then leaves the app. Not a flow of its own.
+appId: expo.modules.blekit.example
+---
+- runFlow: _setup.yaml
+- tapOn:
+    id: tab-checks
+- scrollUntilVisible:
+    element:
+      id: keep-alive-refresh
+- tapOn:
+    id: keep-alive-from-background
+- assertVisible:
+    id: keep-alive-status
+    text: "Keep-alive connect in 15 s.*"
+- pressKey: Home
+# The connect fires in the background.
+- extendedWaitUntil:
+    visible: "A text that never appears"
+    timeout: 25000
+    optional: true

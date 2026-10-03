@@ -15,7 +15,10 @@ End-to-end flows for the example app's screens (plan §7, P1-15; §8.1 L4).
 | `soak-notifications.yaml` | Soak: 60 minutes of the 100 Hz batched stream, no gaps, nothing dropped (P2-09; memory with `e2e/soak/meminfo.sh`) |
 | `long-scan.yaml` | Soak: a filtered scan running 45 minutes gets results every minute. `-e FILTER=apple` filters on Apple manufacturer data instead of the test service (P2-09) |
 | `soak-toggle.yaml` | Soak, demo mode only: the app turns the fake adapter off and on 50 times during active operations; every operation settles with a coded error (P2-09). On a phone, `e2e/soak/bluetooth-toggle.sh` |
+| `keep-alive.yaml` | Android: a keep-alive connect starts the foreground service, which keeps running for 30 s in the background and stops with the disconnect (P3-03). Needs no peripheral |
+| `keep-alive-background-start.sh` | Android 12+: a keep-alive connect issued in the background (at a scan result 15 s after leaving the app) gets a `FOREGROUND_SERVICE_FAILED` warning, no crash (P3-03). `--deny-overlay` for debug builds, whose `SYSTEM_ALERT_WINDOW` exempts them on Android 14 |
 | `_setup.yaml` | Shared start: launch, demo mode, the Bluetooth permission |
+| `_keep-alive-arm.yaml`, `_keep-alive-check.yaml` | Parts of `keep-alive-background-start.sh` |
 | `_soak-toggle-start.yaml`, `_soak-toggle-report.yaml` | Parts of `e2e/soak/bluetooth-toggle.sh`: start the toggle soak, then stop it and check the report |
 
 They target the test peripheral of `test-peripherals/profile.json`.

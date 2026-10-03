@@ -2,6 +2,7 @@ package expo.modules.blekit.binding
 
 import android.os.SystemClock
 import expo.modules.blekit.core.AndroidBluetoothAdapterPort
+import expo.modules.blekit.core.AndroidKeepAlive
 import expo.modules.blekit.core.AndroidPermissionSystem
 import expo.modules.blekit.core.BleCapability
 import expo.modules.blekit.core.BleLogger
@@ -51,12 +52,14 @@ class ExpoBleKitModule : Module() {
     OnCreate {
       val context = appContext.reactContext ?: throw Exceptions.ReactContextLost()
       executor = HandlerExecutor.start()
+      val permissionSystem = AndroidPermissionSystem(context)
       engine = CentralEngine(
         AndroidBluetoothAdapterPort(context, executor.handler),
-        AndroidPermissionSystem(context),
+        permissionSystem,
         executor,
         EpochClock(System.currentTimeMillis(), SystemClock.elapsedRealtime()),
         BleLogger::logcat,
+        AndroidKeepAlive(context, executor.handler, permissionSystem),
       )
       engine.listener = EngineEvents()
       executor.execute { engine.start() }
@@ -322,6 +325,10 @@ class ExpoBleKitModule : Module() {
     }
 
     // Plan §4.16: the level applies to Logcat and to JS; JS gets `log` events only with a handler.
+    Function("setForegroundServiceNotification") { notification: ForegroundServiceNotificationRecord ->
+      executor.execute { engine.setKeepAliveNotification(notification.toNotification()) }
+    }
+
     Function("setLogLevel") { level: String ->
       engine.logger.level = LogLevel.of(level)
         ?: throw BleKitException(CoreError(CoreError.Code.INVALID_ARGUMENT, "Invalid log level: $level"))

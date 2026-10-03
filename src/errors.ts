@@ -72,6 +72,11 @@ export const BleErrorCode = {
   BOND_FAILED: 'BOND_FAILED',
   /** The advertiser reported an error. */
   ADVERTISING_FAILED: 'ADVERTISING_FAILED',
+  /**
+   * Android refused to start the foreground service of `keepAliveInBackground` (the app was in the
+   * background). The connection goes on without it. Sent as a warning.
+   */
+  FOREGROUND_SERVICE_FAILED: 'FOREGROUND_SERVICE_FAILED',
   /** An L2CAP channel failed to open, or an I/O error. */
   L2CAP_FAILED: 'L2CAP_FAILED',
   /** A bug. Include `getDiagnostics()` output in reports. */

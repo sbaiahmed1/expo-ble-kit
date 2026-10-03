@@ -84,7 +84,7 @@ describe('BleError', () => {
     );
     const tsCodes = Object.values(BleErrorCode);
 
-    expect(tsCodes).toHaveLength(33);
+    expect(tsCodes).toHaveLength(34);
     expect([...swiftCodes].sort()).toEqual([...tsCodes].sort());
     expect([...kotlinCodes].sort()).toEqual([...tsCodes].sort());
   });

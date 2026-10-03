@@ -1,0 +1,31 @@
+# Part of keep-alive-background-start.sh, after the keep-alive connect fired with the app in the
+# background: the connect is pending without the service, and the log has the warning.
+appId: expo.modules.blekit.example
+---
+- launchApp:
+    stopApp: false
+- scrollUntilVisible:
+    element:
+      id: keep-alive-refresh
+- tapOn:
+    id: keep-alive-refresh
+- extendedWaitUntil:
+    visible:
+      id: keep-alive-status
+      text: "Status; state connecting, foreground service stopped"
+    timeout: 10000
+- scrollUntilVisible:
+    element:
+      id: log-lines
+- copyTextFrom:
+    id: log-lines
+- evalScript: ${console.log(maestro.copiedText)}
+- assertVisible:
+    id: log-lines
+    text: "(?s).*FOREGROUND_SERVICE_FAILED.*"
+- scrollUntilVisible:
+    element:
+      id: keep-alive-disconnect
+    direction: UP
+- tapOn:
+    id: keep-alive-disconnect

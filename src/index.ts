@@ -26,6 +26,7 @@ export type {
   ConnectOptions,
   Descriptor,
   Diagnostics,
+  ForegroundServiceNotification,
   LogEntry,
   LogLevel,
   NotificationBatch,

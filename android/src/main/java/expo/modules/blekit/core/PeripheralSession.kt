@@ -72,6 +72,8 @@ class ConnectSpec(
   val restoreSubscriptions: Boolean = true,
   /** Operations in a row that time out before the connection is reset (plan §4.9); null never. */
   val resetAfterTimeouts: Int? = DEFAULT_RESET_AFTER_TIMEOUTS,
+  /** Run the foreground service until this connection ends (plan §4.14, P3-03); read by the engine. */
+  val keepAliveInBackground: Boolean = false,
 ) {
   companion object {
     /** Plan §4.9: two timeouts in a row mean a stuck Android stack. */

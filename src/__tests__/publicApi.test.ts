@@ -16,7 +16,6 @@ const LATER: Record<string, Record<string, string>> = {
     registerBackgroundTask: 'P3-02',
     unregisterBackgroundTask: 'P3-02',
     ios: 'P5-04',
-    android: 'P5-05',
   },
   Peripheral: {
     openL2CAPChannel: 'P5-03',

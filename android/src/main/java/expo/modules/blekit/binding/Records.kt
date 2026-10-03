@@ -4,6 +4,7 @@ import expo.modules.blekit.core.BatchSpec
 import expo.modules.blekit.core.BleCapability
 import expo.modules.blekit.core.ConnectSpec
 import expo.modules.blekit.core.CoreError
+import expo.modules.blekit.core.KeepAliveNotification
 import expo.modules.blekit.core.ManufacturerFilter
 import expo.modules.blekit.core.PeripheralSession
 import expo.modules.blekit.core.ReconnectPolicy
@@ -133,6 +134,8 @@ class ConnectOptionsRecord : Record {
 
   @Field val restoreSubscriptionsOnReconnect: Boolean = true
 
+  @Field val keepAliveInBackground: Boolean = false
+
   @Field val android: AndroidConnectOptionsRecord = AndroidConnectOptionsRecord()
 
   fun toSpec(): ConnectSpec {
@@ -159,8 +162,22 @@ class ConnectOptionsRecord : Record {
           throw CoreError(CoreError.Code.INVALID_ARGUMENT, "Invalid connect option android.resetAfterTimeouts: $it")
         }
       },
+      keepAliveInBackground,
     )
   }
+}
+
+/** JS `ForegroundServiceNotification` (plan §5.2, P3-03), validated by the TS layer. */
+class ForegroundServiceNotificationRecord : Record {
+  @Field val title: String? = null
+
+  @Field val text: String? = null
+
+  @Field val channelName: String? = null
+
+  @Field val smallIcon: String? = null
+
+  fun toNotification() = KeepAliveNotification(title, text, channelName, smallIcon)
 }
 
 /** Where an attribute operation goes and how (plan §5.4), after the TS layer normalized the UUIDs. */

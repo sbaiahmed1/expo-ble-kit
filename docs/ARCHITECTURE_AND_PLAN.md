@@ -1,6 +1,6 @@
 # Expo BLE (`expo-ble-kit`) — Architecture & Implementation Plan
 
-> **Status:** Draft v0.37 · **Date:** 2026-10-03 · **Scope:** proposition #3, an Expo-first Bluetooth Low Energy module · **Changes:** Appendix D
+> **Status:** Draft v0.38 · **Date:** 2026-10-03 · **Scope:** proposition #3, an Expo-first Bluetooth Low Energy module · **Changes:** Appendix D
 >
 > **Package name:** `expo-ble-kit` (D0a, decided 2026-10-02) · native module `ExpoBleKit` · Android package `expo.modules.blekit`.
 >
@@ -232,7 +232,7 @@ iOS platform rules:
 | `BondManager` | `createBond()`, `ACTION_BOND_STATE_CHANGED` receiver, bond state per device. Never auto-confirms pairing |
 | `Advertiser` | `BluetoothLeAdvertiser` and `AdvertisingSet` (extended advertising when `isLeExtendedAdvertisingSupported`) |
 | `GattServer` | `BluetoothGattServer`, request handling, `notifyCharacteristicChanged` gated by `onNotificationSent` |
-| `ConnectionService` | Foreground service of type `connectedDevice` (Android 14+ also needs `FOREGROUND_SERVICE_CONNECTED_DEVICE`). Runs while at least one session has `keepAliveInBackground`. Android 12+ refuses foreground-service starts from the background (exemptions exist, e.g. apps with a CompanionDeviceManager association ⚠️ VERIFY), so the service starts when a `keepAliveInBackground` connect is issued while the app is in the foreground. It then stays up through link loss and reconnects until the last such session ends, and never needs a restart from the background. If a start is refused, emit a `warning` and continue without keep-alive |
+| `ConnectionService` | Foreground service of type `connectedDevice` (Android 14+ also needs `FOREGROUND_SERVICE_CONNECTED_DEVICE`). Runs while at least one session has `keepAliveInBackground`. Android 12+ refuses foreground-service starts from the background (`ForegroundServiceStartNotAllowedException`; exemptions include CompanionDeviceManager apps holding `REQUEST_COMPANION_START_FOREGROUND_SERVICES_FROM_BACKGROUND` or `REQUEST_COMPANION_RUN_IN_BACKGROUND`, verified in [Restrictions on starting a foreground service from the background](https://developer.android.com/develop/background-work/services/fgs/restrictions-bg-start)), so the service starts when a `keepAliveInBackground` connect is issued while the app is in the foreground. It then stays up through link loss and reconnects until the last such session ends, and never needs a restart from the background. If a start is refused, emit a `warning` (`FOREGROUND_SERVICE_FAILED`) and continue without keep-alive. Implementation (P3-03): `AndroidKeepAlive` starts it with `startService` (refused at once from the background) and the service calls `startForeground(id, notification, FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE)` in `onStartCommand`. Unlike `startForegroundService`, a refused promotion can't crash the app with `ForegroundServiceDidNotStartInTimeException` ([troubleshooting](https://developer.android.com/develop/background-work/services/fgs/troubleshooting)). Android 14+ throws `SecurityException` there unless a Bluetooth runtime permission is granted ([service types](https://developer.android.com/develop/background-work/services/fgs/service-types)); connecting already needs `BLUETOOTH_CONNECT`. `START_NOT_STICKY`: after the process dies there's no connection to keep. Observed on Android 14 (A52): Android allows a background start for 10 s after the adapter's `ACTION_STATE_CHANGED` broadcast (`code:BLUETOOTH_BROADCAST` in ActivityManager's log), so reconnecting with keep-alive when Bluetooth comes back on works. Without `POST_NOTIFICATIONS` (Android 13+) the service still runs and its notice only shows in the Task Manager ([notification permission](https://developer.android.com/develop/ui/views/notifications/notification-permission)) |
 | `BackgroundScans` | `startScan(filters, settings, PendingIntent)` (API 26+) → `ScanResultReceiver` → TaskManager. Works even when the process is dead |
 | `Companion` | `CompanionDeviceManager` association (system picker) and device presence observation ⚠️ VERIFY API levels (31 / 33 / 36 differ) |
 | `BtAbstractions` | Interfaces over adapter, scanner, GATT client and GATT server for JVM unit tests |
@@ -393,6 +393,7 @@ export class BleError extends Error {
 | `GATT_ERROR` | Any other ATT/GATT status (see `gattStatus`) | Maybe |
 | `BOND_FAILED` | Bonding failed or was rejected | Maybe |
 | `ADVERTISING_FAILED` | Advertiser error (reason included) | Depends |
+| `FOREGROUND_SERVICE_FAILED` | Android refused the `keepAliveInBackground` foreground service, for example because the app was in the background (a `warning`, §4.14); the connection continues without it | No |
 | `L2CAP_FAILED` | Channel open or I/O error | Maybe |
 | `INTERNAL` | A bug. Include `getDiagnostics()` output in reports | No |
 
@@ -494,7 +495,7 @@ Plugin rules:
 **Bare React Native apps (G1).** The config plugin never runs in bare apps. The library's own `AndroidManifest.xml` therefore declares **no** permissions and **no** components:
 
 - A library-declared `maxSdkVersion` would merge into the app's own location permission (see the rule above).
-- A declared `connectedDevice` foreground service would make every app justify an unused service type in Play Console ⚠️ VERIFY.
+- A declared `connectedDevice` foreground service would make every app justify the service type in Play Console: apps targeting Android 14+ declare "any foreground service types that you use", with a description and a video ([Play Console help](https://support.google.com/googleplay/android-developer/answer/13392821), checked for P3-03). So the service stays opt-in (`android.foregroundService`).
 
 Bare apps follow `docs/guides/bare-setup.md`, which lists exactly the entries the plugin writes, including `minSdkVersion 26`; a test keeps the guide and the plugin in sync. At runtime the core checks declarations before first use, so a missing entry rejects with `MISCONFIGURED` instead of crashing or failing silently:
 
@@ -583,8 +584,10 @@ export interface BleManagerApi {
   // Onboarding (P5)
   readonly ios: { showAccessoryPicker(items: AccessoryPickerItem[]): Promise<Peripheral | null> };
   readonly android: {
-    associateCompanionDevice(filter: CompanionDeviceFilter): Promise<Peripheral | null>;
-    isLocationServicesEnabled(): Promise<boolean>; // matters on API <= 30
+    /** P3-03. The keep-alive service's notification; updates it while it runs. No-op on iOS. */
+    setForegroundServiceNotification(notification: ForegroundServiceNotification): void;
+    associateCompanionDevice(filter: CompanionDeviceFilter): Promise<Peripheral | null>; // P5
+    isLocationServicesEnabled(): Promise<boolean>; // matters on API <= 30 (P5)
   };
 
   setLogLevel(level: LogLevel): void;
@@ -664,7 +667,7 @@ export interface ConnectOptions extends Omit<OpOptions, 'timeoutMs'> {
   autoDiscover?: boolean;                    // default true
   reconnect?: ReconnectPolicy | false;       // default false
   restoreSubscriptionsOnReconnect?: boolean; // default true when reconnect is set
-  keepAliveInBackground?: boolean;           // Android: foreground service (P3). iOS: needs the background mode
+  keepAliveInBackground?: boolean;           // Android: foreground service until the connection ends (P3-03, §4.14). iOS: NOT_SUPPORTED until P3-01 (background mode)
   android?: { autoConnect?: boolean; requestMtu?: number | false; resetAfterTimeouts?: number | false; phy?: Phy[] }; // requestMtu default 517 (see Q3), resetAfterTimeouts default 2 (§4.9)
   ios?: { enableAutoReconnect?: boolean; notifyOnDisconnection?: boolean };
 }
@@ -814,7 +817,7 @@ MTU and RSSI rules (decided in P1-09):
 
 API rules (decided in P1-12):
 
-- Connect options of later tasks reject with `NOT_SUPPORTED` instead of being ignored: `keepAliveInBackground: true` (P3-03), a non-empty `android.phy` on Android (P5-02). (`reconnect` and `ios.enableAutoReconnect` landed with P2-01.) `restoreSubscriptionsOnReconnect` is accepted and has no effect without `reconnect`.
+- Connect options of later tasks reject with `NOT_SUPPORTED` instead of being ignored: `keepAliveInBackground: true` on iOS (P3-01; Android has it since P3-03), a non-empty `android.phy` on Android (P5-02). (`reconnect` and `ios.enableAutoReconnect` landed with P2-01.) `restoreSubscriptionsOnReconnect` is accepted and has no effect without `reconnect`.
 - Every rejection is a `BleError`. Peripheral calls carry `peripheralId`, and attribute calls `serviceUUID` and `characteristicUUID`. Invalid input rejects with `INVALID_ARGUMENT` before any native call; synchronous calls (`startScan`, `getPeripheral`, listeners) throw it.
 - Notifications are fanned out in JS: each subscriber gets every value of its characteristic. A subscriber callback that throws doesn't stop the others; the error is rethrown asynchronously. A disconnect marks every subscription inactive.
 - `getPeripheral(id)` returns the same object for the same id while it is in use. `getKnownPeripherals` and `getSystemConnectedPeripherals` resolve with those objects; both use the manager without showing a prompt, so they reject like `connect()` when it can't be used. Android keeps every valid address in `getKnownPeripherals` (§4.12).
@@ -916,6 +919,9 @@ export type BleBackgroundEvent =
   | { type: 'notification'; peripheralId: string; service: UUID; characteristic: UUID; value: Uint8Array; timestamp: number }
   | { type: 'devicePresence'; peripheralId: string; present: boolean };
 
+/** Android's keep-alive notification (P3-03). Defaults: the app's name, "Keeping Bluetooth connections open", channel "Bluetooth connections", the app icon. */
+export interface ForegroundServiceNotification { title?: string; text?: string; channelName?: string; smallIcon?: string /* drawable name */ }
+
 export interface BackgroundTaskOptions {
   events: Array<BleBackgroundEvent['type']>;
   /** Android: filters for PendingIntent background scans. */
@@ -951,8 +957,8 @@ export interface Diagnostics {
   permissions: BlePermissions;
   sessions: Array<{ id: string; state: ConnectionState; queueDepth: number; subscriptions: number }>;
   recentErrors: BleError[]; // ring buffer, last 100
-  /** Android: GATT clients opened and not yet closed. Stable across connect cycles when nothing leaks. */
-  android?: { openGattClients: number };
+  /** Android: GATT clients opened and not yet closed (stable across connect cycles when nothing leaks), and whether the keep-alive service runs. */
+  android?: { openGattClients: number; foregroundService: boolean };
 }
 ```
 
@@ -1052,6 +1058,7 @@ hrm.notify(GattServices.HeartRate, GattCharacteristics.HeartRateMeasurement, Uin
 |---|---|---|---|
 | Scan with service filters | ✅ | ✅ | Picker only (`requestDevice`) |
 | Scan in background | ✅ service filter required, no duplicates | ✅ via foreground service or PendingIntent | ❌ |
+| Keep a connection while backgrounded (`keepAliveInBackground`) | ❌ `NOT_SUPPORTED` until P3-01 (the `bluetooth-central` background mode) | ✅ foreground service `connectedDevice` (P3-03); must start while the app is in the foreground | ❌ |
 | Raw advertisement bytes | ❌ (parsed fields only) | ✅ | ❌ |
 | Connect / GATT client | ✅ | ✅ | ✅ Chromium browsers |
 | MTU negotiation | ❌ automatic | ✅ up to 517 | ❌ |
@@ -1341,6 +1348,14 @@ Parallelism: P0-06/P0-07 can run alongside P0-03/P0-04. With two people, P4 can 
 - [ ] **P3-03 Android foreground service** — deps: P2-01.
   `ConnectionService` (`connectedDevice`), notification config, `keepAliveInBackground`, foreground-only start (§4.4).
   **Accept:** S-B3 passes on Pixel, Samsung and Xiaomi; a link loss and reconnect while the app is backgrounded keeps the service running without a restart; a refused start produces a `warning`, not a crash.
+  **Progress 2026-10-03 (open: S-B3 and the backgrounded link loss wait for a test peripheral, and the Pixel and Xiaomi for the matrix):** `keepAliveInBackground` works on Android; the ⚠️ VERIFY items of §4.4 and §4.15 are checked against Android's and Google Play's docs (links in §4.4 and §4.15).
+  - Core: `KeepAlivePort` and `missingKeepAliveDeclarations` (`KeepAlive.kt`); `CentralEngine` keeps the set of keep-alive sessions, starts the service with the first (still connecting) and stops it when the last one reaches `disconnected` (reconnecting keeps it), checks the declarations first (`MISCONFIGURED` names what's missing), and turns a refusal into a `FOREGROUND_SERVICE_FAILED` warning, retrying at the next keep-alive connect. `getDiagnostics().android.foregroundService`.
+  - Android: `ConnectionService` (shows the notification, `START_NOT_STICKY`) and `AndroidKeepAlive` (`startService` while in the foreground, then `startForeground` with `FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE`; reports from older service runs are ignored by generation).
+  - JS: `ConnectOptions.keepAliveInBackground` reaches the native connect on Android (iOS rejects with `NOT_SUPPORTED` until P3-01); `BleManager.android.setForegroundServiceNotification` (title, text, channel name, small icon; validated on both platforms, no-op on iOS); new code `FOREGROUND_SERVICE_FAILED` in §4.11 and the three error lists.
+  - Plugin: `android.foregroundService` (from P3-05, needed to test this task) declares the service and `FOREGROUND_SERVICE`, `FOREGROUND_SERVICE_CONNECTED_DEVICE`, `POST_NOTIFICATIONS`, only where absent; snapshot test, and `bare-setup.md` lists the same entries (kept in sync by a test).
+  - Example: a **Keep alive** group in the developer checks (`src/screens/KeepAliveChecks.tsx`); the example enables `android.foregroundService`. Flows `keep-alive.yaml` and `keep-alive-background-start.sh`.
+  - Tests: 9 Android (`KeepAliveTest`: start and stop with two sessions, link loss and reconnection without a restart and the stop when reconnection gives up, no keep-alive, a failed connect, `MISCONFIGURED` before any GATT client, a refused start and a later refusal as warnings with a retry, the notification before and after the start, close, the declarations per API level), 10 Jest, 2 example Jest, 3 plugin.
+  - Galaxy A52 (Android 14, debug build, no peripheral): `keep-alive.yaml` passes: the pending keep-alive connect started the service; with the launcher in front, `dumpsys activity services` showed `isForeground=true`, `types=00000010` (`connectedDevice`) and the library's notification id, for 30 s; the disconnect stopped it. A keep-alive connect fired from the background (`keep-alive-background-start.sh`, at a scan result 15 s after leaving the app) **is refused without a crash**: Android let `startService` through, then `startForeground` threw `ForegroundServiceStartNotAllowedException` ("mAllowStartForeground false"); the log got the `FOREGROUND_SERVICE_FAILED` warning, the connect stayed pending without the service, and the process kept its pid. Two exemptions showed up in ActivityManager's log while setting this up: the debug build's `SYSTEM_ALERT_WINDOW` (React Native's dev overlay; the script's `--deny-overlay` turns it off for the run), and `code:BLUETOOTH_BROADCAST`, a 10 s allowance after the adapter's `ACTION_STATE_CHANGED`, so a keep-alive connect made when Bluetooth turns back on is allowed.
 - [ ] **P3-04 Android background scans** — deps: P1-04.
   PendingIntent scans, `ScanResultReceiver`, TaskManager headless delivery, `ACCESS_BACKGROUND_LOCATION` handling on API 29–30 (§4.13).
   **Accept:** S-B4 passes, including on an API 29 or 30 device with background location granted; without it, `registerBackgroundTask` rejects with `PERMISSION_DENIED` naming the missing permission.
@@ -1699,3 +1714,4 @@ Submit results (`BluetoothStatusCodes`, API 33+): 1 not enabled → `BLUETOOTH_P
 | v0.35 | 2026-10-03 | P2-07 in progress: logging rules in §4.16 (default `warn`, what each level writes, op lines with id, kind, status and duration, Logcat and `os.Logger` output, JS forwarding only with a handler), `setLogLevel` / `setLogHandler` land; a diagnostics snapshot test |
 | v0.36 | 2026-10-03 | P2-08 in progress: `docs/benchmarks.md` (transfers, timing, how to run, results table), the native reference apps in `benchmarks/` (repo layout §4.2), the example's Throughput tab; §8.5 points to the benchmarks doc |
 | v0.37 | 2026-10-03 | P2-09 in progress: the soak suite (`docs/soak.md`, `e2e/soak/`, the Soak group of the developer checks, Maestro flows); the connect-cycle bar is now §8.5's (≥ 99 %, no open client, no zombie session); §8.5 points to the soak doc; the Galaxy A52 passes 50 Bluetooth toggles without a peripheral and, after a fix, the 45-minute scan; the first long scan found an Android crash (scan callbacks on the main thread), fixed in the scanner adapter, §4.4 notes the thread hop |
+| v0.38 | 2026-10-03 | P3-03 in progress: Android's keep-alive foreground service (§4.4 implementation notes and verified sources, §4.15 Play Console note), `keepAliveInBackground` on Android, `BleManager.android.setForegroundServiceNotification` and `ForegroundServiceNotification` (§5.2, §5.6), `Diagnostics.android.foregroundService` (§5.7), `FOREGROUND_SERVICE_FAILED` (§4.11), the plugin option `android.foregroundService` brought forward from P3-05, a §6 row for background connections |

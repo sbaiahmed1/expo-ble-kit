@@ -57,6 +57,7 @@ function BluetoothGate({ children }: { children: React.ReactNode }) {
 - The adapter state is `unauthorized` until `BLUETOOTH_CONNECT` is granted.
 - By default the plugin declares `BLUETOOTH_SCAN` with `neverForLocation`, so scanning needs no location permission. Some beacon advertisements are filtered out in that mode. If your app derives location from scans, set `android.neverForLocation: false`; `requestPermissionsAsync()` then asks for location too.
 - A permission granted later in Settings shows up when the app returns to the foreground.
+- With `keepAliveInBackground` (plugin option `android.foregroundService`), Android 13+ only shows the service's notification in the drawer once the user allows notifications (`POST_NOTIFICATIONS`). `requestPermissionsAsync()` doesn't ask for it; your app does.
 
 ## Android 11 and earlier (API 30 and below)
 

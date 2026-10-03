@@ -1,0 +1,45 @@
+# P3-03, Android: a keep-alive connect (to a device that isn't there, so it stays pending) starts
+# the foreground service; it keeps running while the app is in the background and stops with the
+# disconnect. The host can watch it: adb shell dumpsys activity services expo.modules.blekit.example
+#   maestro test e2e/maestro/keep-alive.yaml
+appId: expo.modules.blekit.example
+name: Keep alive
+---
+- runFlow: _setup.yaml
+- tapOn:
+    id: tab-checks
+- scrollUntilVisible:
+    element:
+      id: keep-alive-refresh
+- tapOn:
+    id: keep-alive-connect
+- extendedWaitUntil:
+    visible:
+      id: keep-alive-status
+      text: "Keep-alive connect; state connecting, foreground service running"
+    timeout: 10000
+# In the background for 30 s, then back without restarting the app.
+- pressKey: Home
+- extendedWaitUntil:
+    visible: "A text that never appears"
+    timeout: 30000
+    optional: true
+- launchApp:
+    stopApp: false
+- scrollUntilVisible:
+    element:
+      id: keep-alive-refresh
+- tapOn:
+    id: keep-alive-refresh
+- extendedWaitUntil:
+    visible:
+      id: keep-alive-status
+      text: "Status; state connecting, foreground service running"
+    timeout: 10000
+- tapOn:
+    id: keep-alive-disconnect
+- extendedWaitUntil:
+    visible:
+      id: keep-alive-status
+      text: ".*state disconnected, foreground service stopped"
+    timeout: 10000

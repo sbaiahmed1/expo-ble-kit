@@ -14,6 +14,7 @@ describe('toNativeConnectOptions', () => {
       autoDiscover: true,
       reconnect: null,
       restoreSubscriptionsOnReconnect: true,
+      keepAliveInBackground: false,
       android: { requestMtu: 517, resetAfterTimeouts: 2 },
       ios: { notifyOnDisconnection: false, enableAutoReconnect: false },
     });
@@ -117,6 +118,7 @@ describe('toNativeConnectOptions', () => {
     ['ios.enableAutoReconnect without reconnect', { ios: { enableAutoReconnect: true } }],
     ['autoDiscover', { autoDiscover: 'no' }],
     ['ios.notifyOnDisconnection', { ios: { notifyOnDisconnection: 1 } }],
+    ['keepAliveInBackground', { keepAliveInBackground: 'yes' }],
   ])('rejects %s', (_, options) => {
     let error: unknown;
     try {

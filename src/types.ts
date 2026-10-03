@@ -191,7 +191,18 @@ export interface ConnectOptions extends Omit<OpOptions, 'timeoutMs'> {
    * @defaultValue true
    */
   restoreSubscriptionsOnReconnect?: boolean;
-  /** Keep the connection while the app is in the background. Not supported yet: `true` rejects. */
+  /**
+   * Keep the connection while the app is in the background.
+   *
+   * Android: runs a foreground service of type `connectedDevice` from this connect until the
+   * connection ends (reconnecting keeps it), with a notification set by
+   * `BleManager.android.setForegroundServiceNotification`. Needs the config plugin option
+   * `android.foregroundService`, otherwise rejects with `MISCONFIGURED`. Android only lets the
+   * service start while the app is in the foreground: a refused start sends a
+   * `FOREGROUND_SERVICE_FAILED` warning, and the connection goes on without it.
+   *
+   * iOS: not supported yet (rejects with `NOT_SUPPORTED`); it comes with background modes (P3-01).
+   */
   keepAliveInBackground?: boolean;
   /** Android-only options; ignored on iOS. */
   android?: {
@@ -290,7 +301,33 @@ export interface Diagnostics {
   android?: {
     /** GATT clients opened and not yet closed. Stable across connect cycles when nothing leaks. */
     openGattClients: number;
+    /** Whether the foreground service of `keepAliveInBackground` is running. */
+    foregroundService: boolean;
   };
+}
+
+/** What the notification of Android's keep-alive foreground service shows. */
+export interface ForegroundServiceNotification {
+  /**
+   * The title.
+   * @defaultValue the app's name
+   */
+  title?: string;
+  /**
+   * The text.
+   * @defaultValue 'Keeping Bluetooth connections open'
+   */
+  text?: string;
+  /**
+   * The notification channel's name in the system settings.
+   * @defaultValue 'Bluetooth connections'
+   */
+  channelName?: string;
+  /**
+   * A drawable resource of the app, by name (a white silhouette, as Android notifications need).
+   * @defaultValue the app icon
+   */
+  smallIcon?: string;
 }
 
 /** What a characteristic allows. */
@@ -581,4 +618,13 @@ export interface BleManagerApi {
   setLogHandler(handler: ((entry: LogEntry) => void) | null): void;
   /** A snapshot for bug reports: state, permissions, connections and recent errors. */
   getDiagnostics(): Promise<Diagnostics>;
+
+  /** Android-only calls; on iOS they do nothing. */
+  readonly android: {
+    /**
+     * What the notification of the `keepAliveInBackground` foreground service shows. Updates it
+     * when the service runs; later services use it too. Fields left out get their defaults.
+     */
+    setForegroundServiceNotification(notification: ForegroundServiceNotification): void;
+  };
 }

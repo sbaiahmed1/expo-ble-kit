@@ -26,11 +26,12 @@ import {
 import { describeMultipleDevices, runMultipleDevices } from '../lib/multipleDevices';
 import { abortStreamToSink, sendToSink, streamToSink, type SinkReport } from '../lib/sink';
 import { checkStyles as styles, Group } from './checksUi';
+import { KeepAliveChecks } from './KeepAliveChecks';
 import { SoakChecks } from './SoakChecks';
 
 // Developer checks on the public API (P1-12): adapter state, permissions, scanning, connections
 // to a device that isn't there, throughput, batching, several test peripherals at once, GATT
-// hygiene and the log (P2-02 to P2-07), and the soak suite (P2-09).
+// hygiene and the log (P2-02 to P2-07), the soak suite (P2-09) and keep-alive (P3-03).
 
 const TEST_SERVICE = '0c6c1000-b347-4cfa-9827-1c5a13658519';
 const TEST_NAME = 'BleKit-Test';
@@ -423,6 +424,7 @@ export function DevChecksScreen() {
         <Button testID="connect-cycles" title="Connect/disconnect ×500" onPress={connectCycles} />
       </Group>
       <SoakChecks />
+      <KeepAliveChecks />
       <Group name="Scanning">
         <Button testID="scan-all" title="Scan all" onPress={() => startSession('all', {})} />
         <Button

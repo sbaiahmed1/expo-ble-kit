@@ -1,6 +1,7 @@
 /**
- * Config plugin options (plan §4.15). This version supports the base declarations only; background,
- * peripheral-role and onboarding options arrive with P3, P4 and P5.
+ * Config plugin options (plan §4.15): the base declarations and Android's keep-alive foreground
+ * service (P3-03). The other background, peripheral-role and onboarding options arrive with P3, P4
+ * and P5.
  */
 export type ExpoBleKitPluginProps = {
   /** iOS NSBluetoothAlwaysUsageDescription. `false` skips it (only for apps that set it elsewhere). */
@@ -10,16 +11,20 @@ export type ExpoBleKitPluginProps = {
     neverForLocation?: boolean;
     /** Mark Bluetooth LE hardware as required in the Play Store listing. Default false. */
     requireBleHardware?: boolean;
+    /**
+     * Declare the foreground service of `keepAliveInBackground` (type `connectedDevice`) and its
+     * permissions. Google Play asks apps to justify each service type they declare. Default false.
+     */
+    foregroundService?: boolean;
   };
 };
 
 const TOP_LEVEL = new Set(['bluetoothAlwaysPermission', 'android']);
-const ANDROID = new Set(['neverForLocation', 'requireBleHardware']);
+const ANDROID = new Set(['neverForLocation', 'requireBleHardware', 'foregroundService']);
 /** Options from plan §4.15 that later versions add. */
 const NOT_YET = new Set([
   'ios',
   'android.advertise',
-  'android.foregroundService',
   'android.backgroundScanReceiver',
   'android.backgroundLocation',
   'android.companionDevice',

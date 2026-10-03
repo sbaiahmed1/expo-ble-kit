@@ -29,6 +29,8 @@ export interface NativeConnectOptions {
   /** Null: no reconnection (P2-01). */
   reconnect: NativeReconnectPolicy | null;
   restoreSubscriptionsOnReconnect: boolean;
+  /** Android: run the foreground service until the connection ends (P3-03). */
+  keepAliveInBackground: boolean;
   /** `requestMtu` null asks for no MTU exchange; `resetAfterTimeouts` null never resets. */
   android: { autoConnect?: boolean; requestMtu: number | null; resetAfterTimeouts: number | null };
   ios: { notifyOnDisconnection: boolean; enableAutoReconnect: boolean };
@@ -111,13 +113,19 @@ function toNativeReconnectPolicy(
 }
 
 /**
- * Options of later tasks (plan §7): `keepAliveInBackground` (P3-03), `android.phy` (P5-02).
+ * Options of later tasks (plan §7): `keepAliveInBackground` on iOS (P3-01), `android.phy` (P5-02).
  * Setting one rejects with NOT_SUPPORTED rather than being ignored; platform options only on their
  * platform.
  */
 function checkImplemented(options: ConnectOptions): void {
-  if (optionalBoolean('keepAliveInBackground', options.keepAliveInBackground)) {
-    throw notYet('keepAliveInBackground');
+  if (
+    optionalBoolean('keepAliveInBackground', options.keepAliveInBackground) &&
+    Platform.OS === 'ios'
+  ) {
+    throw new BleError(
+      'NOT_SUPPORTED',
+      "Connect option keepAliveInBackground isn't supported on iOS yet: it comes with background modes"
+    );
   }
   const phy: unknown = options.android?.phy;
   if (phy !== undefined && !Array.isArray(phy)) {
@@ -175,6 +183,7 @@ export function toNativeConnectOptions(options: ConnectOptions = {}): NativeConn
     autoDiscover: optionalBoolean('autoDiscover', options.autoDiscover) ?? true,
     reconnect,
     restoreSubscriptionsOnReconnect: restoreSubscriptionsOnReconnect ?? true,
+    keepAliveInBackground: options.keepAliveInBackground === true,
     android: {
       ...(autoConnect === undefined ? {} : { autoConnect }),
       requestMtu:

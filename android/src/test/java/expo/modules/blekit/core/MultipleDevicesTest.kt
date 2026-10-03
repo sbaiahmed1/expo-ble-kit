@@ -110,7 +110,7 @@ class MultipleDevicesTest {
     assertTrue(addresses.all { engine.connectionState(it) == "connected" })
     @Suppress("UNCHECKED_CAST")
     val diagnostics = engine.diagnostics()
-    assertEquals(mapOf("openGattClients" to 6), diagnostics["android"])
+    assertEquals(mapOf("openGattClients" to 6, "foregroundService" to false), diagnostics["android"])
     val sessions = diagnostics["sessions"] as List<Map<String, Any?>>
     assertEquals(6, sessions.size)
     assertTrue(sessions.all { it["subscriptions"] == 1 && it["queueDepth"] == 0 })
