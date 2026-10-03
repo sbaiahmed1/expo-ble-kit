@@ -220,6 +220,22 @@ class AndroidGattClient(override val address: String, private val callback: Gatt
     gatt = null
   }
 
+  /**
+   * `BluetoothGatt.refresh()` is public in the platform but hidden from the SDK (plan §4.4): found by
+   * reflection, so a platform without it (or one that blocks it) answers false instead of failing.
+   */
+  @SuppressLint("DiscouragedPrivateApi", "PrivateApi")
+  override fun refreshCache(): Boolean {
+    val gatt = gatt ?: return false
+    return try {
+      gatt.javaClass.getMethod("refresh").invoke(gatt) as? Boolean ?: false
+    } catch (error: ReflectiveOperationException) {
+      false
+    } catch (error: RuntimeException) {
+      false
+    }
+  }
+
   private fun find(ref: GattCharacteristicRef): BluetoothGattCharacteristic? = gatt
     ?.services
     ?.firstOrNull { it.uuid == ref.serviceUuid && it.instanceId == ref.serviceInstanceId }

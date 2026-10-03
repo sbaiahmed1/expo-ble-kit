@@ -15,12 +15,18 @@ import {
 } from 'expo-ble-kit';
 
 import { describeBatchedStream, runBatchedStream } from '../lib/batchedStream';
+import {
+  describeCycles,
+  describeServiceChange,
+  runConnectCycles,
+  runServiceChange,
+} from '../lib/gattHygiene';
 import { describeMultipleDevices, runMultipleDevices } from '../lib/multipleDevices';
 import { abortStreamToSink, sendToSink, streamToSink, type SinkReport } from '../lib/sink';
 
 // Developer checks on the public API (P1-12): adapter state, permissions, scanning, connections
-// to a device that isn't there, and throughput, batching and several test peripherals at once
-// (P2-02 to P2-05).
+// to a device that isn't there, and throughput, batching, several test peripherals at once and GATT
+// hygiene (P2-02 to P2-06).
 
 const TEST_SERVICE = '0c6c1000-b347-4cfa-9827-1c5a13658519';
 const TEST_NAME = 'BleKit-Test';
@@ -292,6 +298,19 @@ export function DevChecksScreen() {
       return describeBatchedStream(report);
     });
 
+  // P2-06 accept: a service change invalidates the cache and emits servicesChanged.
+  const serviceChange = () =>
+    withTestPeripheral(async (device) => describeServiceChange(await runServiceChange(device)));
+
+  // P2-06 accept: 500 connect/disconnect cycles leave the GATT client count where it was.
+  const connectCycles = () =>
+    withTestPeripheral(async (device) => {
+      const report = await runConnectCycles(device, 500, (done, failures) =>
+        setSinkStatus(`Connect cycles: ${done} / 500, ${failures} failed…`)
+      );
+      return describeCycles(report);
+    });
+
   // P2-05 accept: 5+ test peripherals at once; one dropping doesn't affect the others.
   async function multipleDevices() {
     try {
@@ -375,6 +394,12 @@ export function DevChecksScreen() {
           title="All test peripherals at once (5+)"
           onPress={multipleDevices}
         />
+        <Button
+          testID="service-change"
+          title="Toggle the secondary service"
+          onPress={serviceChange}
+        />
+        <Button testID="connect-cycles" title="Connect/disconnect ×500" onPress={connectCycles} />
       </Group>
       <Group name="Scanning">
         <Button testID="scan-all" title="Scan all" onPress={() => startSession('all', {})} />

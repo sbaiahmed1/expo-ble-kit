@@ -158,6 +158,9 @@ struct MtuChangeEventRecord: Record {
   @Field var mtu: Int = 23
 }
 
+/// Payload of a peripheral's `servicesChanged` event (P2-06): the new services are in `services`.
+struct ServicesChangedEventRecord: Record {}
+
 /// Payload of a peripheral's `streamProgress` event (P2-03): bytes a writeStream wrote so far.
 struct StreamProgressEventRecord: Record {
   @Field var operationId: Int?

@@ -113,6 +113,8 @@ class GattQueue(private val executor: SerialExecutor, private val defaultTimeout
 
   /** Fails the running and all queued operations, for example on disconnection (rule 5). */
   fun failAll(error: CoreError) {
+    // A new connection starts counting again.
+    consecutiveTimeouts = 0
     val operations = listOfNotNull(current) + pending
     current?.timer?.cancel()
     current = null

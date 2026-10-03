@@ -21,8 +21,6 @@ const LATER: Record<string, Record<string, string>> = {
     setLogHandler: 'P2-07',
   },
   Peripheral: {
-    addServicesChangedListener: 'P2-06',
-    android: 'P5-01',
     openL2CAPChannel: 'P5-03',
   },
 };

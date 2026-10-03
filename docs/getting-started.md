@@ -176,6 +176,16 @@ const subscription = await device.subscribeBatched(
 );
 ```
 
+When the peripheral's services change while connected (a firmware update, a service switched on), the library discovers them again and tells you; subscriptions on characteristics that are still there keep working:
+
+```ts
+device.addServicesChangedListener(() => {
+  console.log('services now', device.services.map((s) => s.uuid));
+});
+```
+
+Android reports service changes from Android 12. On older versions, or when a device's cached services are wrong, `await device.android.refreshGattCache()` clears Android's cache and discovers again (it uses a hidden Android API and resolves `false` where that isn't available).
+
 ## With React hooks
 
 ```tsx

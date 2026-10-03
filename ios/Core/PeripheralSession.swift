@@ -124,6 +124,8 @@ final class PeripheralSession: PeripheralLikeDelegate {
   var onNotificationBatch: ((_ subscriptionId: Int, NotificationBatch) -> Void)?
   /// Something worth telling the app that isn't an error of a call, like a batch overflow.
   var onWarning: ((CoreError) -> Void)?
+  /// The peripheral's services changed and were discovered again (P2-06), on the engine's queue.
+  var onServicesChanged: (() -> Void)?
   /// Arrival times of notifications; the engine makes them epoch milliseconds (plan §4.10).
   lazy var clock: () -> Double = { [unowned self] in scheduler.now * 1000 }
   /// The batched subscribers' batchers, by subscription id (P2-04).

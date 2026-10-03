@@ -118,6 +118,12 @@ export interface VirtualPeripheral {
   setRssi(rssi: number): void;
   /** Ends the connection from the peripheral's side; the app sees `DISCONNECTED`. */
   disconnect(reason?: 'peer' | 'linkLoss'): void;
+  /**
+   * Replaces the GATT database, like a firmware change, and tells a connected client (Service
+   * Changed): it discovers again, keeps the subscriptions whose characteristics are still there, and
+   * emits `servicesChanged`.
+   */
+  setServices(services: VirtualPeripheralConfig['services']): void;
   /** Every characteristic write the app made, oldest first. */
   readonly writes: readonly {
     /** The characteristic written. */
@@ -185,9 +191,45 @@ function adapterError(state: BleState): BleError | null {
   }
 }
 
+/** A virtual peripheral's GATT database from its config. */
+function buildServices(services: VirtualPeripheralConfig['services']): Map<UUID, VirtualService> {
+  return new Map(
+    services.map((service) => {
+      const uuid = normalizeUUID(service.uuid);
+      const characteristics = new Map(
+        service.characteristics.map((characteristic) => {
+          const descriptors = new Map(
+            (characteristic.descriptors ?? []).map((descriptor) => [
+              normalizeUUID(descriptor.uuid),
+              { value: descriptor.value ?? new Uint8Array() },
+            ])
+          );
+          const notifies = characteristic.properties.some(
+            (p) => p === 'notify' || p === 'indicate'
+          );
+          if (notifies && !descriptors.has(CCCD)) {
+            descriptors.set(CCCD, { value: new Uint8Array([0, 0]) });
+          }
+          return [
+            normalizeUUID(characteristic.uuid),
+            {
+              uuid: normalizeUUID(characteristic.uuid),
+              properties: characteristic.properties,
+              value: characteristic.value ?? new Uint8Array(),
+              descriptors,
+              cccd: 'off' as const,
+            },
+          ] as const;
+        })
+      );
+      return [uuid, { uuid, characteristics }] as const;
+    })
+  );
+}
+
 /** A virtual peripheral's radio side. */
 class VirtualDevice implements VirtualPeripheral {
-  readonly services: Map<UUID, VirtualService>;
+  services: Map<UUID, VirtualService>;
   readonly writes: { characteristic: UUID; value: Uint8Array; withResponse: boolean }[] = [];
   readonly name: string | null;
   rssi: number;
@@ -202,38 +244,12 @@ class VirtualDevice implements VirtualPeripheral {
     this.name = config.name ?? null;
     this.rssi = config.rssi ?? -60;
     this.mtu = Math.min(Math.max(config.mtu ?? MIN_MTU, MIN_MTU), MAX_MTU);
-    this.services = new Map(
-      config.services.map((service) => {
-        const uuid = normalizeUUID(service.uuid);
-        const characteristics = new Map(
-          service.characteristics.map((characteristic) => {
-            const descriptors = new Map(
-              (characteristic.descriptors ?? []).map((descriptor) => [
-                normalizeUUID(descriptor.uuid),
-                { value: descriptor.value ?? new Uint8Array() },
-              ])
-            );
-            const notifies = characteristic.properties.some(
-              (p) => p === 'notify' || p === 'indicate'
-            );
-            if (notifies && !descriptors.has(CCCD)) {
-              descriptors.set(CCCD, { value: new Uint8Array([0, 0]) });
-            }
-            return [
-              normalizeUUID(characteristic.uuid),
-              {
-                uuid: normalizeUUID(characteristic.uuid),
-                properties: characteristic.properties,
-                value: characteristic.value ?? new Uint8Array(),
-                descriptors,
-                cccd: 'off' as const,
-              },
-            ] as const;
-          })
-        );
-        return [uuid, { uuid, characteristics }] as const;
-      })
-    );
+    this.services = buildServices(config.services);
+  }
+
+  setServices(services: VirtualPeripheralConfig['services']): void {
+    this.services = buildServices(services);
+    this.adapter.servicesChanged(this);
   }
 
   advertise(on: boolean): void {
@@ -736,6 +752,52 @@ class FakePeripheralHandle implements NativePeripheralPort {
   }
 
   // Called by the adapter and the virtual device
+
+  /**
+   * The device changed its GATT database (P2-06), like the native cores: the cache is emptied and
+   * discovered again ahead of queued operations, the subscriptions are moved to the new
+   * characteristics (or end when theirs is gone), then `servicesChanged` fires.
+   */
+  servicesChanged(done: () => void = () => {}): void {
+    if (this.state !== 'connected') return done();
+    this.services = [];
+    this.subscriptions.forEach((entry) => (entry.enabled = false));
+    this.operation('discoverServices', 'discover', { timeoutMs: 30_000, first: true }, () => {
+      this.services = this.device()?.serviceList() ?? [];
+    }).then(
+      () => {
+        if (this.state !== 'connected') return done();
+        this.restoreAfterServiceChange();
+        this.emitter.emit('servicesChanged', {});
+        done();
+      },
+      () => done()
+    );
+  }
+
+  /** Android's hidden cache refresh (P2-06), which the fake always has: discovers again. */
+  async refreshGattCache(): Promise<boolean> {
+    if (this.state !== 'connected') {
+      throw fail(BleErrorCode.DISCONNECTED, `Not connected to ${this.id}`);
+    }
+    await new Promise<void>((resolve) => this.servicesChanged(resolve));
+    return true;
+  }
+
+  private restoreAfterServiceChange(): void {
+    for (const [key, entry] of [...this.subscriptions]) {
+      const [service, uuid] = key.split('/');
+      const characteristic = this.device()?.services.get(service)?.characteristics.get(uuid);
+      if (!characteristic) {
+        const message = `${uuid} is gone after the service change`;
+        this.endSubscription(key, entry, fail(BleErrorCode.CHARACTERISTIC_NOT_FOUND, message));
+        continue;
+      }
+      entry.characteristic = characteristic;
+      characteristic.cccd = entry.indicate ? 'indicate' : 'notify';
+      entry.enabled = true;
+    }
+  }
 
   /** Batched subscribers collect the value (P2-04); the others get it as it comes. */
   deliverNotification(characteristic: UUID, service: UUID, value: Uint8Array): void {
@@ -1338,6 +1400,10 @@ export class FakeBleAdapter implements NativeBleKitPort {
       this.handles.set(id, handle);
     }
     return handle;
+  }
+
+  servicesChanged(device: VirtualDevice): void {
+    this.handles.get(device.id)?.servicesChanged();
   }
 
   deviceAdvertised(device: VirtualDevice): void {

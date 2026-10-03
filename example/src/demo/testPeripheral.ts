@@ -13,8 +13,8 @@ import { TestProfile } from '../lib/gattNames';
 // Demo mode: the test peripheral (test-peripherals/profile.json) as a virtual device in the fake
 // adapter, so the screens, their tests and the Maestro flows run without hardware. The driver
 // plays the peripheral's side: heart-rate notifications, ECHO_WRITE → ECHO_READ, SINK_NO_RSP →
-// SINK_COUNTER, STREAM frames, and CONTROL SET_STREAM, DISCONNECT_AFTER and RESET_COUNTERS. Real
-// hardware runs the Bumble peripheral or the nRF52840 instead.
+// SINK_COUNTER, STREAM frames, and CONTROL SET_STREAM, DISCONNECT_AFTER, TOGGLE_SECONDARY_SERVICE
+// and RESET_COUNTERS. Real hardware runs the Bumble peripheral or the nRF52840 instead.
 
 type ProfileValue = {
   pattern?: { length: number; multiplier: number; offset: number; modulus: number };
@@ -33,31 +33,32 @@ function decode(value: ProfileValue | undefined): Uint8Array | undefined {
   return undefined;
 }
 
+/** The test services: those always present, and SECONDARY while toggled on (CONTROL 0x03). */
+function testServices(withSecondary: boolean): VirtualPeripheralConfig['services'] {
+  return profile.services
+    .filter((service) => service.presence === 'always' || withSecondary)
+    .map((service) => ({
+      uuid: service.uuid,
+      characteristics: service.characteristics.map((characteristic) => {
+        const spec = characteristic as typeof characteristic & {
+          value?: ProfileValue;
+          descriptors?: { uuid: string; value?: ProfileValue }[];
+        };
+        return {
+          uuid: spec.uuid,
+          properties: spec.properties as CharacteristicProperty[],
+          value: decode(spec.value),
+          descriptors: spec.descriptors?.map((d) => ({ uuid: d.uuid, value: decode(d.value) })),
+        };
+      }),
+    }));
+}
+
 /** The services present from the start, as a virtual peripheral named `name`. */
 export function testPeripheralConfig(
   name = profile.advertising.localName
 ): VirtualPeripheralConfig {
-  return {
-    name,
-    mtu: 247,
-    services: profile.services
-      .filter((service) => service.presence === 'always')
-      .map((service) => ({
-        uuid: service.uuid,
-        characteristics: service.characteristics.map((characteristic) => {
-          const spec = characteristic as typeof characteristic & {
-            value?: ProfileValue;
-            descriptors?: { uuid: string; value?: ProfileValue }[];
-          };
-          return {
-            uuid: spec.uuid,
-            properties: spec.properties as CharacteristicProperty[],
-            value: decode(spec.value),
-            descriptors: spec.descriptors?.map((d) => ({ uuid: d.uuid, value: decode(d.value) })),
-          };
-        }),
-      })),
-  };
+  return { name, mtu: 247, services: testServices(false) };
 }
 
 const HEART_RATE = TestProfile.HEART_RATE;
@@ -77,6 +78,7 @@ export function driveTestPeripheral(device: VirtualPeripheral): () => void {
   let handled = 0;
   let sinkCount = 0;
   let streamSequence = 0;
+  let secondary = false;
   let streamTimer: ReturnType<typeof setInterval> | null = null;
   /** CONTROL SET_STREAM: frames of `frameSize` bytes at `rateHz` (0 stops), see profile.stream. */
   const setStream = (rateHz: number, frameSize: number) => {
@@ -118,6 +120,11 @@ export function driveTestPeripheral(device: VirtualPeripheral): () => void {
         timers.push(setTimeout(() => device.disconnect('peer'), delayMs));
       } else if (characteristic === TestProfile.CONTROL && value[0] === 0x01 && value.length >= 5) {
         setStream(value[1] | (value[2] << 8), value[3] | (value[4] << 8));
+      } else if (characteristic === TestProfile.CONTROL && value[0] === 0x03) {
+        // The database changes like a firmware update: values come back from the profile.
+        secondary = !secondary;
+        device.setServices(testServices(secondary));
+        setSinkCounter(sinkCount);
       } else if (characteristic === TestProfile.CONTROL && value[0] === 0x04) {
         setSinkCounter(0);
         streamSequence = 0;

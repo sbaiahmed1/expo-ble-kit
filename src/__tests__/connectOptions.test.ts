@@ -14,11 +14,25 @@ describe('toNativeConnectOptions', () => {
       autoDiscover: true,
       reconnect: null,
       restoreSubscriptionsOnReconnect: true,
-      android: { requestMtu: 517 },
+      android: { requestMtu: 517, resetAfterTimeouts: 2 },
       ios: { notifyOnDisconnection: false, enableAutoReconnect: false },
     });
     expect(toNativeConnectOptions({ timeoutMs: null }).timeoutMs).toBeNull();
     expect(toNativeConnectOptions({ timeoutMs: 2500 }).timeoutMs).toBe(2500);
+  });
+
+  it('validates android.resetAfterTimeouts: an integer of 1 or more, or false for never', () => {
+    expect(
+      toNativeConnectOptions({ android: { resetAfterTimeouts: 3 } }).android.resetAfterTimeouts
+    ).toBe(3);
+    expect(
+      toNativeConnectOptions({ android: { resetAfterTimeouts: false } }).android.resetAfterTimeouts
+    ).toBeNull();
+    for (const value of [0, 1.5, -1, '2', true]) {
+      expect(() =>
+        toNativeConnectOptions({ android: { resetAfterTimeouts: value as never } })
+      ).toThrow(expect.objectContaining({ code: 'INVALID_ARGUMENT' }));
+    }
   });
 
   it('keeps autoDiscover false', () => {

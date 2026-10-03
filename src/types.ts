@@ -202,6 +202,13 @@ export interface ConnectOptions extends Omit<OpOptions, 'timeoutMs'> {
      * @defaultValue 517
      */
     requestMtu?: number | false;
+    /**
+     * After this many operations in a row time out, the connection is reset (disconnected and
+     * closed, or reconnected with a `reconnect` policy): Android's stack sometimes stops answering.
+     * `false` never resets.
+     * @defaultValue 2
+     */
+    resetAfterTimeouts?: number | false;
     /** Preferred physical layers. Not supported yet: a non-empty list rejects. */
     phy?: Phy[];
   };
@@ -485,6 +492,21 @@ export interface Peripheral {
   addConnectionStateListener(
     listener: (state: ConnectionState, error?: BleError) => void
   ): Subscription;
+  /**
+   * Called when the peripheral's services changed while connected (Android 12+, iOS): the library
+   * discovered them again, so `services` is current; subscriptions on characteristics that are
+   * still there were kept, the others ended. Android 11 and older don't report service changes.
+   */
+  addServicesChangedListener(listener: () => void): Subscription;
+  /** Android-only calls. Elsewhere they reject with `NOT_SUPPORTED`. */
+  readonly android: {
+    /**
+     * Clears Android's GATT cache for this device, then discovers the services again (and calls
+     * the services-changed listeners). Uses a hidden Android API: resolves `false` when the
+     * platform doesn't offer it, and may stop working on new Android versions.
+     */
+    refreshGattCache(): Promise<boolean>;
+  };
 }
 
 /** The type of {@link BleManager}. */

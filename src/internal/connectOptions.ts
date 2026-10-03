@@ -11,6 +11,8 @@ export const MIN_MTU = 23;
 export const MAX_MTU = 517;
 /** Android asks for this after connecting unless `android.requestMtu` says otherwise (Q3). */
 export const DEFAULT_REQUESTED_MTU = 517;
+/** Plan §4.9: Android resets a connection after this many operations in a row time out. */
+export const DEFAULT_RESET_AFTER_TIMEOUTS = 2;
 
 /** A `ReconnectPolicy` with the defaults applied; `maxAttempts` null means no limit. */
 export interface NativeReconnectPolicy {
@@ -27,8 +29,8 @@ export interface NativeConnectOptions {
   /** Null: no reconnection (P2-01). */
   reconnect: NativeReconnectPolicy | null;
   restoreSubscriptionsOnReconnect: boolean;
-  /** `requestMtu` null asks for no MTU exchange. */
-  android: { autoConnect?: boolean; requestMtu: number | null };
+  /** `requestMtu` null asks for no MTU exchange; `resetAfterTimeouts` null never resets. */
+  android: { autoConnect?: boolean; requestMtu: number | null; resetAfterTimeouts: number | null };
   ios: { notifyOnDisconnection: boolean; enableAutoReconnect: boolean };
 }
 
@@ -145,6 +147,14 @@ export function toNativeConnectOptions(options: ConnectOptions = {}): NativeConn
   checkImplemented(options);
   const autoConnect = optionalBoolean('android.autoConnect', options.android?.autoConnect);
   const requestMtu = options.android?.requestMtu;
+  const resetAfterTimeouts = options.android?.resetAfterTimeouts;
+  if (
+    resetAfterTimeouts !== undefined &&
+    resetAfterTimeouts !== false &&
+    (!Number.isInteger(resetAfterTimeouts) || resetAfterTimeouts < 1)
+  ) {
+    throw invalid('android.resetAfterTimeouts', 'expected an integer of 1 or more, or false');
+  }
   const reconnect = toNativeReconnectPolicy(options.reconnect);
   const restoreSubscriptionsOnReconnect = optionalBoolean(
     'restoreSubscriptionsOnReconnect',
@@ -173,6 +183,12 @@ export function toNativeConnectOptions(options: ConnectOptions = {}): NativeConn
           : requestMtu === false
             ? null
             : validateMtu('android.requestMtu', requestMtu),
+      resetAfterTimeouts:
+        resetAfterTimeouts === undefined
+          ? DEFAULT_RESET_AFTER_TIMEOUTS
+          : resetAfterTimeouts === false
+            ? null
+            : resetAfterTimeouts,
     },
     ios: {
       notifyOnDisconnection:

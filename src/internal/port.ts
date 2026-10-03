@@ -101,6 +101,8 @@ export interface NativePeripheralPort {
    * resolves the current one (`timeoutMs` unused).
    */
   requestMtu(mtu: number, timeoutMs: number, operationId: number | null): Promise<number>;
+  /** Android only (hidden API, P2-06): clears the GATT cache and discovers again; false without it. */
+  refreshGattCache(): Promise<boolean>;
   /** The link's RSSI in dBm. */
   readRssi(timeoutMs: number, operationId: number | null): Promise<number>;
   /**

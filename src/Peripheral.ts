@@ -1,3 +1,5 @@
+import { Platform } from 'react-native';
+
 import type {
   ConnectionStateEvent,
   NotificationBatchEvent,
@@ -392,6 +394,29 @@ export class PeripheralImpl implements Peripheral {
       listener(event.state, event.code ? this.connectionError(event) : undefined)
     );
   }
+
+  addServicesChangedListener(listener: () => void): Subscription {
+    if (typeof listener !== 'function') {
+      throw invalid('listener', 'expected a function');
+    }
+    return this.native.addListener('servicesChanged', () => {
+      try {
+        listener();
+      } catch (error) {
+        reportListenerError(error);
+      }
+    });
+  }
+
+  readonly android = {
+    refreshGattCache: (): Promise<boolean> =>
+      guard(() => {
+        if (Platform.OS !== 'android') {
+          throw new BleError(BleErrorCode.NOT_SUPPORTED, 'refreshGattCache() is Android-only');
+        }
+        return this.native.refreshGattCache();
+      }, this.context()),
+  };
 
   // Private
 

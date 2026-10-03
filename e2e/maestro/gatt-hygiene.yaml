@@ -1,0 +1,40 @@
+# P2-06: the test peripheral toggles its SECONDARY service (CONTROL TOGGLE_SECONDARY_SERVICE): the app
+# gets servicesChanged with the new services each time; then 500 connect/disconnect cycles end with
+# no GATT client left open (Android). Android 11 and older don't report service changes.
+#   maestro test e2e/maestro/gatt-hygiene.yaml               # Bumble or the nRF52840 advertising
+#   maestro test -e DEMO=true e2e/maestro/gatt-hygiene.yaml  # the app's virtual test peripheral
+appId: expo.modules.blekit.example
+name: GATT hygiene
+---
+- runFlow: _setup.yaml
+- tapOn:
+    id: tab-checks
+- scrollUntilVisible:
+    element:
+      id: connect-cycles
+- tapOn:
+    id: service-change
+- extendedWaitUntil:
+    visible:
+      id: sink-status
+      text: "Service change (OK|FAILED).*"
+    timeout: 60000
+- copyTextFrom:
+    id: sink-status
+- evalScript: ${console.log(maestro.copiedText)}
+- assertVisible:
+    id: sink-status
+    text: "Service change OK: .*"
+- tapOn:
+    id: connect-cycles
+- extendedWaitUntil:
+    visible:
+      id: sink-status
+      text: "Connect cycles (OK|FAILED).*"
+    timeout: 1800000
+- copyTextFrom:
+    id: sink-status
+- evalScript: ${console.log(maestro.copiedText)}
+- assertVisible:
+    id: sink-status
+    text: "Connect cycles OK: 500 cycles, 0 failed, open GATT clients (0|n/a).*"

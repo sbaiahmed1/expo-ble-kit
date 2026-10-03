@@ -47,6 +47,7 @@ export declare class NativePeripheral
   unsubscribe(subscriptionId: number, timeoutMs: number): Promise<void>;
   requestMtu(mtu: number, timeoutMs: number, operationId: number | null): Promise<number>;
   readRssi(timeoutMs: number, operationId: number | null): Promise<number>;
+  refreshGattCache(): Promise<boolean>;
   cancelOperation(operationId: number): Promise<void>;
 }
 

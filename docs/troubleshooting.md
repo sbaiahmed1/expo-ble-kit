@@ -72,6 +72,10 @@ A write with response takes up to 512 bytes. A write without response must fit i
 
 The attribute isn't in the discovery cache. With the default `autoDiscover: true`, `connect()` discovers everything; with `autoDiscover: false`, call `discover()` first. Check `peripheral.services` to see what the device offers.
 
+## Android shows old services after a firmware update
+
+Android caches a device's services. From Android 12 it notices a service change while connected (the library then discovers again and calls `addServicesChangedListener` listeners); older versions, and devices that don't announce the change, keep the stale list. `await peripheral.android.refreshGattCache()` clears the cache and discovers again. It relies on a hidden Android API, so it resolves `false` where that isn't available, and may stop working on a future Android version. Turning Bluetooth off and on, or unpairing a bonded device, also clears the cache.
+
 ## Notifications stop arriving
 
 A subscription ends with the connection: after a disconnect, subscribe again once connected. `useCharacteristicValue` does this for you.

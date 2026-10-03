@@ -45,9 +45,10 @@ extension PeripheralSession {
     scheduleReconnect()
   }
 
-  /// Enables the CCCD of every subscription again, then calls `done`. A subscription whose
-  /// characteristic is gone or whose CCCD write fails ends alone.
-  func restoreSubscriptions(then done: @escaping () -> Void) {
+  /// Enables the CCCD of every subscription again, after a reconnection or a service change
+  /// (`after` says which), then calls `done`. A subscription whose characteristic is gone or whose
+  /// CCCD write fails ends alone.
+  func restoreSubscriptions(after: String = "reconnecting", then done: @escaping () -> Void) {
     let entries = Array(subscriptions.values)
     guard !entries.isEmpty else {
       return done()
@@ -64,7 +65,7 @@ extension PeripheralSession {
       let service = peripheral.serviceList.first { $0.uuid == entry.serviceUUID }
       let found = service?.characteristicList.first { $0.uuid == entry.characteristicUUID }
       guard let characteristic = found else {
-        let error = CoreError(.characteristicNotFound, "\(entry.characteristicUUID) is gone after reconnecting")
+        let error = CoreError(.characteristicNotFound, "\(entry.characteristicUUID) is gone after \(after)")
         endSubscriptions(entry, error)
         finish()
         continue

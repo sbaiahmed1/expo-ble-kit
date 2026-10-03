@@ -42,6 +42,8 @@ final class CentralEngine: CentralManagingDelegate {
   var onNotificationBatch: ((_ peripheralId: String, _ subscriptionId: Int, NotificationBatch) -> Void)?
   /// Something worth telling the app that isn't an error of a call, on `queue`.
   var onWarning: ((CoreError) -> Void)?
+  /// A peripheral's services changed and were discovered again (P2-06), on `queue`.
+  var onServicesChanged: ((_ peripheralId: String) -> Void)?
 
   private let environment: Environment
   private let scheduler: Scheduling
@@ -376,6 +378,7 @@ extension CentralEngine {
       self?.onNotificationBatch?(identifier.uuidString, subscriptionId, batch)
     }
     session.onWarning = { [weak self] warning in self?.onWarning?(warning) }
+    session.onServicesChanged = { [weak self] in self?.onServicesChanged?(identifier.uuidString) }
   }
 
   private func publishConnectionState(_ peripheralId: String, _ state: SessionState, _ error: CoreError?, mtu: Int?) {

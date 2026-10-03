@@ -99,6 +99,9 @@ class AndroidConnectOptionsRecord : Record {
 
   /** Null asks for no MTU exchange (JS `requestMtu: false`). */
   @Field val requestMtu: Int? = ConnectSpec.DEFAULT_REQUESTED_MTU
+
+  /** Null never resets (JS `resetAfterTimeouts: false`), P2-06. */
+  @Field val resetAfterTimeouts: Int? = ConnectSpec.DEFAULT_RESET_AFTER_TIMEOUTS
 }
 
 /** JS `ReconnectPolicy` (plan §5.4) with the defaults applied; `maxAttempts` null means no limit. */
@@ -149,6 +152,13 @@ class ConnectOptionsRecord : Record {
       requestMtu,
       reconnect?.toPolicy(),
       restoreSubscriptionsOnReconnect,
+      android.resetAfterTimeouts?.also {
+        if (it <
+          1
+        ) {
+          throw CoreError(CoreError.Code.INVALID_ARGUMENT, "Invalid connect option android.resetAfterTimeouts: $it")
+        }
+      },
     )
   }
 }

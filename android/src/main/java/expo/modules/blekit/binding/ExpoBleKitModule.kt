@@ -265,6 +265,11 @@ class ExpoBleKitModule : Module() {
         attributeOperation(promise) { engine.readRssi(ref.id, timeoutMs.toLong(), promise.settler(), operationId) }
       }
 
+      // Hidden API, opt-in by calling it (plan §4.4, P2-06): false where Android lacks it.
+      AsyncFunction("refreshGattCache") { ref: PeripheralObject, promise: Promise ->
+        attributeOperation(promise) { engine.refreshGattCache(ref.id, promise.settler()) }
+      }
+
       // Calls run in order on Expo's queue and then on the BLE thread, so a cancel never overtakes
       // the operation it cancels.
       AsyncFunction("cancelOperation") { ref: PeripheralObject, operationId: Int ->
@@ -374,6 +379,11 @@ class ExpoBleKitModule : Module() {
         "subscriptionEnded",
         mapOf("subscriptionId" to subscriptionId, "code" to error.code.value, "message" to error.jsMessage),
       )
+    }
+
+    override fun onServicesChanged(peripheralId: String) {
+      val peripheral = synchronized(peripherals) { peripherals[peripheralId]?.get() } ?: return
+      peripheral.emit("servicesChanged", emptyMap<String, Any>())
     }
 
     // One buffer for all values, cut by `lengths` in JS: fewer objects across the bridge.

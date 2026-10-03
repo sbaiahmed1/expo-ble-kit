@@ -121,6 +121,8 @@ class FakeGattClient(
     object Disconnect : Call
 
     object Close : Call
+
+    object RefreshCache : Call
   }
 
   val calls = mutableListOf<Call>()
@@ -190,6 +192,14 @@ class FakeGattClient(
   override fun close() {
     calls.add(Call.Close)
     closeCount++
+  }
+
+  /** What `refresh()` answers: false plays a platform without the hidden API. */
+  var refreshSupported = true
+
+  override fun refreshCache(): Boolean {
+    calls.add(Call.RefreshCache)
+    return refreshSupported
   }
 
   // ---------------------------------------------------------------- Test drivers

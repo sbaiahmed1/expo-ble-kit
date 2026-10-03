@@ -226,6 +226,12 @@ interface GattClientPort {
 
   /** Releases the platform GATT client. Must be called exactly once per connection (rule 3). */
   fun close()
+
+  /**
+   * Clears the stack's GATT cache for the device (hidden `BluetoothGatt.refresh()`, plan §4.4). False
+   * when the platform doesn't offer it. Only `refreshGattCache()` calls it (opt-in, rule 11).
+   */
+  fun refreshCache(): Boolean
 }
 
 /** Callbacks from a [GattClientPort]. Values arrive with the callback. */

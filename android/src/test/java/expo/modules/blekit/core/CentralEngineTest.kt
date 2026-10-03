@@ -53,6 +53,8 @@ class CentralEngineTest {
 
         override fun onNotificationBatch(peripheralId: String, subscriptionId: Int, batch: NotificationBatch) = Unit
 
+        override fun onServicesChanged(peripheralId: String) = Unit
+
         override fun onConnectionStateChange(peripheralId: String, state: SessionState, error: CoreError?) {
           connections += "$peripheralId ${state.js}${error?.let { " ${it.code}" } ?: ""}"
         }

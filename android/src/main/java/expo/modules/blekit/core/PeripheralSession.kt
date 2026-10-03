@@ -70,8 +70,13 @@ class ConnectSpec(
   val reconnect: ReconnectPolicy? = null,
   /** With [reconnect]: enable the subscriptions again before the connection counts as ready. */
   val restoreSubscriptions: Boolean = true,
+  /** Operations in a row that time out before the connection is reset (plan §4.9); null never. */
+  val resetAfterTimeouts: Int? = DEFAULT_RESET_AFTER_TIMEOUTS,
 ) {
   companion object {
+    /** Plan §4.9: two timeouts in a row mean a stuck Android stack. */
+    const val DEFAULT_RESET_AFTER_TIMEOUTS = 2
+
     /** Plan §5.4 / Q3. Android 14+ asks for 517 whatever the app requests (measured in P0-06). */
     const val DEFAULT_REQUESTED_MTU = 517
   }
@@ -97,14 +102,10 @@ class PeripheralSession(
 
   /** Operations on this connection (Appendix B rule 2). */
   val queue = GattQueue(executor).also { queue ->
-    // Plan §4.9: on Android, two operations in a row that time out mean a stuck stack.
+    // Plan §4.9: on Android, operations in a row that time out mean a stuck stack.
     queue.onTimeout = { _, consecutiveTimeouts ->
-      if (consecutiveTimeouts >= 2 && state != SessionState.DISCONNECTED) {
-        closeGatt(disconnectFirst = true)
-        finishDisconnected(
-          CoreError(CoreError.Code.DISCONNECTED, "Two operations in a row timed out, so the connection was reset"),
-        )
-      }
+      val limit = resetAfterTimeouts
+      if (limit != null && consecutiveTimeouts >= limit) resetStuckConnection(consecutiveTimeouts)
     }
   }
 
@@ -172,6 +173,10 @@ class PeripheralSession(
   private var reconnectAttempt = 0
   private var reconnect: ReconnectPolicy? = null
   private var restoreSubscriptions = true
+  private var resetAfterTimeouts: Int? = ConnectSpec.DEFAULT_RESET_AFTER_TIMEOUTS
+
+  /** The peripheral's GATT database changed and the session discovered it again (P2-06). */
+  var onServicesChanged: (() -> Unit)? = null
   private var connectTimeoutMs: Long? = null
   private var reconnectTimer: Cancellable? = null
 
@@ -227,6 +232,7 @@ class PeripheralSession(
         setupMtu = spec.requestMtu
         reconnect = spec.reconnect
         restoreSubscriptions = spec.restoreSubscriptions
+        resetAfterTimeouts = spec.resetAfterTimeouts
         connectTimeoutMs = spec.timeoutMs
         setState(SessionState.CONNECTING, null)
         spec.timeoutMs?.let { timeoutMs ->
@@ -288,6 +294,7 @@ class PeripheralSession(
     timeoutMs: Long?,
     completion: (Result<List<GattServiceInfo>>) -> Unit,
     operationId: Int? = null,
+    first: Boolean = false,
   ) {
     if (state != SessionState.READY && state != SessionState.DISCOVERING) {
       completion(Result.failure(CoreError(CoreError.Code.DISCONNECTED, "Not connected to $address")))
@@ -296,6 +303,7 @@ class PeripheralSession(
     val operation = queue.enqueue(
       GattOperation.Kind.DISCOVER_SERVICES,
       timeoutMs = timeoutMs ?: DISCOVERY_TIMEOUT_MS,
+      first = first,
       start = {
         if (gatt?.discoverServices() != true) {
           val error = CoreError(CoreError.Code.GATT_ERROR, "Android refused to start service discovery")
@@ -770,6 +778,10 @@ class PeripheralSession(
       queue.complete(result) { it.kind == GattOperation.Kind.READ_RSSI }
     }
 
+    override fun onServiceChanged() {
+      if (attemptGeneration == generation) servicesChanged()
+    }
+
     override fun onServicesDiscovered(status: Int) {
       if (attemptGeneration == generation) {
         val result = AndroidErrorMapping.operationError(status, "Service discovery")?.let(GattResult::Failure)
@@ -1001,17 +1013,18 @@ class PeripheralSession(
   }
 
   /**
-   * After a reconnection (P2-01): enables the CCCD of every subscription again, then the connection
-   * is ready. A subscription whose characteristic is gone or whose CCCD write fails ends alone.
+   * After a reconnection (P2-01) or a service change (P2-06): enables the CCCD of every subscription
+   * again, then calls [then] (by default the connection is ready). A subscription whose
+   * characteristic is gone or whose CCCD write fails ends alone.
    */
-  private fun restoreSubscriptions() {
+  private fun restoreSubscriptions(after: String = "reconnecting", then: () -> Unit = ::becomeReady) {
     val entries = subscriptions.values.toList()
-    if (entries.isEmpty()) return becomeReady()
+    if (entries.isEmpty()) return then()
     val setupState = state
     var remaining = entries.size
     val done = {
       remaining -= 1
-      if (remaining == 0 && state == setupState) becomeReady()
+      if (remaining == 0 && state == setupState) then()
     }
     for (entry in entries) {
       val ref = services.firstOrNull { it.uuid == entry.ref.serviceUuid }
@@ -1021,7 +1034,7 @@ class PeripheralSession(
       if (ref == null) {
         endSubscriptions(
           entry,
-          CoreError(CoreError.Code.CHARACTERISTIC_NOT_FOUND, "${entry.ref.uuid} is gone after reconnecting"),
+          CoreError(CoreError.Code.CHARACTERISTIC_NOT_FOUND, "${entry.ref.uuid} is gone after $after"),
         )
         done()
         continue
@@ -1052,6 +1065,65 @@ class PeripheralSession(
     entry.subscribers.forEach { id ->
       subscriptionKeys.remove(id)
       onSubscriptionEnded?.invoke(id, error)
+    }
+  }
+
+  /**
+   * The peripheral's GATT database changed (P2-06): Android 12+ `onServiceChanged`, or a cache
+   * refresh. The cache is stale, so it is emptied and discovered again ahead of queued operations;
+   * the subscriptions are restored on what is still there, then [onServicesChanged] fires. During
+   * setup the discovery under way picks up the new database.
+   */
+  private fun servicesChanged(done: () -> Unit = {}) {
+    if (state != SessionState.READY) return done()
+    services = emptyList()
+    subscriptions.values.forEach { it.enabled = false }
+    discover(filter = null, timeoutMs = null, first = true, completion = { result ->
+      if (state != SessionState.READY) return@discover done()
+      result.onFailure { error ->
+        onWarning?.invoke(
+          CoreError((error as CoreError).code, "$address: discovering the changed services failed (${error.message})"),
+        )
+      }
+      restoreSubscriptions(after = "the service change") {
+        onServicesChanged?.invoke()
+        done()
+      }
+    })
+  }
+
+  /**
+   * Clears Android's GATT cache for this device with the hidden `BluetoothGatt.refresh()` (opt-in,
+   * plan §4.4), then discovers again like after a service change. False when the platform lacks it.
+   */
+  fun refreshGattCache(completion: (Result<Boolean>) -> Unit) {
+    if (state != SessionState.READY) {
+      return completion(Result.failure(CoreError(CoreError.Code.DISCONNECTED, "Not connected to $address")))
+    }
+    if (gatt?.refreshCache() != true) return completion(Result.success(false))
+    servicesChanged { completion(Result.success(true)) }
+  }
+
+  /** Operations in a row timed out: the stack is stuck, so the connection is reset (plan §4.9). */
+  private fun resetStuckConnection(timeouts: Int) {
+    val error = CoreError(
+      CoreError.Code.DISCONNECTED,
+      "$timeouts operations in a row timed out, so the connection to $address was reset",
+    )
+    when (state) {
+      SessionState.READY -> {
+        closeGatt(disconnectFirst = true)
+        if (reconnect != null) startReconnecting(error) else finishDisconnected(error)
+      }
+
+      SessionState.CONNECTED, SessionState.DISCOVERING -> failConnect(error)
+
+      SessionState.DISCONNECTED, SessionState.RECONNECTING -> Unit
+
+      else -> {
+        closeGatt(disconnectFirst = true)
+        finishDisconnected(error)
+      }
     }
   }
 

@@ -43,6 +43,9 @@ class CentralEngine(
 
     /** A batched subscriber's values (P2-04). */
     fun onNotificationBatch(peripheralId: String, subscriptionId: Int, batch: NotificationBatch)
+
+    /** The peripheral's services changed and were discovered again (P2-06). */
+    fun onServicesChanged(peripheralId: String)
   }
 
   var listener: Listener? = null
@@ -165,6 +168,7 @@ class CentralEngine(
           listener?.onNotification(address, ref.serviceUuid, ref.uuid, value, timestamp)
         }
         session.onNotificationBatch = { id, batch -> listener?.onNotificationBatch(address, id, batch) }
+        session.onServicesChanged = { listener?.onServicesChanged(address) }
         session.onMtuChange = { mtu -> listener?.onMtuChange(address, mtu) }
         session.onSubscriptionEnded = { id, error -> listener?.onSubscriptionEnded(address, id, error) }
         session.onWarning = { warning -> listener?.onWarning(warning) }
@@ -334,6 +338,10 @@ class CentralEngine(
 
   fun readRssi(peripheralId: String, timeoutMs: Long?, completion: (Result<Int>) -> Unit, operationId: Int? = null) =
     withSession(peripheralId, completion) { it.readRssi(timeoutMs, completion, operationId) }
+
+  /** The hidden cache refresh (opt-in, P2-06); resolves false where Android lacks it. */
+  fun refreshGattCache(peripheralId: String, completion: (Result<Boolean>) -> Unit) =
+    withSession(peripheralId, completion) { it.refreshGattCache(completion) }
 
   /** Cancels an operation started with [operationId] (plan §4.9); unknown ids do nothing. */
   fun cancelOperation(peripheralId: String, operationId: Int) {

@@ -10,6 +10,7 @@ extension PeripheralSession {
     _ filter: [String]?,
     timeout: TimeInterval?,
     operationId: Int? = nil,
+    first: Bool = false,
     completion: @escaping DiscoveryCompletion
   ) {
     guard state == .ready || state == .discovering else {
@@ -20,6 +21,7 @@ extension PeripheralSession {
     let operation = queue.enqueue(
       .discoverServices,
       timeout: timeout ?? Self.discoveryTimeout,
+      first: first,
       start: { [weak self] in
         self?.discovery = DiscoveryRun(id: runId, filter: filter)
         self?.peripheral.discoverServices(filter?.map(CBUUID.init(string:)))

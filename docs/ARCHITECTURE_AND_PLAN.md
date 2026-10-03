@@ -1,6 +1,6 @@
 # Expo BLE (`expo-ble-kit`) — Architecture & Implementation Plan
 
-> **Status:** Draft v0.33 · **Date:** 2026-10-03 · **Scope:** proposition #3, an Expo-first Bluetooth Low Energy module · **Changes:** Appendix D
+> **Status:** Draft v0.34 · **Date:** 2026-10-03 · **Scope:** proposition #3, an Expo-first Bluetooth Low Energy module · **Changes:** Appendix D
 >
 > **Package name:** `expo-ble-kit` (D0a, decided 2026-10-02) · native module `ExpoBleKit` · Android package `expo.modules.blekit`.
 >
@@ -236,6 +236,11 @@ iOS platform rules:
 | `Companion` | `CompanionDeviceManager` association (system picker) and device presence observation ⚠️ VERIFY API levels (31 / 33 / 36 differ) |
 | `BtAbstractions` | Interfaces over adapter, scanner, GATT client and GATT server for JVM unit tests |
 
+GATT cache (P2-06):
+
+- API 31+ `BluetoothGattCallback.onServiceChanged` reports a Service Changed indication: the session discovers again (§5.4 service-change rules). Before API 31 the stack consumes the indication and apps aren't told.
+- `BluetoothGatt.refresh()` (hidden, public in the platform class) is the one reflection-based API §4 allows (Appendix B rule 11): it is reached only through `peripheral.android.refreshGattCache()`, which is the opt-in, it is looked up at runtime (`getMethod("refresh")`), and a missing or blocked method answers `false` instead of failing.
+
 ### 4.5 Binding layer
 
 - Module `ExpoBleKit`: manager functions plus module-level events `stateChange`, `scanResults`, `scanError`, `restoration`, `bondStateChange`, `warning`, `log`.
@@ -323,7 +328,7 @@ Invariants:
 
 - One FIFO per `PeripheralSession`, exactly one op in flight.
 - Op kinds: discover (services, characteristics, descriptors), read, write with response, write without response, descriptor read/write (including CCCD), set notify/indicate, read RSSI, request MTU, connection priority, PHY, bond.
-- **Timeouts:** default 10 s per op, configurable globally and per call. On Android, two consecutive timeouts force a disconnect + `close()` (configurable; the switch lands with P2-06). Discovery counts as one op with a 30 s default: on iOS it chains services, then characteristics, then descriptors.
+- **Timeouts:** default 10 s per op, configurable globally and per call. On Android, two consecutive timeouts force a disconnect + `close()`: the connect option `android.resetAfterTimeouts` sets the count (default 2, `false` never resets, P2-06). A ready connection then ends as a link loss (it reconnects when a `reconnect` policy is set); during setup the connect (or reconnection attempt) fails. The count starts again with each connection. Discovery counts as one op with a 30 s default: on iOS it chains services, then characteristics, then descriptors.
 - **Cancellation:** `AbortSignal` removes queued ops. An in-flight op can't be aborted at the radio, so its result is discarded and its promise rejects with `OPERATION_CANCELLED`. An already aborted signal rejects at once without starting anything. A `connect()` signal cancels the attempt like `disconnect()`; a `subscribe()` signal removes that subscriber (the pending subscribe rejects); an `unsubscribe()` signal only stops the wait, because abandoning the CCCD write would leave notifications on.
 - **Write without response** (no acknowledgement from the peer; flow control decided in P2-02, verified in the sources below). The op completes once the phone's stack took the packet, never before, so no packet is dropped on the phone and queued writes go out in order:
   - iOS: while `canSendWriteWithoutResponse` is false, CoreBluetooth drops writes; the packet waits for `peripheralIsReady(toSendWriteWithoutResponse:)` and completes once `writeValue(_:for:type:)` took it. A waiting packet whose op ended (timeout, cancel, disconnect) is never sent. Sources: Apple, [`canSendWriteWithoutResponse`](https://developer.apple.com/documentation/corebluetooth/cbperipheral/cansendwritewithoutresponse) and [`peripheralIsReady(toSendWriteWithoutResponse:)`](https://developer.apple.com/documentation/corebluetooth/cbperipheraldelegate/peripheralisready(tosendwritewithoutresponse:)).
@@ -507,7 +512,7 @@ Bare apps follow `docs/guides/bare-setup.md`, which lists exactly the entries th
 
 This section is the contract. Changing it requires updating `src/types.ts`, docs and tests in the same PR (Appendix B, rule 8).
 
-Members owned by later tasks are added to the exported types when those tasks land; until then they are absent, not stubs: `addServicesChangedListener` (P2-06), `Peripheral.android` (P5-01, P5-02, P2-06), `openL2CAPChannel` (P5-03), `setLogLevel` and `setLogHandler` (P2-07), the peripheral role (P4), background tasks (P3), and `BleManager.ios` / `BleManager.android` (P5-04, P5-05). `src/__tests__/publicApi.test.ts` compares every §5 interface with `src/types.ts` and the testing entry, member by member, with this list as the only exception, and checks the exported values.
+Members owned by later tasks are added to the exported types when those tasks land; until then they are absent, not stubs: the members of `Peripheral.android` other than `refreshGattCache` (P5-01, P5-02), `openL2CAPChannel` (P5-03), `setLogLevel` and `setLogHandler` (P2-07), the peripheral role (P4), background tasks (P3), and `BleManager.ios` / `BleManager.android` (P5-04, P5-05). `src/__tests__/publicApi.test.ts` compares every §5 interface with `src/types.ts` and the testing entry, member by member, with this list as the only exception, and checks the exported values.
 
 ### 5.1 Common types
 
@@ -654,7 +659,7 @@ export interface ConnectOptions extends Omit<OpOptions, 'timeoutMs'> {
   reconnect?: ReconnectPolicy | false;       // default false
   restoreSubscriptionsOnReconnect?: boolean; // default true when reconnect is set
   keepAliveInBackground?: boolean;           // Android: foreground service (P3). iOS: needs the background mode
-  android?: { autoConnect?: boolean; requestMtu?: number | false; phy?: Phy[] }; // requestMtu default 517 (see Q3)
+  android?: { autoConnect?: boolean; requestMtu?: number | false; resetAfterTimeouts?: number | false; phy?: Phy[] }; // requestMtu default 517 (see Q3), resetAfterTimeouts default 2 (§4.9)
   ios?: { enableAutoReconnect?: boolean; notifyOnDisconnection?: boolean };
 }
 
@@ -808,6 +813,12 @@ API rules (decided in P1-12):
 - Notifications are fanned out in JS: each subscriber gets every value of its characteristic. A subscriber callback that throws doesn't stop the others; the error is rethrown asynchronously. A disconnect marks every subscription inactive.
 - `getPeripheral(id)` returns the same object for the same id while it is in use. `getKnownPeripherals` and `getSystemConnectedPeripherals` resolve with those objects; both use the manager without showing a prompt, so they reject like `connect()` when it can't be used. Android keeps every valid address in `getKnownPeripherals` (§4.12).
 - `getDiagnostics()` combines the native snapshot with the permissions (all `undetermined` when they can't be read, the error then being among the recent errors) and the last 100 errors the API returned (`recentErrors`, kept in JS).
+
+Service-change rules (decided in P2-06):
+
+- A service change while ready (Android API 31+ `onServiceChanged`, iOS `peripheral(_:didModifyServices:)`, or `android.refreshGattCache()`) empties the discovery cache, pauses delivery and queues a full discovery ahead of the queued operations (the queue's `first`, §4.9). Subscriptions then move to the newly discovered characteristics with their CCCD written again (like a reconnection's restore, P2-01); one whose characteristic is gone ends with `subscriptionEnded` (`CHARACTERISTIC_NOT_FOUND`). Then the peripheral object emits `servicesChanged`, so listeners read a current `services`. A failed discovery leaves the cache empty, emits a `warning` and still emits `servicesChanged`.
+- During setup (connecting, discovering) a service change is left to the discovery under way. Android before API 31 reports nothing; `refreshGattCache()` is the way out there (§4.4).
+- `peripheral.android.refreshGattCache()` resolves `true` once the new discovery and restore are done, `false` where the hidden API is missing (nothing else happens), and rejects with `DISCONNECTED` when not ready. On iOS it rejects with `NOT_SUPPORTED` in the TS layer (CoreBluetooth has no cache to clear). The other members of `Peripheral.android` land with P5.
 
 Multi-device rules (decided in P2-05):
 
@@ -984,11 +995,13 @@ export interface VirtualPeripheral {
   /** What advertising and readRssi() report from now on. */
   setRssi(rssi: number): void;
   disconnect(reason?: 'peer' | 'linkLoss'): void;
+  /** Replaces the GATT database and tells a connected client (Service Changed), P2-06. */
+  setServices(services: VirtualPeripheralConfig['services']): void;
   readonly writes: ReadonlyArray<{ characteristic: UUID; value: Uint8Array; withResponse: boolean }>;
 }
 ```
 
-Fake rules (P1-13): Bluetooth is on and every permission granted unless `installFakeBle` says otherwise; a peripheral advertises from `addPeripheral` until `advertise(false)`; a connect to a peripheral that isn't advertising waits (times out, or completes when it advertises), like a real absent device; writes store the value, so a later read returns it; writes without response take at most MTU − 3 bytes (20 at the default MTU); the MTU is negotiated like on Android, during the connect and in `requestMtu()`, as the smaller of the request and the peripheral's `mtu` (23 unless its config says more), and a failed setup exchange (`injectError` op `requestMtu`) is a `warning`; results and operation answers arrive on later timer ticks, so tests advance timers (Jest fake timers work). `notify()` reaches a connected client only while it has the CCCD enabled, as on a real peripheral, and a disconnect resets the CCCDs; `mode: 'indicate'` follows Android (allowed on a characteristic that also notifies). A peripheral's `name` is known once a scan delivered it or a connection reached `connected`. `getKnownPeripherals` drops ids without a virtual peripheral (like iOS); `getSystemConnectedPeripherals` lists the connected ones that have one of the services. Cancelled operations behave like the native queues: a queued one never runs, a running one finishes at the radio after its caller was answered. `writeStream` chunks like the native cores (each chunk a queued write, recorded in `writes`, queuing the next one first) and emits the same progress events. Batched subscriptions batch like the native cores (same interval, overflow and end-of-link rules, `BUFFER_OVERFLOW` warning).
+Fake rules (P1-13): Bluetooth is on and every permission granted unless `installFakeBle` says otherwise; a peripheral advertises from `addPeripheral` until `advertise(false)`; a connect to a peripheral that isn't advertising waits (times out, or completes when it advertises), like a real absent device; writes store the value, so a later read returns it; writes without response take at most MTU − 3 bytes (20 at the default MTU); the MTU is negotiated like on Android, during the connect and in `requestMtu()`, as the smaller of the request and the peripheral's `mtu` (23 unless its config says more), and a failed setup exchange (`injectError` op `requestMtu`) is a `warning`; results and operation answers arrive on later timer ticks, so tests advance timers (Jest fake timers work). `notify()` reaches a connected client only while it has the CCCD enabled, as on a real peripheral, and a disconnect resets the CCCDs; `mode: 'indicate'` follows Android (allowed on a characteristic that also notifies). A peripheral's `name` is known once a scan delivered it or a connection reached `connected`. `getKnownPeripherals` drops ids without a virtual peripheral (like iOS); `getSystemConnectedPeripherals` lists the connected ones that have one of the services. Cancelled operations behave like the native queues: a queued one never runs, a running one finishes at the radio after its caller was answered. `writeStream` chunks like the native cores (each chunk a queued write, recorded in `writes`, queuing the next one first) and emits the same progress events. Batched subscriptions batch like the native cores (same interval, overflow and end-of-link rules, `BUFFER_OVERFLOW` warning). `setServices()` replaces a peripheral's database and, when connected, follows the service-change rules (§5.4); `android.refreshGattCache()` discovers again and resolves `true`.
 
 ### 5.9 Usage examples
 
@@ -1038,6 +1051,7 @@ hrm.notify(GattServices.HeartRate, GattCharacteristics.HeartRateMeasurement, Uin
 | MTU negotiation | ❌ automatic | ✅ up to 517 | ❌ |
 | `getSystemConnectedPeripherals(services)` | ✅ filtered by services | Every LE device connected at the OS level: services can't be read without connecting, so they don't filter | ❌ |
 | Write-without-response flow control | ✅ | ✅ (busy and congestion statuses, §4.9) | Partial |
+| Service change notifications (`servicesChanged`) | ✅ | ✅ API 31+; before, `android.refreshGattCache()` (hidden API) | ❌ |
 | Several connections at once | ✅ (no documented limit) | ✅ 7 LE links by default (AOSP `GATT_MAX_PHY_CHANNEL`; OEMs and controllers may allow fewer). Android 8–9 make direct connections one at a time | ✅ |
 | Connection priority / PHY | ❌ | ✅ | ❌ |
 | Explicit bonding | ❌ implicit | ✅ | ❌ |
@@ -1275,6 +1289,13 @@ Parallelism: P0-06/P0-07 can run alongside P0-03/P0-04. With two people, P4 can 
 - [ ] **P2-06 Android GATT hygiene** — deps: P1-05.
   `close()` audit, service-changed handling (API 31+ callback), opt-in cache refresh.
   **Accept:** 500-cycle soak with a stable GATT client count; a service change on the peripheral invalidates the cache and emits `servicesChanged`.
+  **Progress 2026-10-03 (open: waits for a test peripheral and the device matrix):** service changes, the cache refresh and the configurable stuck-stack reset on both platforms and in the fake (service-change rules in §5.4, GATT cache in §4.4, timeouts in §4.9, a §6 row).
+  - `close()` audit: every path that ends a client already closed it once; a JVM soak of 500 connections ending every way (clean disconnect, connect timeout, 133 retries then a drop during discovery, cancel, link loss with a failed reconnection, a stuck-stack reset, Bluetooth off) closes every client exactly once and leaves none open.
+  - Service changes: Android `onServiceChanged` (API 31+) and iOS `didModifyServices` rediscover ahead of queued operations, restore what is still there, end the rest, then emit `servicesChanged`; `Peripheral.addServicesChangedListener`; the fake's `VirtualPeripheral.setServices()`.
+  - `peripheral.android.refreshGattCache()`: hidden `BluetoothGatt.refresh()` by reflection, then the same rediscovery; `false` without it, `NOT_SUPPORTED` on iOS.
+  - `android.resetAfterTimeouts` (default 2, `false` never); a reset of a ready connection reconnects with a policy; the count restarts with each connection.
+  - Example: "Toggle the secondary service" and "Connect/disconnect ×500" in the developer checks; the demo peripheral toggles SECONDARY too. Maestro flow `e2e/maestro/gatt-hygiene.yaml`.
+  - Tests: 9 Android (service change, ahead of queued operations, during setup, refresh, the reset default, count and off, with reconnection, the count per connection, the 500-cycle soak), 2 iOS, 4 + 1 Jest, 2 example Jest.
 - [ ] **P2-07 Logging and diagnostics** — deps: P1-10.
   **Accept:** debug logs show op id, duration and status; `getDiagnostics()` snapshot test.
 - [ ] **P2-08 Throughput example and benchmarks** — deps: P2-03, P2-04.
@@ -1646,3 +1667,4 @@ Submit results (`BluetoothStatusCodes`, API 33+): 1 not enabled → `BLUETOOTH_P
 | v0.31 | 2026-10-03 | P2-03 in progress: `writeStream` on both platforms and in the fake. Stream rules in §5.4 (one packet per chunk by default for both write types, per-chunk timeouts, progress about every 1 % with the final report made by the TS layer), the queue's `first` option and the stream ordering rule in §4.9, two queue contract cases; the example's stream and abort checks |
 | v0.32 | 2026-10-03 | P2-04 in progress: native notification batching on both platforms and in the fake. §4.10 rules (per-subscriber batchers, the first value starts the interval, no per-value event without unbatched subscribers, one buffer plus lengths per batch event, collected values delivered when the link ends, drop-oldest with one `BUFFER_OVERFLOW` warning), the batch options in the subscribe request (§5.4), `BUFFER_OVERFLOW` in §4.11; the example's batched-stream check |
 | v0.33 | 2026-10-03 | P2-05 in progress: multi-device rules in §5.4 (independent sessions, Android link and registration limits, Android 8–9 queuing direct connects, all from AOSP), a §6 row for several connections, `getDiagnostics()` subscription counts fixed; the example's demo mode has five test peripherals and a multi-device check |
+| v0.34 | 2026-10-03 | P2-06 in progress: service-change rules in §5.4 (rediscovery ahead of queued operations, subscriptions restored or ended, then `servicesChanged`), §4.4 allows `BluetoothGatt.refresh()` behind `android.refreshGattCache()` only (rule 11), `android.resetAfterTimeouts` in §4.9 and §5.4, a §6 row for service changes, `VirtualPeripheral.setServices` in §5.8; the example's service-change and 500-cycle checks |

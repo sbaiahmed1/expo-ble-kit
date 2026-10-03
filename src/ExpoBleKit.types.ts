@@ -58,4 +58,6 @@ export type PeripheralObjectEvents = {
   mtuChange: (event: MtuChangeEvent) => void;
   subscriptionEnded: (event: SubscriptionEndedEvent) => void;
   streamProgress: (event: StreamProgressEvent) => void;
+  /** The services changed and were discovered again (P2-06). */
+  servicesChanged: (event: Record<string, never>) => void;
 };
