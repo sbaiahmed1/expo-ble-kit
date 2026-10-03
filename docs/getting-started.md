@@ -109,6 +109,8 @@ await device.disconnect();
 
 Operations on one device run one at a time, in order, and each has a timeout (10 s by default). If the connection drops, every pending operation rejects with `DISCONNECTED`.
 
+A write without response (`{ withResponse: false }`) takes one packet (`device.mtu - 3` bytes) and resolves once the phone's Bluetooth stack has taken it. It waits while the stack is full, so nothing is dropped on the phone: to send a lot of data fast, issue several writes before awaiting them, and they go out in order.
+
 ## Notifications
 
 ```ts

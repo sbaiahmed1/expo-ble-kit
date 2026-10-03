@@ -1,6 +1,6 @@
 # Expo BLE (`expo-ble-kit`) — Architecture & Implementation Plan
 
-> **Status:** Draft v0.29 · **Date:** 2026-10-03 · **Scope:** proposition #3, an Expo-first Bluetooth Low Energy module · **Changes:** Appendix D
+> **Status:** Draft v0.30 · **Date:** 2026-10-03 · **Scope:** proposition #3, an Expo-first Bluetooth Low Energy module · **Changes:** Appendix D
 >
 > **Package name:** `expo-ble-kit` (D0a, decided 2026-10-02) · native module `ExpoBleKit` · Android package `expo.modules.blekit`.
 >
@@ -325,7 +325,10 @@ Invariants:
 - Op kinds: discover (services, characteristics, descriptors), read, write with response, write without response, descriptor read/write (including CCCD), set notify/indicate, read RSSI, request MTU, connection priority, PHY, bond.
 - **Timeouts:** default 10 s per op, configurable globally and per call. On Android, two consecutive timeouts force a disconnect + `close()` (configurable; the switch lands with P2-06). Discovery counts as one op with a 30 s default: on iOS it chains services, then characteristics, then descriptors.
 - **Cancellation:** `AbortSignal` removes queued ops. An in-flight op can't be aborted at the radio, so its result is discarded and its promise rejects with `OPERATION_CANCELLED`. An already aborted signal rejects at once without starting anything. A `connect()` signal cancels the attempt like `disconnect()`; a `subscribe()` signal removes that subscriber (the pending subscribe rejects); an `unsubscribe()` signal only stops the wait, because abandoning the CCCD write would leave notifications on.
-- **Write without response** (no acknowledgement from the peer): on iOS, wait for `canSendWriteWithoutResponse`. On Android 33+, honor the status returned by `writeCharacteristic` (busy → retry after the next write callback or a short delay). Older Android: pace on `onCharacteristicWrite` ⚠️ VERIFY legacy semantics.
+- **Write without response** (no acknowledgement from the peer; flow control decided in P2-02, verified in the sources below). The op completes once the phone's stack took the packet, never before, so no packet is dropped on the phone and queued writes go out in order:
+  - iOS: while `canSendWriteWithoutResponse` is false, CoreBluetooth drops writes; the packet waits for `peripheralIsReady(toSendWriteWithoutResponse:)` and completes once `writeValue(_:for:type:)` took it. A waiting packet whose op ended (timeout, cancel, disconnect) is never sent. Sources: Apple, [`canSendWriteWithoutResponse`](https://developer.apple.com/documentation/corebluetooth/cbperipheral/cansendwritewithoutresponse) and [`peripheralIsReady(toSendWriteWithoutResponse:)`](https://developer.apple.com/documentation/corebluetooth/cbperipheraldelegate/peripheralisready(tosendwritewithoutresponse:)).
+  - Android, every version: the op completes on `onCharacteristicWrite`. While the link is congested, `GattService` holds write callbacks until it clears, which paces the queue. A callback status of `GATT_CONNECTION_CONGESTED` (0x8F) means the stack took the packet and the link is now congested: the write succeeded (AOSP maps it to success when it holds the callback), and the next packet waits 10 ms. Status 0x81 (`GATT_INTERNAL_ERROR`) on a write without response means L2CAP refused the packet while congested and freed it, so nothing was sent: it is sent again after 10 ms, within the op's timeout. Sources (AOSP, `android12-release` and `android14-release`): `GattService.java` `onWriteCharacteristic` and `onClientCongestion`; `att_protocol.cc` `attp_send_msg_to_l2cap` ("ATT congested, message accepted") and `attp_cl_send_cmd`; `l2c_api.cc` `L2CA_SendFixedChnlData` (refuses data while `cong_sent`).
+  - Android submit: `BluetoothGatt` allows one outstanding write (`mDeviceBusy`, cleared by the callback; Android 13+ also one per device across clients). Android 13+ returns `ERROR_GATT_WRITE_REQUEST_BUSY`; before Android 13, `writeCharacteristic` / `writeDescriptor` return false, and with the client open and the attribute checked, busy is the remaining reason. Both are retried every 5 ms within the op's timeout. Sources: AOSP `BluetoothGatt.java` `writeCharacteristic` (`android12-release`, `android14-release`) and `GattService.java` `writeCharacteristic` permits (`android14-release`).
 - **Long values:** writes with response larger than MTU − 3 rely on the platform's long-write support, up to the 512-byte ATT maximum ⚠️ VERIFY on both platforms. Larger payloads use `writeStream()` (chunked, flow-controlled, progress callback, abortable).
 - **Ordering:** for a given peripheral, completion order equals submission order. There is no ordering across peripherals.
 
@@ -771,7 +774,7 @@ Attribute rules (decided in P1-07):
 - `read`, `write`, `readDescriptor` and `writeDescriptor` need a ready connection (`DISCONNECTED`) and a discovered attribute (`SERVICE_NOT_FOUND`, `CHARACTERISTIC_NOT_FOUND`, `DESCRIPTOR_NOT_FOUND`), and check the characteristic's properties before using the radio (`READ_NOT_PERMITTED`, `WRITE_NOT_PERMITTED`; a write without response needs `writeWithoutResponse`). Each goes through the queue with a 10 s default timeout.
 - Lengths: a value is at most 512 bytes; a write without response must fit one packet (MTU − 3 on Android, `maximumWriteValueLength(for: .withoutResponse)` on iOS). Longer values reject with `INVALID_ATTRIBUTE_LENGTH` before the radio. Long reads and long writes with response are left to the stack.
 - Writing the CCCD (0x2902) rejects with `INVALID_ARGUMENT` on both platforms: subscriptions own it (P1-08), and CoreBluetooth throws an exception that would crash the app.
-- Writes without response, basic pacing (flow control is P2-02): iOS waits for `canSendWriteWithoutResponse`, then completes once CoreBluetooth takes the value; Android retries a busy submit every 5 ms within the timeout and completes on `onCharacteristicWrite`.
+- Writes without response follow the flow control of §4.9 (P2-02): they resolve once the phone's stack took the packet, waiting while it can't take more. Writes issued without awaiting each other keep their order; the fake completes them on later ticks.
 - iOS reports reads and notifications through the same callback: an update while a read of that characteristic is in flight answers the read.
 - The native functions take one request object (`service`, `characteristic`, `descriptor`, `withResponse`, `timeoutMs`) plus the value; the TS layer normalizes UUIDs and fills the defaults (`src/internal/attributeRequest.ts`).
 
@@ -1221,6 +1224,11 @@ Parallelism: P0-06/P0-07 can run alongside P0-03/P0-04. With two people, P4 can 
   - Pending: the acceptance runs against the test peripheral (20 power cycles, a read from the `connected` listener) on Android and an iPhone, including iOS 17 auto-reconnect.
 - [ ] **P2-02 Write-without-response flow control** — deps: P1-07.
   **Accept:** 1 MB sent through repeated writes arrives complete (peripheral byte counter) on every matrix device.
+  **Progress 2026-10-03 (open: waits for a test peripheral and the device matrix):** the rules are verified in Apple's docs and the AOSP sources, and written in §4.9 (the ⚠️ VERIFY is closed).
+  - Android: `GATT_CONNECTION_CONGESTED` on a write without response is a success and pauses the next packet; a packet refused while congested (0x81) is sent again; before Android 13 a refused write counts as busy and is retried (`WriteStatuses`, `PeripheralSession.sendPacket`).
+  - iOS: a packet waiting for `peripheralIsReady(toSendWriteWithoutResponse:)` belongs to its op, so after a timeout or cancel it is never sent (before, a later ready callback sent it and could complete the next write); a ready callback while `canSendWriteWithoutResponse` is still false keeps waiting.
+  - Example: "Send 1 MB without response" in the developer checks resets the counters, writes 1 MB to `SINK_NO_RSP` in MTU − 3 packets (8 in flight) and compares `SINK_COUNTER`, with the throughput; the demo peripheral counts too. Maestro flow `e2e/maestro/sink.yaml`.
+  - Tests: 4 Android (congestion, refused packets until the timeout, 64 KB through a congested link in order), 3 iOS (with a fake that buffers 4 packets and drops writes made while it can't send: 1,000 packets in order, none dropped), 3 example Jest (64 KB counted, counter reset, first failure rejects).
 - [ ] **P2-03 `writeStream()`** — deps: P2-02.
   Chunking, progress, abort.
   **Accept:** 1 MB completes; abort stops within one chunk; throughput is logged.
@@ -1480,7 +1488,8 @@ Operation callbacks (`onCharacteristicRead`, `onCharacteristicWrite`, `onDescrip
 
 | Status | Meaning | `BleErrorCode` | Retry |
 |---|---|---|---|
-| 143 (0x8F) | `GATT_CONNECTION_CONGESTED` | `CONGESTED` | Yes, with backoff |
+| 143 (0x8F) | `GATT_CONNECTION_CONGESTED` | `CONGESTED` (a write without response: success, §4.9) | Yes, with backoff |
+| 129 (0x81) | Stack `GATT_INTERNAL_ERROR` | `GATT_ERROR` (a write without response: sent again, §4.9) | Maybe |
 | 147 (0x93) | `GATT_CONNECTION_TIMEOUT` (API 35) | `DISCONNECTED` | Yes |
 | 257 (0x101) | `GATT_FAILURE` | `GATT_ERROR` | Maybe |
 
@@ -1497,7 +1506,7 @@ Connection state changes (`onConnectionStateChange` to disconnected): before the
 
 Scan failures (`ScanCallback.SCAN_FAILED_*`): 6 too frequently → `SCAN_THROTTLED` (retry later); 4 feature unsupported → `NOT_SUPPORTED`; 1 already started → `SCAN_FAILED` (no retry); 2, 3, 5 → `SCAN_FAILED` (retryable).
 
-Submit results (`BluetoothStatusCodes`, API 33+): 1 not enabled → `BLUETOOTH_POWERED_OFF`; 6 missing BLUETOOTH_CONNECT → `PERMISSION_DENIED`; 200 write not allowed → `WRITE_NOT_PERMITTED`; 201 request busy → `GATT_ERROR` (retryable; flow control retries it, P2-02); 9 profile service not bound → `BLUETOOTH_RESETTING`; others → `GATT_ERROR`.
+Submit results (`BluetoothStatusCodes`, API 33+): 1 not enabled → `BLUETOOTH_POWERED_OFF`; 6 missing BLUETOOTH_CONNECT → `PERMISSION_DENIED`; 200 write not allowed → `WRITE_NOT_PERMITTED`; 201 request busy → retried within the op's timeout (§4.9), then `OPERATION_TIMEOUT`; 9 profile service not bound → `BLUETOOTH_RESETTING`; others → `GATT_ERROR`.
 
 ### A.2 iOS
 
@@ -1598,3 +1607,4 @@ Submit results (`BluetoothStatusCodes`, API 33+): 1 not enabled → `BLUETOOTH_P
 | v0.27 | 2026-10-02 | P1-16 docs written (getting started, permissions, troubleshooting, README) and the TypeDoc reference, which fails on undocumented symbols; publishing `0.1.0` waits for the maintainer |
 | v0.28 | 2026-10-03 | P1-15 in progress: Explorer and Heart Rate screens with demo mode, example Jest tests, the two Maestro flows (passing in demo mode on the Galaxy A52). The test profile advertises Heart Rate (§8.3) |
 | v0.29 | 2026-10-03 | P2-01 in progress: reconnection policies on both platforms and in the fake. §4.8 diagram and invariants for `reconnecting` (entered from `ready` only, failed attempts wait again), reconnection rules in §5.4 (Android direct-then-`autoConnect`, iOS 17 auto-reconnect, subscription restore and `subscriptionEnded`); the Heart Rate example drops its app-level loop |
+| v0.30 | 2026-10-03 | P2-02 in progress: write-without-response flow control verified (Apple docs, AOSP sources) and written in §4.9, closing its ⚠️ VERIFY: Android congestion statuses (0x8F success, 0x81 resend), legacy refusals retried as busy, iOS waiting packets tied to their op. Appendix A.1 rows for 0x8F and 0x81 on writes without response; the example's 1 MB sink check |

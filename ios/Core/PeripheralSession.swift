@@ -109,8 +109,7 @@ final class PeripheralSession: PeripheralLikeDelegate {
   private var autoDiscover = true
   /// The discovery in flight, if any. Only the discovery code uses it.
   var discovery: DiscoveryRun?
-  /// A write without response waiting for `canSendWriteWithoutResponse` (basic pacing; P2-02 adds
-  /// flow control).
+  /// A write without response waiting for `canSendWriteWithoutResponse` (flow control, P2-02).
   var pendingWriteWithoutResponse: (() -> Void)?
   /// Subscriptions by characteristic key, one CCCD each (plan §5.4).
   var subscriptions: [String: CharacteristicSubscriptions] = [:]

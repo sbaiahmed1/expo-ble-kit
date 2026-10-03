@@ -51,6 +51,7 @@ class PlatformConstantsTest {
     assertEquals(BluetoothStatusCodes.SUCCESS, SubmitStatus.SUCCESS)
     assertEquals(BluetoothStatusCodes.ERROR_GATT_WRITE_REQUEST_BUSY, SubmitStatus.ERROR_GATT_WRITE_REQUEST_BUSY)
     assertEquals(BluetoothStatusCodes.ERROR_UNKNOWN, SubmitStatus.ERROR_UNKNOWN)
+    assertEquals(BluetoothGatt.GATT_CONNECTION_CONGESTED, WriteStatuses.CONGESTED)
     assertEquals(ScanSettings.SCAN_MODE_OPPORTUNISTIC, ScanModes.OPPORTUNISTIC)
     assertEquals(ScanSettings.SCAN_MODE_LOW_POWER, ScanModes.LOW_POWER)
     assertEquals(ScanSettings.SCAN_MODE_BALANCED, ScanModes.BALANCED)

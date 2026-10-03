@@ -61,6 +61,18 @@ object ScanModes {
 /** `BluetoothGatt.GATT_SUCCESS`. Other GATT statuses are mapped by the error model (P1-10). */
 const val GATT_SUCCESS = 0
 
+/**
+ * Write-callback statuses that mean something else for a write without response (plan §4.9, P2-02;
+ * AOSP `att_protocol.cc` `attp_cl_send_cmd` and `l2c_api.cc` `L2CA_SendFixedChnlData`).
+ */
+object WriteStatuses {
+  /** `BluetoothGatt.GATT_CONNECTION_CONGESTED`: the stack took the packet, and the link is now congested. */
+  const val CONGESTED = 0x8F
+
+  /** The stack's `GATT_INTERNAL_ERROR` (no public constant): L2CAP refused the packet while congested. */
+  const val INTERNAL_ERROR = 0x81
+}
+
 /** Result of submitting a write. Same values as `BluetoothStatusCodes` (API 33). */
 object SubmitStatus {
   const val SUCCESS = 0

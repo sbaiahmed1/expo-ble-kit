@@ -141,6 +141,74 @@ class GattOperationsTest {
   }
 
   @Test
+  fun `a congested write without response succeeded, and the next packet waits`() {
+    val first = outcome { session.write(testService, sink, ByteArray(20), false, null, it) }
+    client.callback.onCharacteristicWrite(ref(sink), WriteStatuses.CONGESTED)
+    assertTrue("the stack took the packet", first()!!.isSuccess)
+
+    val second = outcome { session.write(testService, sink, ByteArray(20), false, null, it) }
+    assertEquals("nothing sent on a congested link yet", 1, client.calls.size)
+    executor.advanceBy(PeripheralSession.CONGESTION_RETRY_DELAY_MS)
+    assertEquals(2, client.calls.size)
+    client.callback.onCharacteristicWrite(ref(sink), GATT_SUCCESS)
+    assertTrue(second()!!.isSuccess)
+
+    outcome<Unit> { session.write(testService, sink, ByteArray(20), false, null, it) }
+    assertEquals("no pause once the link took a packet normally", 3, client.calls.size)
+  }
+
+  @Test
+  fun `a packet refused on a congested link is sent again until the timeout`() {
+    val write = outcome { session.write(testService, sink, byteArrayOf(1, 2, 3), false, 100, it) }
+    client.callback.onCharacteristicWrite(ref(sink), WriteStatuses.INTERNAL_ERROR)
+    assertEquals("not failed: nothing was sent", null, write())
+    executor.advanceBy(PeripheralSession.CONGESTION_RETRY_DELAY_MS)
+    assertEquals(2, client.calls.size)
+    assertEquals(listOf<Byte>(1, 2, 3), (client.calls.last() as FakeGattClient.Call.Write).value)
+    client.callback.onCharacteristicWrite(ref(sink), WriteStatuses.INTERNAL_ERROR)
+    executor.advanceBy(PeripheralSession.CONGESTION_RETRY_DELAY_MS)
+    assertEquals(3, client.calls.size)
+
+    executor.advanceBy(100)
+    assertEquals(CoreError.Code.OPERATION_TIMEOUT, code(write()))
+    client.callback.onCharacteristicWrite(ref(sink), WriteStatuses.INTERNAL_ERROR)
+    executor.advanceBy(1_000)
+    assertEquals("nothing sent after the timeout", 3, client.calls.size)
+  }
+
+  @Test
+  fun `a write with response still fails on those statuses`() {
+    val write = outcome { session.write(testService, echoWrite, byteArrayOf(1), true, null, it) }
+    client.callback.onCharacteristicWrite(ref(echoWrite), WriteStatuses.INTERNAL_ERROR)
+    assertEquals(CoreError.Code.GATT_ERROR, code(write()))
+  }
+
+  @Test
+  fun `64 KB through a congested link arrive complete and in order`() {
+    val packets = (0 until 65_536 / 16).map { n -> ByteArray(16) { (n * 16 + it).toByte() } }
+    val results = packets.map { packet -> outcome { session.write(testService, sink, packet, false, null, it) } }
+    val received = mutableListOf<Byte>()
+    var answered = 0
+    while (answered < client.calls.size || results.any { it() == null }) {
+      executor.advanceBy(PeripheralSession.CONGESTION_RETRY_DELAY_MS)
+      while (answered < client.calls.size) {
+        val call = client.calls[answered++] as FakeGattClient.Call.Write
+        // Every 7th packet congests the link; the packet after it is refused once.
+        val status = when {
+          answered % 7 == 0 -> WriteStatuses.CONGESTED
+          answered % 7 == 1 && answered > 1 -> WriteStatuses.INTERNAL_ERROR
+          else -> GATT_SUCCESS
+        }
+        if (status != WriteStatuses.INTERNAL_ERROR) received += call.value
+        client.callback.onCharacteristicWrite(ref(sink), status)
+        executor.runUntilIdle()
+      }
+    }
+    assertTrue(results.all { it()!!.isSuccess })
+    assertEquals(packets.flatMap { it.toList() }, received)
+  }
+
+  @Test
   fun `a refused write fails with the mapped status`() {
     client.nextWriteStatus = 200 // BluetoothStatusCodes.ERROR_GATT_WRITE_NOT_ALLOWED
     val write = outcome { session.write(testService, echoWrite, byteArrayOf(1), true, null, it) }

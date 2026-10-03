@@ -25,6 +25,12 @@ final class FakePeripheral: PeripheralLike {
   var services: [FakeService]
   var discoveredServices: [FakeService] = []
   var canSendWriteWithoutResponse = true
+  /// Writes without response CoreBluetooth buffers before `canSendWriteWithoutResponse` turns false;
+  /// nil for no limit. `drainWritesWithoutResponse()` empties the buffer.
+  var writeWithoutResponseBuffer: Int?
+  private var bufferedWrites = 0
+  /// Writes without response made while `canSendWriteWithoutResponse` was false: CoreBluetooth drops them.
+  private(set) var droppedWrites = 0
   var maximumWriteLength: [CBCharacteristicWriteType: Int] = [.withResponse: 512, .withoutResponse: 20]
   var rssi = -60
   var respondsAutomatically = false
@@ -66,9 +72,24 @@ final class FakePeripheral: PeripheralLike {
   }
 
   func writeValue(_ data: Data, for characteristic: CharacteristicLike, type: CBCharacteristicWriteType) {
+    if type == .withoutResponse, !canSendWriteWithoutResponse {
+      droppedWrites += 1
+      return
+    }
     calls.append(.write(characteristic.uuid, data, withResponse: type == .withResponse))
     fake(characteristic).value = data
     if respondsAutomatically, type == .withResponse { completeWrite(fake(characteristic)) }
+    if type == .withoutResponse, let limit = writeWithoutResponseBuffer {
+      bufferedWrites += 1
+      canSendWriteWithoutResponse = bufferedWrites < limit
+    }
+  }
+
+  /// The radio sent the buffered writes without response.
+  func drainWritesWithoutResponse() {
+    bufferedWrites = 0
+    canSendWriteWithoutResponse = true
+    delegate?.peripheralIsReadyToSendWriteWithoutResponse(self)
   }
 
   func readValue(for descriptor: DescriptorLike) {

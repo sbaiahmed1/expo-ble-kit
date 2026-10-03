@@ -175,7 +175,7 @@ class AndroidGattClient(override val address: String, private val callback: Gatt
     }
     characteristic.writeType = writeType
     characteristic.value = value
-    return if (gatt.writeCharacteristic(characteristic)) SubmitStatus.SUCCESS else SubmitStatus.ERROR_UNKNOWN
+    return if (gatt.writeCharacteristic(characteristic)) SubmitStatus.SUCCESS else legacyRefusal()
   }
 
   override fun readDescriptor(ref: GattDescriptorRef): Boolean {
@@ -191,8 +191,16 @@ class AndroidGattClient(override val address: String, private val callback: Gatt
       return gatt.writeDescriptor(descriptor, value)
     }
     descriptor.value = value
-    return if (gatt.writeDescriptor(descriptor)) SubmitStatus.SUCCESS else SubmitStatus.ERROR_UNKNOWN
+    return if (gatt.writeDescriptor(descriptor)) SubmitStatus.SUCCESS else legacyRefusal()
   }
+
+  /**
+   * Before Android 13 a write returns false, without a reason. With the client open and the attribute
+   * found (checked above, and its properties by the session), the remaining reason is a write still
+   * waiting for its callback (`mDeviceBusy`), so the session retries it like Android 13's
+   * ERROR_GATT_WRITE_REQUEST_BUSY, within the operation's timeout.
+   */
+  private fun legacyRefusal() = SubmitStatus.ERROR_GATT_WRITE_REQUEST_BUSY
 
   override fun setCharacteristicNotification(ref: GattCharacteristicRef, enable: Boolean): Boolean {
     val characteristic = find(ref) ?: return false

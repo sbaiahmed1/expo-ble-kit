@@ -75,6 +75,16 @@ final class AttributeTests: XCTestCase {
     }
   }
 
+  /// The values the peripheral received on SINK_NO_RSP, in order.
+  private func sinkWrites() -> [Data] {
+    peripheral.calls.compactMap { call in
+      if case let .write(uuid, value, withResponse: false) = call, uuid == CBUUID(string: sink) {
+        return value
+      }
+      return nil
+    }
+  }
+
   private func readDescriptor(_ characteristic: String, _ descriptor: String) -> Outcome<Data> {
     outcome { session.readDescriptor(path(characteristic, descriptor), timeout: nil, completion: $0) }
   }
@@ -141,6 +151,44 @@ final class AttributeTests: XCTestCase {
     peripheral.delegate?.peripheralIsReadyToSendWriteWithoutResponse(peripheral)
     XCTAssertTrue(written(sink, Data(count: 20), withResponse: false))
     XCTAssertNoThrow(try result()?.get())
+  }
+
+  func testAWaitingPacketIsNeverSentOnceItsOperationEnded() {
+    peripheral.canSendWriteWithoutResponse = false
+    let timedOut = outcome {
+      session.write(path(sink), value: Data([1]), withResponse: false, timeout: 1, completion: $0)
+    }
+    scheduler.advance(by: 1)
+    XCTAssertEqual(code(timedOut()), .operationTimeout)
+
+    peripheral.canSendWriteWithoutResponse = true
+    let next = write(sink, Data([2]), withResponse: false)
+    XCTAssertNoThrow(try next()?.get())
+    peripheral.drainWritesWithoutResponse()
+    XCTAssertEqual(sinkWrites(), [Data([2])])
+  }
+
+  func testAReadyCallbackWhileItStillCannotSendKeepsWaiting() {
+    peripheral.canSendWriteWithoutResponse = false
+    let result = write(sink, Data([1]), withResponse: false)
+    peripheral.delegate?.peripheralIsReadyToSendWriteWithoutResponse(peripheral)
+    XCTAssertNil(result())
+    XCTAssertEqual(peripheral.droppedWrites, 0)
+    peripheral.drainWritesWithoutResponse()
+    XCTAssertNoThrow(try result()?.get())
+  }
+
+  func testPacketsArePacedByTheBufferAndArriveCompleteAndInOrder() {
+    peripheral.writeWithoutResponseBuffer = 4
+    let packets = (0..<1_000).map { Data([UInt8($0 % 256), UInt8($0 / 256)]) }
+    let results = packets.map { write(sink, $0, withResponse: false) }
+    while results.contains(where: { $0() == nil }) {
+      peripheral.drainWritesWithoutResponse()
+      scheduler.runUntilIdle()
+    }
+    XCTAssertTrue(results.allSatisfy { (try? $0()?.get()) != nil })
+    XCTAssertEqual(peripheral.droppedWrites, 0)
+    XCTAssertEqual(sinkWrites(), packets)
   }
 
   func testDescriptorsAreReadAndWrittenButNotTheCCCD() {

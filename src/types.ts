@@ -311,7 +311,10 @@ export interface Descriptor {
 export interface WriteOptions extends OpOptions {
   /**
    * Wait for the peripheral to acknowledge (up to 512 bytes). Without response, the value must
-   * fit one packet: MTU − 3 bytes.
+   * fit one packet (MTU − 3 bytes), and the write resolves once the phone's Bluetooth stack has
+   * taken the packet: it waits while the stack's buffer is full, so packets are never dropped on the
+   * phone, and writes issued without awaiting each other go out in order. Nothing confirms that the
+   * peripheral received them.
    * @defaultValue true
    */
   withResponse?: boolean;

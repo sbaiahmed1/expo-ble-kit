@@ -9,12 +9,15 @@ import {
   usePeripheral,
   useScan,
   type BlePermissions,
+  type Peripheral,
   type ScanResult,
   type ScanSession,
 } from 'expo-ble-kit';
 
-// Developer checks on the public API (P1-12): adapter state, permissions, scanning, and
-// connections to a device that isn't there.
+import { sendToSink } from '../lib/sink';
+
+// Developer checks on the public API (P1-12): adapter state, permissions, scanning, connections
+// to a device that isn't there, and throughput to the test peripheral (P2-02).
 
 const TEST_SERVICE = '0c6c1000-b347-4cfa-9827-1c5a13658519';
 const TEST_NAME = 'BleKit-Test';
@@ -61,6 +64,7 @@ export function DevChecksScreen() {
   const [testResult, setTestResult] = useState('');
   const [log, setLog] = useState<string[]>([]);
   const [connectLog, setConnectLog] = useState<string[]>([]);
+  const [sinkStatus, setSinkStatus] = useState('');
   const [nearbyEnabled, setNearbyEnabled] = useState(false);
   const nearby = useScan({ enabled: nearbyEnabled, maxResults: 5 });
   const { peripheral, state: absentState, error: absentError } = usePeripheral(ABSENT_ID);
@@ -114,7 +118,7 @@ export function DevChecksScreen() {
       ['requestMtu', () => absent.requestMtu(517)],
       ['readRssi', () => absent.readRssi({ signal })],
       ['invalid UUID', () => absent.read('nope', ECHO_WRITE)],
-      ['reconnect option', () => absent.connect({ reconnect: { maxAttempts: 1 } })],
+      ['background option', () => absent.connect({ keepAliveInBackground: true })],
     ] as const) {
       try {
         await call();
@@ -217,6 +221,33 @@ export function DevChecksScreen() {
     startSession('after throttle', {});
   }
 
+  // P2-02 accept: 1 MB of writes without response reaches the test peripheral's byte counter.
+  async function sinkMegabyte() {
+    const total = 1 << 20;
+    let device: Peripheral | null = null;
+    try {
+      setSinkStatus('Looking for the test peripheral…');
+      const found = await BleManager.scanFor({ services: [TEST_SERVICE], timeoutMs: 10_000 });
+      if (!found) return setSinkStatus('No test peripheral found');
+      device = BleManager.getPeripheral(found.id);
+      await device.connect();
+      setSinkStatus(`Connected, MTU ${device.mtu}. Sending…`);
+      const report = await sendToSink(device, total, (sent) => {
+        if (sent % (64 * 1024) < device!.mtu) setSinkStatus(`Sent ${sent} / ${total} bytes…`);
+      });
+      const seconds = report.ms / 1000;
+      setSinkStatus(
+        `${report.received === report.sent ? 'Complete' : 'Incomplete'}: ` +
+          `${report.received} / ${report.sent} bytes, ${report.packetSize}-byte packets, ` +
+          `${seconds.toFixed(1)} s, ${(report.sent / 1024 / seconds).toFixed(1)} KB/s`
+      );
+    } catch (error) {
+      setSinkStatus(describeError(error));
+    } finally {
+      device?.disconnect().catch(() => {});
+    }
+  }
+
   async function scanForTest() {
     addLog('scanFor TEST service, 10 s');
     try {
@@ -261,6 +292,12 @@ export function DevChecksScreen() {
         <Button testID="diagnostics" title="Diagnostics" onPress={showDiagnostics} />
         <Text testID="connect-log" style={styles.result}>
           {connectLog.join('\n')}
+        </Text>
+      </Group>
+      <Group name="Test peripheral">
+        <Button testID="sink-1mb" title="Send 1 MB without response" onPress={sinkMegabyte} />
+        <Text testID="sink-status" style={styles.result}>
+          {sinkStatus}
         </Text>
       </Group>
       <Group name="Scanning">

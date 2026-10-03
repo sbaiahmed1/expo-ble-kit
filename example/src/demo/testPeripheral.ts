@@ -12,8 +12,9 @@ import { TestProfile } from '../lib/gattNames';
 
 // Demo mode: the test peripheral (test-peripherals/profile.json) as a virtual device in the fake
 // adapter, so the screens, their tests and the Maestro flows run without hardware. The driver
-// plays the peripheral's side: heart-rate notifications, ECHO_WRITE → ECHO_READ, and CONTROL
-// DISCONNECT_AFTER. Real hardware runs the Bumble peripheral or the nRF52840 instead.
+// plays the peripheral's side: heart-rate notifications, ECHO_WRITE → ECHO_READ, SINK_NO_RSP →
+// SINK_COUNTER, and CONTROL DISCONNECT_AFTER and RESET_COUNTERS. Real hardware runs the Bumble
+// peripheral or the nRF52840 instead.
 
 type ProfileValue = {
   pattern?: { length: number; multiplier: number; offset: number; modulus: number };
@@ -72,6 +73,14 @@ const hrSpec = profile.services
 export function driveTestPeripheral(device: VirtualPeripheral): () => void {
   let bpm = hrSpec.minBpm;
   let handled = 0;
+  let sinkCount = 0;
+  const setSinkCounter = (count: number) => {
+    sinkCount = count;
+    const value = new Uint8Array(4);
+    new DataView(value.buffer).setUint32(0, count >>> 0, true);
+    device.setValue(TEST, TestProfile.SINK_COUNTER, value);
+  };
+  setSinkCounter(0);
   const timers: ReturnType<typeof setTimeout>[] = [];
   const heartRate = setInterval(() => {
     if (device.isNotifying(HEART_RATE, MEASUREMENT)) {
@@ -84,9 +93,13 @@ export function driveTestPeripheral(device: VirtualPeripheral): () => void {
       const { characteristic, value } = device.writes[handled];
       if (characteristic === TestProfile.ECHO_WRITE) {
         device.setValue(TEST, TestProfile.ECHO_READ, value);
+      } else if (characteristic === TestProfile.SINK_NO_RSP) {
+        setSinkCounter(sinkCount + value.length);
       } else if (characteristic === TestProfile.CONTROL && value[0] === 0x02 && value.length >= 5) {
         const delayMs = value[1] | (value[2] << 8) | (value[3] << 16) | (value[4] << 24);
         timers.push(setTimeout(() => device.disconnect('peer'), delayMs));
+      } else if (characteristic === TestProfile.CONTROL && value[0] === 0x04) {
+        setSinkCounter(0);
       }
     }
   }, 50);

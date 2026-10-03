@@ -172,6 +172,12 @@ class PeripheralSession(
   private val connectWaiters = mutableListOf<(CoreError?) -> Unit>()
   private val disconnectWaiters = mutableListOf<() -> Unit>()
 
+  /** The stack reported congestion on the last write without response (P2-02). */
+  private var linkCongested = false
+
+  /** The write without response in flight, and how to send its packet again (P2-02). */
+  private var packetInFlight: Pair<GattOperation, () -> Unit>? = null
+
   /** A GATT client is open and not yet closed. */
   val hasOpenClient: Boolean get() = gatt != null
 
@@ -342,7 +348,10 @@ class PeripheralSession(
     val kind = if (withResponse) GattOperation.Kind.WRITE else GattOperation.Kind.WRITE_WITHOUT_RESPONSE
     val writeType = if (withResponse) WriteTypes.DEFAULT else WriteTypes.NO_RESPONSE
     enqueueAttributeOperation(kind, key(ref), timeoutMs, completion, operationId, valueOf = {}) {
-      submitWrite(kind, "Write") { gatt?.writeCharacteristic(ref, value, writeType) ?: SubmitStatus.ERROR_UNKNOWN }
+      val submit = {
+        submitWrite(kind, "Write") { gatt?.writeCharacteristic(ref, value, writeType) ?: SubmitStatus.ERROR_UNKNOWN }
+      }
+      if (withResponse) submit() else sendPacket(submit)
     }
   }
 
@@ -563,6 +572,8 @@ class PeripheralSession(
   private fun open() {
     attempts++
     val current = ++generation
+    linkCongested = false
+    packetInFlight = null
     val client = device().connectGatt(autoConnect, AttemptCallback(current))
     if (client == null) {
       failConnect(CoreError(CoreError.Code.CONNECTION_FAILED, "Android refused to start a connection to $address"))
@@ -585,9 +596,11 @@ class PeripheralSession(
     override fun onCharacteristicWrite(ref: GattCharacteristicRef, status: Int) {
       if (attemptGeneration == generation) {
         // Android reports both write types here; whichever is in flight for this characteristic.
-        val kind = queue.current?.kind.takeIf { it == GattOperation.Kind.WRITE_WITHOUT_RESPONSE }
-          ?: GattOperation.Kind.WRITE
-        onAttributeResult(kind, key(ref), status, null, "Write")
+        if (queue.current?.kind == GattOperation.Kind.WRITE_WITHOUT_RESPONSE) {
+          onPacketResult(key(ref), status)
+        } else {
+          onAttributeResult(GattOperation.Kind.WRITE, key(ref), status, null, "Write")
+        }
       }
     }
 
@@ -716,8 +729,50 @@ class PeripheralSession(
   }
 
   /**
-   * Submits a write. A busy stack (Android 13+) is retried after a short pause while the operation's
-   * timeout runs (basic pacing; flow control is P2-02).
+   * Flow control for writes without response (plan §4.9, P2-02). The packet waits
+   * [CONGESTION_RETRY_DELAY_MS] when the stack reported congestion on the previous one: L2CAP
+   * refuses packets until the controller drains its queue.
+   */
+  private fun sendPacket(submit: () -> Unit) {
+    val current = queue.current ?: return
+    packetInFlight = current to submit
+    if (!linkCongested) return submit()
+    linkCongested = false
+    executor.executeDelayed(CONGESTION_RETRY_DELAY_MS) {
+      if (queue.current === current) submit()
+    }
+  }
+
+  /**
+   * The stack's answer to a write without response. CONGESTED means it took the packet and the link
+   * is now congested, so the write succeeded (AOSP maps it to success too). INTERNAL_ERROR means
+   * L2CAP refused the packet while congested and nothing was sent, so it is sent again after a
+   * pause, within the operation's timeout.
+   */
+  private fun onPacketResult(target: String, status: Int) {
+    val current = queue.current?.takeIf { it.kind == GattOperation.Kind.WRITE_WITHOUT_RESPONSE && it.target == target }
+      ?: return
+    when (status) {
+      WriteStatuses.CONGESTED -> {
+        linkCongested = true
+        queue.complete(GattResult.Success()) { it === current }
+      }
+
+      WriteStatuses.INTERNAL_ERROR -> {
+        val (operation, submit) = packetInFlight ?: return
+        if (operation !== current) return
+        linkCongested = true
+        sendPacket(submit)
+      }
+
+      else -> onAttributeResult(GattOperation.Kind.WRITE_WITHOUT_RESPONSE, target, status, null, "Write")
+    }
+  }
+
+  /**
+   * Submits a write. A busy stack is retried after a short pause while the operation's timeout runs:
+   * Android allows one outstanding write per device, and before Android 13 a refused write can't be
+   * told apart from a busy one (see AndroidGattClient.writeCharacteristic).
    */
   private fun submitWrite(kind: GattOperation.Kind, operation: String, submit: () -> Int) {
     val current = queue.current ?: return
@@ -1052,6 +1107,9 @@ class PeripheralSession(
     /** The ATT maximum for an attribute value. */
     const val MAX_ATTRIBUTE_LENGTH = 512
     const val BUSY_RETRY_DELAY_MS = 5L
+
+    /** The pause before a write without response on a congested link (P2-02). */
+    const val CONGESTION_RETRY_DELAY_MS = 10L
     val CCCD: UUID = UUID.fromString("00002902-0000-1000-8000-00805f9b34fb")
     private val CCCD_NOTIFY = byteArrayOf(0x01, 0x00)
     private val CCCD_INDICATE = byteArrayOf(0x02, 0x00)

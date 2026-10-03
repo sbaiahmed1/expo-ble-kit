@@ -157,6 +157,9 @@ extension PeripheralSession {
   }
 
   func peripheralIsReadyToSendWriteWithoutResponse(_ peripheral: PeripheralLike) {
+    guard self.peripheral.canSendWriteWithoutResponse else {
+      return
+    }
     let pending = pendingWriteWithoutResponse
     pendingWriteWithoutResponse = nil
     pending?()
@@ -186,19 +189,21 @@ extension PeripheralSession {
     _ = queue.complete(result) { $0.kind == kind && $0.target == target }
   }
 
-  /// A write without response has no callback: it is done once CoreBluetooth takes it, which may
-  /// mean waiting until it can send.
+  /// A write without response has no callback: it is done once CoreBluetooth takes it. Flow control
+  /// (P2-02): while `canSendWriteWithoutResponse` is false, CoreBluetooth drops writes, so the packet
+  /// waits for `peripheralIsReady(toSendWriteWithoutResponse:)`. A packet whose operation ended
+  /// meanwhile (timeout, cancel, disconnect) is never sent.
   private func startWrite(_ value: Data, to characteristic: CharacteristicLike, withResponse: Bool) {
     guard !withResponse else {
       return peripheral.writeValue(value, for: characteristic, type: .withResponse)
     }
-    let key = Self.key(characteristic)
+    let operation = queue.current
     let send = { [weak self] in
-      guard let self else {
+      guard let self, let operation, queue.current === operation else {
         return
       }
       peripheral.writeValue(value, for: characteristic, type: .withoutResponse)
-      _ = queue.complete(.success(.none)) { $0.kind == .writeWithoutResponse && $0.target == key }
+      _ = queue.complete(.success(.none)) { $0 === operation }
     }
     if peripheral.canSendWriteWithoutResponse {
       send()
