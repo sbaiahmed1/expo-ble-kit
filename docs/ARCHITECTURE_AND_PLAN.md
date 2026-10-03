@@ -1,6 +1,6 @@
 # Expo BLE (`expo-ble-kit`) — Architecture & Implementation Plan
 
-> **Status:** Draft v0.31 · **Date:** 2026-10-03 · **Scope:** proposition #3, an Expo-first Bluetooth Low Energy module · **Changes:** Appendix D
+> **Status:** Draft v0.32 · **Date:** 2026-10-03 · **Scope:** proposition #3, an Expo-first Bluetooth Low Energy module · **Changes:** Appendix D
 >
 > **Package name:** `expo-ble-kit` (D0a, decided 2026-10-02) · native module `ExpoBleKit` · Android package `expo.modules.blekit`.
 >
@@ -336,10 +336,13 @@ Invariants:
 ### 4.10 Events and batching
 
 - Default: one JS event per native event.
-- Notifications: `subscribeBatched(..., { intervalMs, maxItems })` coalesces natively into `{ values: Uint8Array[]; timestamps: number[]; dropped: number }`. Each timestamp is captured natively when the event arrives, so timing survives batching.
+- Notifications: `subscribeBatched(..., { intervalMs, maxItems })` coalesces natively into `{ values: Uint8Array[]; timestamps: number[]; dropped: number }`. Each timestamp is captured natively when the event arrives, so timing survives batching. Decided in P2-04:
+  - Batching is per subscriber, in the native session (`NotificationBatcher` on both platforms, its TS twin in the fake). The first value of an empty batch starts the interval, so a batch arrives at most `intervalMs` after its first value, and an idle characteristic costs nothing: at most `1000 / intervalMs` events per second (62.5 at 16 ms).
+  - A characteristic gets the per-value `notification` event only while it has an unbatched subscriber; batched subscribers get `notificationBatch { subscriptionId, bytes, lengths, timestamps, dropped }`, where `bytes` holds the values one after another and `lengths` cuts them (one buffer crosses the bridge instead of one object per value). The TS layer rebuilds the values as separate `Uint8Array`s.
+  - `unsubscribe` drops what a subscriber collected (delivery stops at once). When a subscription ends with the link (a disconnect, or a reconnection that doesn't restore it), the collected values are delivered first: a disconnect emits the batches before the `disconnected` state.
 - **Timestamps** (`ScanResult.timestamp`, notification timestamps, `LogEntry.timestamp`) are milliseconds since the Unix epoch, comparable with `Date.now()` on both platforms. They are computed as the engine-start wall-clock time plus monotonic elapsed time, so they never go backwards within a process.
 - Scan results: `reportIntervalMs` batches results and de-duplicates per device within each window.
-- Overflow: a bounded buffer per subscription (default 4096 items). Policy is drop-oldest, with a `dropped` count and a `warning` event. A radio can't be back-pressured, so JS must keep up or batch.
+- Overflow: a bounded buffer per subscription (default 4096 items; `maxItems` sets it). Policy is drop-oldest, with a `dropped` count and a `warning` event (`BUFFER_OVERFLOW`, the first time a subscription drops; later drops only show in `dropped`). A radio can't be back-pressured, so JS must keep up or batch.
 
 ### 4.11 Error model
 
@@ -380,6 +383,7 @@ export class BleError extends Error {
 | `INSUFFICIENT_AUTHENTICATION`, `INSUFFICIENT_ENCRYPTION`, `INSUFFICIENT_AUTHORIZATION` | ATT security errors | After bonding |
 | `INVALID_ATTRIBUTE_LENGTH`, `INVALID_OFFSET` | ATT value errors | No |
 | `CONGESTED` | Android connection congested | Yes, with backoff |
+| `BUFFER_OVERFLOW` | A batched subscription's buffer was full and dropped its oldest values (a `warning`, §4.10) | No |
 | `GATT_ERROR` | Any other ATT/GATT status (see `gattStatus`) | Maybe |
 | `BOND_FAILED` | Bonding failed or was rejected | Maybe |
 | `ADVERTISING_FAILED` | Advertiser error (reason included) | Depends |
@@ -503,7 +507,7 @@ Bare apps follow `docs/guides/bare-setup.md`, which lists exactly the entries th
 
 This section is the contract. Changing it requires updating `src/types.ts`, docs and tests in the same PR (Appendix B, rule 8).
 
-Members owned by later tasks are added to the exported types when those tasks land; until then they are absent, not stubs: `subscribeBatched` (P2-04), `addServicesChangedListener` (P2-06), `Peripheral.android` (P5-01, P5-02, P2-06), `openL2CAPChannel` (P5-03), `setLogLevel` and `setLogHandler` (P2-07), the peripheral role (P4), background tasks (P3), and `BleManager.ios` / `BleManager.android` (P5-04, P5-05). `src/__tests__/publicApi.test.ts` compares every §5 interface with `src/types.ts` and the testing entry, member by member, with this list as the only exception, and checks the exported values.
+Members owned by later tasks are added to the exported types when those tasks land; until then they are absent, not stubs: `addServicesChangedListener` (P2-06), `Peripheral.android` (P5-01, P5-02, P2-06), `openL2CAPChannel` (P5-03), `setLogLevel` and `setLogHandler` (P2-07), the peripheral role (P4), background tasks (P3), and `BleManager.ios` / `BleManager.android` (P5-04, P5-05). `src/__tests__/publicApi.test.ts` compares every §5 interface with `src/types.ts` and the testing entry, member by member, with this list as the only exception, and checks the exported values.
 
 ### 5.1 Common types
 
@@ -782,7 +786,7 @@ Attribute rules (decided in P1-07):
 Subscription rules (decided in P1-08):
 
 - Native keeps the subscribers of each characteristic, under ids JS assigns: `subscribe(request, id, mode)` and `unsubscribe(id, timeoutMs)`. The first subscriber enables the CCCD through the queue (Android: `setCharacteristicNotification` plus the CCCD write; iOS: `setNotifyValue`); later subscribers share it, waiting for that write if it is still in flight. Removing the last subscriber disables it, and a failed write rejects `unsubscribe`. Delivery to the removed subscriber stops at once either way.
-- Values arrive as one `notification { service, characteristic, value, timestamp }` event on the peripheral object per value, whatever the number of subscribers; the TS layer fans them out (and P2-04 batches per subscriber). Values of a characteristic nobody subscribes to are dropped.
+- Values arrive as one `notification { service, characteristic, value, timestamp }` event on the peripheral object per value, whatever the number of subscribers; the TS layer fans them out. Batched subscribers (P2-04) get `notificationBatch` events instead, and the per-value event stops when a characteristic has only batched subscribers (§4.10). The native `subscribe` takes the batch options in the request (`request.batch: { intervalMs, maxItems }`), which the TS layer validates (`intervalMs` a number ≥ 1, `maxItems` an integer ≥ 1, default 4096). Values of a characteristic nobody subscribes to are dropped.
 - `mode: 'auto'` takes notifications when a characteristic has both. A characteristic with neither, or without the asked mode, is `NOT_SUPPORTED`; Android also needs its CCCD to be discovered (`DESCRIPTOR_NOT_FOUND`). An explicit mode different from the active one is `INVALID_ARGUMENT`, as is an id already in use. Unsubscribing an unknown id, or after the connection ended, resolves.
 - An `unsubscribe` while the enabling write is still in flight rejects that subscriber's `subscribe` with `OPERATION_CANCELLED`, and the CCCD is disabled again after it is enabled, so nothing stays on.
 - Indications are acknowledged by the stack on both platforms.
@@ -978,7 +982,7 @@ export interface VirtualPeripheral {
 }
 ```
 
-Fake rules (P1-13): Bluetooth is on and every permission granted unless `installFakeBle` says otherwise; a peripheral advertises from `addPeripheral` until `advertise(false)`; a connect to a peripheral that isn't advertising waits (times out, or completes when it advertises), like a real absent device; writes store the value, so a later read returns it; writes without response take at most MTU − 3 bytes (20 at the default MTU); the MTU is negotiated like on Android, during the connect and in `requestMtu()`, as the smaller of the request and the peripheral's `mtu` (23 unless its config says more), and a failed setup exchange (`injectError` op `requestMtu`) is a `warning`; results and operation answers arrive on later timer ticks, so tests advance timers (Jest fake timers work). `notify()` reaches a connected client only while it has the CCCD enabled, as on a real peripheral, and a disconnect resets the CCCDs; `mode: 'indicate'` follows Android (allowed on a characteristic that also notifies). A peripheral's `name` is known once a scan delivered it or a connection reached `connected`. `getKnownPeripherals` drops ids without a virtual peripheral (like iOS); `getSystemConnectedPeripherals` lists the connected ones that have one of the services. Cancelled operations behave like the native queues: a queued one never runs, a running one finishes at the radio after its caller was answered. `writeStream` chunks like the native cores (each chunk a queued write, recorded in `writes`, queuing the next one first) and emits the same progress events.
+Fake rules (P1-13): Bluetooth is on and every permission granted unless `installFakeBle` says otherwise; a peripheral advertises from `addPeripheral` until `advertise(false)`; a connect to a peripheral that isn't advertising waits (times out, or completes when it advertises), like a real absent device; writes store the value, so a later read returns it; writes without response take at most MTU − 3 bytes (20 at the default MTU); the MTU is negotiated like on Android, during the connect and in `requestMtu()`, as the smaller of the request and the peripheral's `mtu` (23 unless its config says more), and a failed setup exchange (`injectError` op `requestMtu`) is a `warning`; results and operation answers arrive on later timer ticks, so tests advance timers (Jest fake timers work). `notify()` reaches a connected client only while it has the CCCD enabled, as on a real peripheral, and a disconnect resets the CCCDs; `mode: 'indicate'` follows Android (allowed on a characteristic that also notifies). A peripheral's `name` is known once a scan delivered it or a connection reached `connected`. `getKnownPeripherals` drops ids without a virtual peripheral (like iOS); `getSystemConnectedPeripherals` lists the connected ones that have one of the services. Cancelled operations behave like the native queues: a queued one never runs, a running one finishes at the radio after its caller was answered. `writeStream` chunks like the native cores (each chunk a queued write, recorded in `writes`, queuing the next one first) and emits the same progress events. Batched subscriptions batch like the native cores (same interval, overflow and end-of-link rules, `BUFFER_OVERFLOW` warning).
 
 ### 5.9 Usage examples
 
@@ -1250,6 +1254,11 @@ Parallelism: P0-06/P0-07 can run alongside P0-03/P0-04. With two people, P4 can 
 - [ ] **P2-04 Native notification batching** — deps: P1-08.
   Batching and the overflow policy from §4.10.
   **Accept:** 100 Hz × 20 B for 60 minutes with `intervalMs: 16` gives ≤ ~63 JS events/s and `dropped == 0`.
+  **Progress 2026-10-03 (open: waits for a test peripheral and the device matrix):** `Peripheral.subscribeBatched` on both platforms and in the fake (rules in §4.10 and §5.4, `BUFFER_OVERFLOW` in §4.11).
+  - Native: `NotificationBatcher` (Kotlin, Swift) per batched subscriber in `PeripheralSession`, the `notificationBatch` event in both bindings, and the module `warning` event on iOS (declared before, never sent).
+  - TS: `subscribeBatched`, `BatchOptions`, `NotificationBatch`, the batch event split back into values, and the fake's batching (`src/internal/notificationBatcher.ts`).
+  - Example: "100 Hz batched stream, 30 s / 60 min" in the developer checks (CONTROL SET_STREAM at 100 Hz × 20 B, `intervalMs` 16): frames, sequence gaps, drops and batches per second; the demo peripheral streams too. Maestro flow `e2e/maestro/batching.yaml` (30 s).
+  - Tests: 6 Android and 6 iOS (one batch per interval with arrival times, batched and unbatched sharing a characteristic, drop-oldest with one warning, unsubscribe, disconnect delivering first, 10 virtual minutes of 100 Hz × 20 B: ≤ 63 batches/s, in order, none dropped), 8 Jest on the public API (60 virtual seconds), 2 example Jest.
 - [ ] **P2-05 Multiple devices** — deps: P1-05.
   **Accept:** 5+ concurrent connections (several Bumble devices or boards) with independent queues; one device dropping doesn't affect the others.
 - [ ] **P2-06 Android GATT hygiene** — deps: P1-05.
@@ -1624,3 +1633,4 @@ Submit results (`BluetoothStatusCodes`, API 33+): 1 not enabled → `BLUETOOTH_P
 | v0.29 | 2026-10-03 | P2-01 in progress: reconnection policies on both platforms and in the fake. §4.8 diagram and invariants for `reconnecting` (entered from `ready` only, failed attempts wait again), reconnection rules in §5.4 (Android direct-then-`autoConnect`, iOS 17 auto-reconnect, subscription restore and `subscriptionEnded`); the Heart Rate example drops its app-level loop |
 | v0.30 | 2026-10-03 | P2-02 in progress: write-without-response flow control verified (Apple docs, AOSP sources) and written in §4.9, closing its ⚠️ VERIFY: Android congestion statuses (0x8F success, 0x81 resend), legacy refusals retried as busy, iOS waiting packets tied to their op. Appendix A.1 rows for 0x8F and 0x81 on writes without response; the example's 1 MB sink check |
 | v0.31 | 2026-10-03 | P2-03 in progress: `writeStream` on both platforms and in the fake. Stream rules in §5.4 (one packet per chunk by default for both write types, per-chunk timeouts, progress about every 1 % with the final report made by the TS layer), the queue's `first` option and the stream ordering rule in §4.9, two queue contract cases; the example's stream and abort checks |
+| v0.32 | 2026-10-03 | P2-04 in progress: native notification batching on both platforms and in the fake. §4.10 rules (per-subscriber batchers, the first value starts the interval, no per-value event without unbatched subscribers, one buffer plus lengths per batch event, collected values delivered when the link ends, drop-oldest with one `BUFFER_OVERFLOW` warning), the batch options in the subscribe request (§5.4), `BUFFER_OVERFLOW` in §4.11; the example's batched-stream check |

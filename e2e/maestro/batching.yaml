@@ -1,0 +1,27 @@
+# P2-04: the test peripheral streams 100 Hz × 20 B frames (CONTROL SET_STREAM) to a batched
+# subscription (intervalMs 16) for 30 s: at most ~63 batches/s, no sequence gaps, nothing dropped.
+# The 60-minute acceptance run is the "60 min" button of the same group.
+#   maestro test e2e/maestro/batching.yaml               # Bumble or the nRF52840 advertising
+#   maestro test -e DEMO=true e2e/maestro/batching.yaml  # the app's virtual test peripheral
+appId: expo.modules.blekit.example
+name: Batched notifications
+---
+- runFlow: _setup.yaml
+- tapOn:
+    id: tab-checks
+- scrollUntilVisible:
+    element:
+      id: batch-30s
+- tapOn:
+    id: batch-30s
+- extendedWaitUntil:
+    visible:
+      id: sink-status
+      text: "Batched stream (OK|FAILED).*"
+    timeout: 120000
+- copyTextFrom:
+    id: sink-status
+- evalScript: ${console.log(maestro.copiedText)}
+- assertVisible:
+    id: sink-status
+    text: "Batched stream OK: .* 0 gaps, 0 dropped.*"

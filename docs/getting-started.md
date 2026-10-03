@@ -161,6 +161,19 @@ device.addConnectionStateListener((state, error) => {
 - `backoff: 'fixed'` waits `initialDelayMs` each time; the default doubles it up to `maxDelayMs` (30 s). `maxAttempts` defaults to no limit.
 - On iOS 17 and later, `ios: { enableAutoReconnect: true }` lets the system reconnect first, which also works while the app is suspended.
 
+For fast notifications (sensors at 50 Hz and more), `subscribeBatched` collects the values natively and calls you at most once per interval, which keeps the JS thread free:
+
+```ts
+const subscription = await device.subscribeBatched(
+  SERVICE,
+  ACCELEROMETER,
+  ({ values, timestamps, dropped }) => {
+    // values[i] arrived at timestamps[i]; dropped > 0 only if more than maxItems came in one interval
+  },
+  { intervalMs: 16 } // at most ~63 calls a second
+);
+```
+
 ## With React hooks
 
 ```tsx

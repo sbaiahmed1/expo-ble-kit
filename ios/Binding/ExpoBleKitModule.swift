@@ -65,6 +65,13 @@ public class ExpoBleKitModule: Module {
       event.message = error.jsMessage
       self?.existingPeripheral(peripheralId)?.emit(event: "subscriptionEnded", payload: event)
     }
+    engine.onNotificationBatch = { [weak self] peripheralId, subscriptionId, batch in
+      let event = NotificationBatchEventRecord(subscriptionId: subscriptionId, batch: batch)
+      self?.existingPeripheral(peripheralId)?.emit(event: "notificationBatch", payload: event)
+    }
+    engine.onWarning = { [weak self] warning in
+      self?.sendEvent("warning", ["code": warning.code.rawValue, "message": warning.jsMessage])
+    }
     engine.onMtuChange = { [weak self] peripheralId, mtu in
       var event = MtuChangeEventRecord()
       event.mtu = mtu

@@ -61,6 +61,11 @@ export const BleErrorCode = {
   INVALID_OFFSET: 'INVALID_OFFSET',
   /** The Android connection is congested. Retry with a backoff. */
   CONGESTED: 'CONGESTED',
+  /**
+   * Values arrived faster than a batched subscription delivers them, and the oldest were dropped
+   * (counted in `NotificationBatch.dropped`). Sent as a warning.
+   */
+  BUFFER_OVERFLOW: 'BUFFER_OVERFLOW',
   /** Any other ATT or GATT status; see `gattStatus`. */
   GATT_ERROR: 'GATT_ERROR',
   /** Bonding failed or was rejected. */

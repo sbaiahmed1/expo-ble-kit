@@ -2,8 +2,8 @@ import type { BleError } from './errors';
 import type { UUID } from './uuid';
 
 // Public types of plan §5 (central role). Changing them requires updating the plan, docs and tests
-// together (Appendix B, rule 8). Members owned by later tasks (batching, logging, the peripheral
-// role, background, onboarding, Android-only peripheral calls) land with those tasks.
+// together (Appendix B, rule 8). Members owned by later tasks (logging, the peripheral role,
+// background, onboarding, Android-only peripheral calls) land with those tasks.
 
 /**
  * The state of the Bluetooth adapter, as the app sees it.
@@ -344,6 +344,31 @@ export interface StreamOptions extends OpOptions {
   onProgress?: (sent: number, total: number) => void;
 }
 
+/**
+ * Options of `Peripheral.subscribeBatched`. Values are collected natively and delivered at most
+ * once per `intervalMs`, which keeps fast notifications from flooding the JS thread.
+ */
+export interface BatchOptions extends SubscribeOptions {
+  /** The longest a value waits before delivery, in milliseconds. 16 gives at most ~63 batches/s. */
+  intervalMs: number;
+  /**
+   * The most values one batch holds. When more arrive within `intervalMs`, the oldest are dropped
+   * and counted in `dropped`, and a `BUFFER_OVERFLOW` warning is sent (once per subscription).
+   * @defaultValue 4096
+   */
+  maxItems?: number;
+}
+
+/** Values a batched subscription received during one interval, oldest first. */
+export interface NotificationBatch {
+  /** The values, each its own `Uint8Array`. */
+  values: Uint8Array[];
+  /** When each value arrived on the phone, in epoch milliseconds (captured natively). */
+  timestamps: number[];
+  /** Values dropped since the previous batch because more than `maxItems` arrived. */
+  dropped: number;
+}
+
 /** Options of `Peripheral.subscribe`. */
 export interface SubscribeOptions extends OpOptions {
   /**
@@ -438,6 +463,17 @@ export interface Peripheral {
     characteristic: UUID,
     onValue: (value: Uint8Array, timestamp: number) => void,
     options?: SubscribeOptions
+  ): Promise<CharacteristicSubscription>;
+  /**
+   * Like `subscribe`, with values collected natively and delivered as batches at most once per
+   * `options.intervalMs`: one JS event per batch instead of one per value. Batched and unbatched
+   * subscribers can share a characteristic. A disconnect delivers the values already collected.
+   */
+  subscribeBatched(
+    service: UUID,
+    characteristic: UUID,
+    onBatch: (batch: NotificationBatch) => void,
+    options: BatchOptions
   ): Promise<CharacteristicSubscription>;
 
   /** Reads the signal strength of the connection, in dBm. */

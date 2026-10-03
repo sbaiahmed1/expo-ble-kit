@@ -11,6 +11,7 @@ import expo.modules.blekit.core.CentralEngine
 import expo.modules.blekit.core.CoreError
 import expo.modules.blekit.core.EpochClock
 import expo.modules.blekit.core.HandlerExecutor
+import expo.modules.blekit.core.NotificationBatch
 import expo.modules.blekit.core.PermissionResult
 import expo.modules.blekit.core.PermissionStatus
 import expo.modules.blekit.core.SessionState
@@ -218,6 +219,7 @@ class ExpoBleKitModule : Module() {
       }
 
       // JS numbers its subscriptions; one CCCD per characteristic is shared by them (plan §5.4).
+      // `request.batch` null: one `notification` event per value; else `notificationBatch` (P2-04).
       AsyncFunction("subscribe") {
           ref: PeripheralObject,
           request: AttributeRequestRecord,
@@ -235,6 +237,7 @@ class ExpoBleKitModule : Module() {
             subscribeMode,
             subscriptionId,
             request.timeout(),
+            request.batch?.toSpec(),
             promise.settler(),
           )
         }
@@ -370,6 +373,27 @@ class ExpoBleKitModule : Module() {
       peripheral.emit(
         "subscriptionEnded",
         mapOf("subscriptionId" to subscriptionId, "code" to error.code.value, "message" to error.jsMessage),
+      )
+    }
+
+    // One buffer for all values, cut by `lengths` in JS: fewer objects across the bridge.
+    override fun onNotificationBatch(peripheralId: String, subscriptionId: Int, batch: NotificationBatch) {
+      val peripheral = synchronized(peripherals) { peripherals[peripheralId]?.get() } ?: return
+      val bytes = ByteArray(batch.values.sumOf { it.size })
+      var offset = 0
+      batch.values.forEach { value ->
+        value.copyInto(bytes, offset)
+        offset += value.size
+      }
+      peripheral.emit(
+        "notificationBatch",
+        mapOf(
+          "subscriptionId" to subscriptionId,
+          "bytes" to bytes,
+          "lengths" to batch.values.map { it.size },
+          "timestamps" to batch.timestamps,
+          "dropped" to batch.dropped,
+        ),
       )
     }
 

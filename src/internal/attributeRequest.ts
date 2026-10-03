@@ -1,5 +1,11 @@
 import { BleError } from '../errors';
-import type { OpOptions, StreamOptions, SubscribeOptions, WriteOptions } from '../types';
+import type {
+  BatchOptions,
+  OpOptions,
+  StreamOptions,
+  SubscribeOptions,
+  WriteOptions,
+} from '../types';
 import { normalizeUUID } from '../uuid';
 
 /** Plan §4.9: every GATT operation has a timeout, 10 s unless the call says otherwise. */
@@ -14,7 +20,18 @@ export interface NativeAttributeRequest {
   timeoutMs: number;
   /** Set when an `AbortSignal` may cancel the operation; see `cancelOperation`. */
   operationId?: number;
+  /** Set for a batched subscribe (P2-04). */
+  batch?: NativeBatch;
 }
+
+/** How a batched subscriber receives values (plan §4.10). */
+export interface NativeBatch {
+  intervalMs: number;
+  maxItems: number;
+}
+
+/** `BatchOptions.maxItems` when the call doesn't say (plan §4.10). */
+export const DEFAULT_BATCH_MAX_ITEMS = 4096;
 
 function invalid(option: string, problem: string): BleError {
   return new BleError('INVALID_ARGUMENT', `Invalid ${option}: ${problem}`);
@@ -68,6 +85,19 @@ export function toStreamParameters(options: StreamOptions = {}): {
     throw invalid('onProgress', 'expected a function');
   }
   return { withResponse: options.withResponse ?? false, chunkSize: chunkSize ?? null, onProgress };
+}
+
+/** Validates `BatchOptions` and applies the default `maxItems` (plan §4.10). */
+export function toNativeBatch(options: BatchOptions | undefined): NativeBatch {
+  const intervalMs = options?.intervalMs;
+  if (typeof intervalMs !== 'number' || !Number.isFinite(intervalMs) || intervalMs < 1) {
+    throw invalid('intervalMs', 'expected a number of milliseconds of 1 or more');
+  }
+  const { maxItems = DEFAULT_BATCH_MAX_ITEMS } = options!;
+  if (!Number.isInteger(maxItems) || maxItems < 1) {
+    throw invalid('maxItems', 'expected an integer of 1 or more');
+  }
+  return { intervalMs, maxItems };
 }
 
 /** A stream's data: bytes of any length (Appendix B rule 6). */

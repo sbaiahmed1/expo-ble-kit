@@ -1,5 +1,6 @@
 package expo.modules.blekit.binding
 
+import expo.modules.blekit.core.BatchSpec
 import expo.modules.blekit.core.BleCapability
 import expo.modules.blekit.core.ConnectSpec
 import expo.modules.blekit.core.CoreError
@@ -166,4 +167,16 @@ class AttributeRequestRecord : Record {
 
   /** Set when JS may cancel the operation (an `AbortSignal`); see `cancelOperation`. */
   @Field val operationId: Int? = null
+
+  /** Set for a batched subscribe (P2-04). */
+  @Field val batch: BatchRecord? = null
+}
+
+/** A batched subscription's options (P2-04). The TS layer validates them and applies the defaults. */
+class BatchRecord : Record {
+  @Field val intervalMs: Double = 16.0
+
+  @Field val maxItems: Int = BatchSpec.DEFAULT_MAX_ITEMS
+
+  fun toSpec() = BatchSpec(intervalMs.toLong().coerceAtLeast(1), maxItems)
 }

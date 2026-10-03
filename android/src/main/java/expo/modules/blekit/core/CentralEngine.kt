@@ -40,6 +40,9 @@ class CentralEngine(
 
     /** A subscription ended while its connection reconnects (P2-01). */
     fun onSubscriptionEnded(peripheralId: String, subscriptionId: Int, error: CoreError)
+
+    /** A batched subscriber's values (P2-04). */
+    fun onNotificationBatch(peripheralId: String, subscriptionId: Int, batch: NotificationBatch)
   }
 
   var listener: Listener? = null
@@ -157,10 +160,11 @@ class CentralEngine(
         }
         listener?.onConnectionStateChange(address, state, error)
       }.also { session ->
-        session.onNotification = { ref, value ->
-          val timestamp = clock.epochMs(executor.nowMs()).toDouble()
+        session.clock = { clock.epochMs(executor.nowMs()).toDouble() }
+        session.onNotification = { ref, value, timestamp ->
           listener?.onNotification(address, ref.serviceUuid, ref.uuid, value, timestamp)
         }
+        session.onNotificationBatch = { id, batch -> listener?.onNotificationBatch(address, id, batch) }
         session.onMtuChange = { mtu -> listener?.onMtuChange(address, mtu) }
         session.onSubscriptionEnded = { id, error -> listener?.onSubscriptionEnded(address, id, error) }
         session.onWarning = { warning -> listener?.onWarning(warning) }
@@ -314,9 +318,10 @@ class CentralEngine(
     mode: SubscribeMode,
     subscriptionId: Int,
     timeoutMs: Long?,
+    batch: BatchSpec?,
     completion: (Result<Unit>) -> Unit,
   ) = withSession(peripheralId, completion) {
-    it.subscribe(service, characteristic, mode, subscriptionId, timeoutMs, completion)
+    it.subscribe(service, characteristic, mode, subscriptionId, timeoutMs, batch, completion)
   }
 
   fun requestMtu(

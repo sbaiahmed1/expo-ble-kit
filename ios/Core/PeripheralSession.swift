@@ -117,8 +117,17 @@ final class PeripheralSession: PeripheralLikeDelegate {
   var subscriptionKeys: [Int: String] = [:]
   /// Running and queued operations JS may cancel, by the id JS gave them.
   var cancellable: [Int: GattOperation] = [:]
-  /// Notifications and indications of subscribed characteristics, on the engine's queue.
-  var onNotification: ((CharacteristicLike, Data) -> Void)?
+  /// Notifications and indications for the characteristic's unbatched subscribers, on the engine's
+  /// queue, with their arrival time from `clock`.
+  var onNotification: ((CharacteristicLike, Data, Double) -> Void)?
+  /// A batched subscriber's values (P2-04), on the engine's queue.
+  var onNotificationBatch: ((_ subscriptionId: Int, NotificationBatch) -> Void)?
+  /// Something worth telling the app that isn't an error of a call, like a batch overflow.
+  var onWarning: ((CoreError) -> Void)?
+  /// Arrival times of notifications; the engine makes them epoch milliseconds (plan §4.10).
+  lazy var clock: () -> Double = { [unowned self] in scheduler.now * 1000 }
+  /// The batched subscribers' batchers, by subscription id (P2-04).
+  var batchers: [Int: NotificationBatcher] = [:]
   var nextDiscoveryId = 0
 
   static let disconnectTimeout: TimeInterval = 5
@@ -340,6 +349,8 @@ final class PeripheralSession: PeripheralLikeDelegate {
       onServicesChange?([])
     }
     // The state changes first, so callbacks of the operations failed below see the final state.
+    // Batched subscribers get their last values before JS hears that their subscriptions ended.
+    flushBatches(Array(batchers.keys))
     setState(.disconnected, error)
     queue.failAll(CoreError(.disconnected, "Disconnected"))
     // Subscriptions end with the connection (plan §4.8); a reconnection keeps them (P2-01).
@@ -363,11 +374,5 @@ final class PeripheralSession: PeripheralLikeDelegate {
       reported = now
       onStateChange?(now, error)
     }
-  }
-
-  /// The state as JS sees it: the setup steps of a reconnection read as `reconnecting` (plan §4.8).
-  var visibleState: SessionState {
-    let settingUp = state == .connecting || state == .connected || state == .discovering
-    return reconnectAttempt > 0 && settingUp ? .reconnecting : state
   }
 }

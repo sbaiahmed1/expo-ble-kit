@@ -13,8 +13,8 @@ import { TestProfile } from '../lib/gattNames';
 // Demo mode: the test peripheral (test-peripherals/profile.json) as a virtual device in the fake
 // adapter, so the screens, their tests and the Maestro flows run without hardware. The driver
 // plays the peripheral's side: heart-rate notifications, ECHO_WRITE → ECHO_READ, SINK_NO_RSP →
-// SINK_COUNTER, and CONTROL DISCONNECT_AFTER and RESET_COUNTERS. Real hardware runs the Bumble
-// peripheral or the nRF52840 instead.
+// SINK_COUNTER, STREAM frames, and CONTROL SET_STREAM, DISCONNECT_AFTER and RESET_COUNTERS. Real
+// hardware runs the Bumble peripheral or the nRF52840 instead.
 
 type ProfileValue = {
   pattern?: { length: number; multiplier: number; offset: number; modulus: number };
@@ -74,6 +74,22 @@ export function driveTestPeripheral(device: VirtualPeripheral): () => void {
   let bpm = hrSpec.minBpm;
   let handled = 0;
   let sinkCount = 0;
+  let streamSequence = 0;
+  let streamTimer: ReturnType<typeof setInterval> | null = null;
+  /** CONTROL SET_STREAM: frames of `frameSize` bytes at `rateHz` (0 stops), see profile.stream. */
+  const setStream = (rateHz: number, frameSize: number) => {
+    if (streamTimer) clearInterval(streamTimer);
+    streamTimer = null;
+    if (rateHz === 0) return;
+    streamTimer = setInterval(() => {
+      if (!device.isNotifying(TEST, TestProfile.STREAM)) return;
+      const frame = new Uint8Array(frameSize);
+      new DataView(frame.buffer).setUint32(0, streamSequence, true);
+      for (let j = 4; j < frameSize; j++) frame[j] = (streamSequence + j - 4) % 256;
+      streamSequence++;
+      device.notify(TEST, TestProfile.STREAM, frame);
+    }, 1000 / rateHz);
+  };
   const setSinkCounter = (count: number) => {
     sinkCount = count;
     const value = new Uint8Array(4);
@@ -98,14 +114,18 @@ export function driveTestPeripheral(device: VirtualPeripheral): () => void {
       } else if (characteristic === TestProfile.CONTROL && value[0] === 0x02 && value.length >= 5) {
         const delayMs = value[1] | (value[2] << 8) | (value[3] << 16) | (value[4] << 24);
         timers.push(setTimeout(() => device.disconnect('peer'), delayMs));
+      } else if (characteristic === TestProfile.CONTROL && value[0] === 0x01 && value.length >= 5) {
+        setStream(value[1] | (value[2] << 8), value[3] | (value[4] << 8));
       } else if (characteristic === TestProfile.CONTROL && value[0] === 0x04) {
         setSinkCounter(0);
+        streamSequence = 0;
       }
     }
   }, 50);
   return () => {
     clearInterval(heartRate);
     clearInterval(writes);
+    if (streamTimer) clearInterval(streamTimer);
     timers.forEach(clearTimeout);
   };
 }

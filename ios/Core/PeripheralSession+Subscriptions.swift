@@ -41,6 +41,7 @@ extension PeripheralSession {
     mode: SubscribeMode,
     subscriptionId: Int,
     timeout: TimeInterval?,
+    batch: BatchSpec? = nil,
     completion: @escaping SubscriptionCompletion
   ) {
     let entry: CharacteristicSubscriptions
@@ -51,6 +52,9 @@ extension PeripheralSession {
     }
     let key = Self.key(entry.characteristic)
     subscriptionKeys[subscriptionId] = key
+    if let batch {
+      batchers[subscriptionId] = batcher(subscriptionId, batch)
+    }
     if entry.enabled {
       entry.subscribers.insert(subscriptionId)
       return completion(.success(()))
@@ -69,6 +73,7 @@ extension PeripheralSession {
         entry.subscribers.formUnion(waiting.keys)
       case .failure:
         waiting.keys.forEach { self?.subscriptionKeys.removeValue(forKey: $0) }
+        waiting.keys.forEach { self?.batchers.removeValue(forKey: $0)?.cancel() }
         if self?.subscriptions[key] === entry, entry.subscribers.isEmpty {
           self?.subscriptions.removeValue(forKey: key)
         }
@@ -80,6 +85,7 @@ extension PeripheralSession {
   /// Ends `subscriptionId`: delivery stops at once; the last subscriber also disables the CCCD, and a
   /// failed write rejects. Unknown ids and lost connections succeed.
   func unsubscribe(_ subscriptionId: Int, timeout: TimeInterval?, completion: @escaping SubscriptionCompletion) {
+    batchers.removeValue(forKey: subscriptionId)?.cancel()
     guard let key = subscriptionKeys.removeValue(forKey: subscriptionId), let entry = subscriptions[key] else {
       return completion(.success(()))
     }
@@ -107,14 +113,45 @@ extension PeripheralSession {
     complete(.setNotify, Self.key(characteristic), error, output: .none)
   }
 
-  /// Only subscribed characteristics deliver; a stray value after unsubscribing is dropped.
+  /// Only subscribed characteristics deliver; a stray value after unsubscribing is dropped. Batched
+  /// subscribers collect the value (P2-04); the others get it as it comes.
   func deliverNotification(_ value: Data, from characteristic: CharacteristicLike) {
-    if subscriptions[Self.key(characteristic)]?.enabled == true {
-      onNotification?(characteristic, value)
+    guard let entry = subscriptions[Self.key(characteristic)], entry.enabled else {
+      return
+    }
+    let timestamp = clock()
+    var unbatched = false
+    for id in entry.subscribers {
+      if let batcher = batchers[id] {
+        batcher.add(value, timestamp: timestamp)
+      } else {
+        unbatched = true
+      }
+    }
+    if unbatched {
+      onNotification?(characteristic, value, timestamp)
+    }
+  }
+
+  /// The batched subscribers get what they collected before their subscriptions end with the link.
+  func flushBatches(_ ids: [Int]) {
+    for id in ids {
+      batchers.removeValue(forKey: id)?.flush()
     }
   }
 
   // MARK: Private
+
+  /// A batcher for `subscriptionId`, whose first drop is a BUFFER_OVERFLOW warning (plan §4.10).
+  private func batcher(_ subscriptionId: Int, _ spec: BatchSpec) -> NotificationBatcher {
+    NotificationBatcher(spec, scheduler: scheduler) { [weak self] in
+      let message = "Subscription \(subscriptionId) dropped values: more than \(spec.maxItems) arrived within "
+        + "\(Int(spec.interval * 1000)) ms. Later drops are counted in NotificationBatch.dropped"
+      self?.onWarning?(CoreError(.bufferOverflow, message))
+    } deliver: { [weak self] batch in
+      self?.onNotificationBatch?(subscriptionId, batch)
+    }
+  }
 
   private func subscriptionEntry(
     _ path: AttributePath,

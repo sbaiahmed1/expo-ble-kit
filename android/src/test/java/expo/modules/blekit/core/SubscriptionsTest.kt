@@ -45,7 +45,7 @@ class SubscriptionsTest {
 
   @Before
   fun connect() {
-    session.onNotification = { ref, value -> received += ref.uuid to value.toList() }
+    session.onNotification = { ref, value, _ -> received += ref.uuid to value.toList() }
     session.connect(ConnectSpec(15_000, requestMtu = null)) {}
     client = device.clients.single()
     client.callback.onConnectionStateChange(GATT_SUCCESS, ConnectionStates.CONNECTED)

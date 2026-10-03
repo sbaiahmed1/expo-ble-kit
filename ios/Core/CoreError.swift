@@ -31,6 +31,7 @@ struct CoreError: Error, Equatable {
     case invalidAttributeLength = "INVALID_ATTRIBUTE_LENGTH"
     case invalidOffset = "INVALID_OFFSET"
     case congested = "CONGESTED"
+    case bufferOverflow = "BUFFER_OVERFLOW"
     case gattError = "GATT_ERROR"
     case bondFailed = "BOND_FAILED"
     case advertisingFailed = "ADVERTISING_FAILED"

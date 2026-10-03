@@ -93,7 +93,13 @@ extension ExpoBleKitModule {
       guard let subscribeMode = SubscribeMode(rawValue: mode) else {
         return done(.failure(CoreError(.invalidArgument, "Invalid subscribe mode: \(mode)")))
       }
-      session.subscribe(request.path, mode: subscribeMode, subscriptionId: subscriptionId, timeout: request.timeout) {
+      session.subscribe(
+        request.path,
+        mode: subscribeMode,
+        subscriptionId: subscriptionId,
+        timeout: request.timeout,
+        batch: request.batch?.spec
+      ) {
         done($0.map { nil })
       }
     }

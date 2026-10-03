@@ -4,9 +4,14 @@ import type {
   PeripheralObjectEvents,
 } from '../ExpoBleKit.types';
 import { BleError, BleErrorCode } from '../errors';
-import type { NativeAttributeRequest, NativeSubscribeMode } from '../internal/attributeRequest';
+import type {
+  NativeAttributeRequest,
+  NativeBatch,
+  NativeSubscribeMode,
+} from '../internal/attributeRequest';
 import type { NativeConnectOptions } from '../internal/connectOptions';
 import { DEFAULT_DISCOVERY_TIMEOUT_MS, reconnectDelay } from '../internal/connectOptions';
+import { NotificationBatcher } from '../internal/notificationBatcher';
 import {
   GattQueue,
   type GattOperation,
@@ -348,6 +353,8 @@ class FakePeripheralHandle implements NativePeripheralPort {
     }
   >();
   private subscriptionKeys = new Map<number, string>();
+  /** The batched subscribers' batchers, by subscription id (P2-04). */
+  private batchers = new Map<number, NotificationBatcher>();
   /** Running and queued operations JS may cancel, by the id JS gave them. */
   private cancellable = new Map<number, GattOperation>();
   /** writeStream calls in flight, by operation id. */
@@ -603,6 +610,9 @@ class FakePeripheralHandle implements NativePeripheralPort {
       );
     }
     this.subscriptionKeys.set(subscriptionId, key);
+    if (request.batch) {
+      this.batchers.set(subscriptionId, this.batcher(subscriptionId, request.batch));
+    }
     if (entry?.enabled) {
       entry.subscribers.add(subscriptionId);
       return;
@@ -637,6 +647,8 @@ class FakePeripheralHandle implements NativePeripheralPort {
       (error: BleError) => {
         subscription.waiting.forEach((waiter, id) => {
           this.subscriptionKeys.delete(id);
+          this.batchers.get(id)?.cancel();
+          this.batchers.delete(id);
           waiter.reject(error);
         });
         subscription.waiting.clear();
@@ -651,6 +663,8 @@ class FakePeripheralHandle implements NativePeripheralPort {
   async unsubscribe(subscriptionId: number, timeoutMs: number): Promise<void> {
     const key = this.subscriptionKeys.get(subscriptionId);
     this.subscriptionKeys.delete(subscriptionId);
+    this.batchers.get(subscriptionId)?.cancel();
+    this.batchers.delete(subscriptionId);
     const entry = key === undefined ? undefined : this.subscriptions.get(key);
     if (!key || !entry) {
       return;
@@ -716,9 +730,19 @@ class FakePeripheralHandle implements NativePeripheralPort {
 
   // Called by the adapter and the virtual device
 
+  /** Batched subscribers collect the value (P2-04); the others get it as it comes. */
   deliverNotification(characteristic: UUID, service: UUID, value: Uint8Array): void {
-    if (this.subscriptions.get(`${service}/${characteristic}`)?.enabled) {
-      this.emitter.emit('notification', { service, characteristic, value, timestamp: Date.now() });
+    const entry = this.subscriptions.get(`${service}/${characteristic}`);
+    if (!entry?.enabled) return;
+    const timestamp = Date.now();
+    let unbatched = false;
+    entry.subscribers.forEach((id) => {
+      const batcher = this.batchers.get(id);
+      if (batcher) batcher.add(value, timestamp);
+      else unbatched = true;
+    });
+    if (unbatched) {
+      this.emitter.emit('notification', { service, characteristic, value, timestamp });
     }
   }
 
@@ -859,8 +883,48 @@ class FakePeripheralHandle implements NativePeripheralPort {
     }
   }
 
+  /** A batcher for `subscriptionId`, whose first drop is a BUFFER_OVERFLOW warning (plan §4.10). */
+  private batcher(subscriptionId: number, spec: NativeBatch): NotificationBatcher {
+    return new NotificationBatcher(
+      spec.intervalMs,
+      spec.maxItems,
+      this.scheduler,
+      () =>
+        this.adapter.warn(
+          BleErrorCode.BUFFER_OVERFLOW,
+          `Subscription ${subscriptionId} dropped values: more than ${spec.maxItems} arrived within ` +
+            `${spec.intervalMs} ms. Later drops are counted in NotificationBatch.dropped`
+        ),
+      ({ values, timestamps, dropped }) => {
+        const bytes = new Uint8Array(values.reduce((sum, value) => sum + value.length, 0));
+        let offset = 0;
+        for (const value of values) {
+          bytes.set(value, offset);
+          offset += value.length;
+        }
+        const lengths = values.map((value) => value.length);
+        this.emitter.emit('notificationBatch', {
+          subscriptionId,
+          bytes,
+          lengths,
+          timestamps,
+          dropped,
+        });
+      }
+    );
+  }
+
+  /** The batched subscribers get what they collected before their subscriptions end with the link. */
+  private flushBatches(ids: Iterable<number>): void {
+    for (const id of [...ids]) {
+      this.batchers.get(id)?.flush();
+      this.batchers.delete(id);
+    }
+  }
+
   private endSubscription(key: string, entry: { subscribers: Set<number> }, error: BleError): void {
     this.subscriptions.delete(key);
+    this.flushBatches(entry.subscribers);
     entry.subscribers.forEach((subscriptionId) => {
       this.subscriptionKeys.delete(subscriptionId);
       this.emitter.emit('subscriptionEnded', {
@@ -976,6 +1040,8 @@ class FakePeripheralHandle implements NativePeripheralPort {
     this.attemptRunning = false;
     this.services = [];
     this.mtu = MIN_MTU;
+    // Batched subscribers get their last values before JS hears that their subscriptions ended.
+    this.flushBatches(this.batchers.keys());
     // The state changes first, so callbacks of the operations failed below see the final state.
     this.setState('disconnected', error);
     this.queue.failAll(fail(BleErrorCode.DISCONNECTED, 'Disconnected'));

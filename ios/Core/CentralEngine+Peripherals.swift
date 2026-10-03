@@ -62,3 +62,25 @@ extension CentralEngine {
     }
   }
 }
+
+// MARK: Connection callbacks, routed to the sessions
+
+extension CentralEngine {
+  func central(_ central: CentralManaging, didConnect peripheral: PeripheralLike) {
+    sessions[peripheral.identifier]?.didConnect()
+  }
+
+  func central(_ central: CentralManaging, didFailToConnect peripheral: PeripheralLike, error: Error?) {
+    sessions[peripheral.identifier]?.didFailToConnect(error)
+  }
+
+  func central(
+    _ central: CentralManaging,
+    didDisconnect peripheral: PeripheralLike,
+    isReconnecting: Bool,
+    error: Error?
+  ) {
+    // `isReconnecting`: iOS 17 auto-reconnect (opt-in, ConnectSpec.enableAutoReconnect) connects again.
+    sessions[peripheral.identifier]?.didDisconnect(error, isReconnecting: isReconnecting)
+  }
+}

@@ -28,8 +28,8 @@ export async function readSinkCounter(peripheral: Peripheral): Promise<number> {
   return new DataView(value.buffer, value.byteOffset, value.byteLength).getUint32(0, true);
 }
 
-/** Resets the counters, and checks SINK_COUNTER reads 0. */
-async function resetCounters(peripheral: Peripheral): Promise<void> {
+/** CONTROL RESET_COUNTERS (SINK_COUNTER, the STREAM and INDICATE sequences); checks SINK_COUNTER. */
+export async function resetCounters(peripheral: Peripheral): Promise<void> {
   await peripheral.write(TestProfile.TEST, TestProfile.CONTROL, RESET_COUNTERS);
   for (let polls = 0; (await readSinkCounter(peripheral)) !== 0; polls++) {
     if (polls === 10) throw new Error('SINK_COUNTER did not reset');

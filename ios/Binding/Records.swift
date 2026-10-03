@@ -103,6 +103,8 @@ struct AttributeRequestRecord: Record {
   @Field var timeoutMs: Double = 10_000
   /// Set when JS may cancel the operation (an `AbortSignal`); see `cancelOperation`.
   @Field var operationId: Int?
+  /// Set for a batched subscribe (P2-04).
+  @Field var batch: BatchRecord?
 
   var path: AttributePath {
     AttributePath(service: service, characteristic: characteristic, descriptor: descriptor)
@@ -110,6 +112,36 @@ struct AttributeRequestRecord: Record {
 
   var timeout: TimeInterval {
     timeoutMs / 1000
+  }
+}
+
+/// A batched subscription's options (P2-04). The TS layer validates them and applies the defaults.
+struct BatchRecord: Record {
+  @Field var intervalMs: Double = 16
+  @Field var maxItems: Int = BatchSpec.defaultMaxItems
+
+  var spec: BatchSpec {
+    BatchSpec(interval: max(intervalMs, 1) / 1000, maxItems: maxItems)
+  }
+}
+
+/// Payload of a peripheral's `notificationBatch` event (P2-04): the values in one buffer, cut by
+/// `lengths` in JS, which crosses the bridge as fewer objects.
+struct NotificationBatchEventRecord: Record {
+  @Field var subscriptionId: Int = 0
+  @Field var bytes = Data()
+  @Field var lengths: [Int] = []
+  @Field var timestamps: [Double] = []
+  @Field var dropped: Int = 0
+
+  init() {}
+
+  init(subscriptionId: Int, batch: NotificationBatch) {
+    self.subscriptionId = subscriptionId
+    bytes = batch.values.reduce(into: Data()) { $0.append($1) }
+    lengths = batch.values.map(\.count)
+    timestamps = batch.timestamps
+    dropped = batch.dropped
   }
 }
 

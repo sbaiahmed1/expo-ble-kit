@@ -1,5 +1,6 @@
 import type {
   ConnectionStateEvent,
+  NotificationBatchEvent,
   NotificationEvent,
   StreamProgressEvent,
   SubscriptionEndedEvent,
@@ -11,8 +12,10 @@ import {
   operationTimeout,
   subscribeMode,
   toNativeAttributeRequest,
+  toNativeBatch,
   toStreamParameters,
   type NativeAttributeRequest,
+  type NativeBatch,
 } from './internal/attributeRequest';
 import {
   DEFAULT_DISCOVERY_TIMEOUT_MS,
@@ -30,9 +33,11 @@ import {
 } from './internal/operations';
 import type { NativePeripheralPort } from './internal/port';
 import type {
+  BatchOptions,
   CharacteristicSubscription,
   ConnectionState,
   ConnectOptions,
+  NotificationBatch,
   OpOptions,
   Peripheral,
   Service,
@@ -46,10 +51,12 @@ import { normalizeUUID, type UUID } from './uuid';
 let nextSubscriptionId = 1;
 
 /** One subscriber; several share a characteristic's CCCD natively (plan §5.4). */
+/** One subscriber: values come one by one (`onValue`), or as batches (`onBatch`, P2-04). */
 interface Subscriber {
   service: UUID;
   characteristic: UUID;
-  onValue: (value: Uint8Array, timestamp: number) => void;
+  onValue?: (value: Uint8Array, timestamp: number) => void;
+  onBatch?: (batch: NotificationBatch) => void;
   subscription: SubscriptionHandle;
 }
 
@@ -82,6 +89,9 @@ export class PeripheralImpl implements Peripheral {
 
   constructor(private readonly native: NativePeripheralPort) {
     native.addListener('notification', (event: NotificationEvent) => this.deliver(event));
+    native.addListener('notificationBatch', (event: NotificationBatchEvent) =>
+      this.deliverBatch(event)
+    );
     native.addListener('streamProgress', (event: StreamProgressEvent) => {
       if (event.operationId !== null)
         this.streams.get(event.operationId)?.(event.sent, event.total);
@@ -256,43 +266,75 @@ export class PeripheralImpl implements Peripheral {
     options: SubscribeOptions = {}
   ): Promise<CharacteristicSubscription> {
     return guard(
-      async () => {
+      () => {
         if (typeof onValue !== 'function') {
           throw invalid('onValue', 'expected a function');
         }
-        const request = toNativeAttributeRequest(service, characteristic, undefined, options);
-        const mode = subscribeMode(options);
-        const signal = checkSignal(options.signal);
-        if (signal?.aborted) {
-          throw abortedError();
-        }
-        const id = nextSubscriptionId++;
-        const subscription = new SubscriptionHandle(this, id);
-        // Registered first: a value can arrive before the native call resolves.
-        this.subscribers.set(id, {
-          service: request.service,
-          characteristic: request.characteristic,
-          onValue,
-          subscription,
-        });
-        // Aborting removes this subscriber natively, which rejects the pending subscribe.
-        const onAbort = () => {
-          this.native.unsubscribe(id, request.timeoutMs).catch(() => {});
-        };
-        signal?.addEventListener('abort', onAbort);
-        try {
-          await this.native.subscribe(request, id, mode);
-          return subscription;
-        } catch (error) {
-          this.subscribers.delete(id);
-          subscription.active = false;
-          throw error;
-        } finally {
-          signal?.removeEventListener('abort', onAbort);
-        }
+        return this.addSubscriber(service, characteristic, options, { onValue }, undefined);
       },
       this.context(service, characteristic)
     );
+  }
+
+  subscribeBatched(
+    service: UUID,
+    characteristic: UUID,
+    onBatch: (batch: NotificationBatch) => void,
+    options: BatchOptions
+  ): Promise<CharacteristicSubscription> {
+    return guard(
+      () => {
+        if (typeof onBatch !== 'function') {
+          throw invalid('onBatch', 'expected a function');
+        }
+        const batch = toNativeBatch(options);
+        return this.addSubscriber(service, characteristic, options, { onBatch }, batch);
+      },
+      this.context(service, characteristic)
+    );
+  }
+
+  /** Registers a subscriber, then subscribes natively (with `batch` for a batched one). */
+  private async addSubscriber(
+    service: UUID,
+    characteristic: UUID,
+    options: SubscribeOptions,
+    receiver: Pick<Subscriber, 'onValue' | 'onBatch'>,
+    batch: NativeBatch | undefined
+  ): Promise<CharacteristicSubscription> {
+    const request = {
+      ...toNativeAttributeRequest(service, characteristic, undefined, options),
+      ...(batch && { batch }),
+    };
+    const mode = subscribeMode(options);
+    const signal = checkSignal(options.signal);
+    if (signal?.aborted) {
+      throw abortedError();
+    }
+    const id = nextSubscriptionId++;
+    const subscription = new SubscriptionHandle(this, id);
+    // Registered first: a value can arrive before the native call resolves.
+    this.subscribers.set(id, {
+      service: request.service,
+      characteristic: request.characteristic,
+      ...receiver,
+      subscription,
+    });
+    // Aborting removes this subscriber natively, which rejects the pending subscribe.
+    const onAbort = () => {
+      this.native.unsubscribe(id, request.timeoutMs).catch(() => {});
+    };
+    signal?.addEventListener('abort', onAbort);
+    try {
+      await this.native.subscribe(request, id, mode);
+      return subscription;
+    } catch (error) {
+      this.subscribers.delete(id);
+      subscription.active = false;
+      throw error;
+    } finally {
+      signal?.removeEventListener('abort', onAbort);
+    }
   }
 
   /**
@@ -389,6 +431,7 @@ export class PeripheralImpl implements Peripheral {
   private deliver(event: NotificationEvent): void {
     this.subscribers.forEach((subscriber) => {
       if (
+        subscriber.onValue &&
         subscriber.service === event.service &&
         subscriber.characteristic === event.characteristic
       ) {
@@ -399,6 +442,23 @@ export class PeripheralImpl implements Peripheral {
         }
       }
     });
+  }
+
+  /** A batch for one subscriber: `bytes` is cut into its values (P2-04). */
+  private deliverBatch(event: NotificationBatchEvent): void {
+    const onBatch = this.subscribers.get(event.subscriptionId)?.onBatch;
+    if (!onBatch) return;
+    let offset = 0;
+    const values = event.lengths.map((length) => {
+      const value = event.bytes.slice(offset, offset + length);
+      offset += length;
+      return value;
+    });
+    try {
+      onBatch({ values, timestamps: event.timestamps, dropped: event.dropped });
+    } catch (error) {
+      reportListenerError(error);
+    }
   }
 
   private connectionError(event: ConnectionStateEvent): BleError {

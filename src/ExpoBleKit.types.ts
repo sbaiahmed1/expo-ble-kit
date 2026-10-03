@@ -39,12 +39,22 @@ export type SubscriptionEndedEvent = {
   message: string;
 };
 
+/** A batched subscriber's values (P2-04): `bytes` holds them one after another, cut by `lengths`. */
+export type NotificationBatchEvent = {
+  subscriptionId: number;
+  bytes: Uint8Array;
+  lengths: number[];
+  timestamps: number[];
+  dropped: number;
+};
+
 /** Bytes a writeStream wrote so far (P2-03), keyed by its operation id. */
 export type StreamProgressEvent = { operationId: number | null; sent: number; total: number };
 
 export type PeripheralObjectEvents = {
   connectionStateChange: (event: ConnectionStateEvent) => void;
   notification: (event: NotificationEvent) => void;
+  notificationBatch: (event: NotificationBatchEvent) => void;
   mtuChange: (event: MtuChangeEvent) => void;
   subscriptionEnded: (event: SubscriptionEndedEvent) => void;
   streamProgress: (event: StreamProgressEvent) => void;

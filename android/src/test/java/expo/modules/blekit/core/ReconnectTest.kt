@@ -30,7 +30,7 @@ class ReconnectTest {
     log += "${state.js}${error?.let { " ${it.code}" } ?: ""}"
   }.apply {
     onSubscriptionEnded = { id, error -> ended += "$id ${error.code}" }
-    onNotification = { _, value -> received += value.toList() }
+    onNotification = { _, value, _ -> received += value.toList() }
   }
   private val client: FakeGattClient get() = device.clients.last()
 

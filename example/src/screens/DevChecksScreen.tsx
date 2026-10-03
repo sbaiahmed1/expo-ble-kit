@@ -14,10 +14,12 @@ import {
   type ScanSession,
 } from 'expo-ble-kit';
 
+import { describeBatchedStream, runBatchedStream } from '../lib/batchedStream';
 import { abortStreamToSink, sendToSink, streamToSink, type SinkReport } from '../lib/sink';
 
 // Developer checks on the public API (P1-12): adapter state, permissions, scanning, connections
-// to a device that isn't there, and throughput to the test peripheral (P2-02, P2-03).
+// to a device that isn't there, and throughput and batching with the test peripheral (P2-02 to
+// P2-04).
 
 const TEST_SERVICE = '0c6c1000-b347-4cfa-9827-1c5a13658519';
 const TEST_NAME = 'BleKit-Test';
@@ -76,6 +78,7 @@ export function DevChecksScreen() {
   const [log, setLog] = useState<string[]>([]);
   const [connectLog, setConnectLog] = useState<string[]>([]);
   const [sinkStatus, setSinkStatus] = useState('');
+  const batchRun = useRef<AbortController | null>(null);
   const [nearbyEnabled, setNearbyEnabled] = useState(false);
   const nearby = useScan({ enabled: nearbyEnabled, maxResults: 5 });
   const { peripheral, state: absentState, error: absentError } = usePeripheral(ABSENT_ID);
@@ -276,6 +279,18 @@ export function DevChecksScreen() {
       );
     });
 
+  // P2-04 accept: 100 Hz × 20 B batched every 16 ms: ≤ ~63 JS events/s, nothing dropped, no gaps.
+  const batchedStream = (seconds: number) =>
+    withTestPeripheral(async (device) => {
+      batchRun.current = new AbortController();
+      const report = await runBatchedStream(device, {
+        seconds,
+        signal: batchRun.current.signal,
+        onUpdate: (sofar) => setSinkStatus(describeBatchedStream(sofar, false)),
+      });
+      return describeBatchedStream(report);
+    });
+
   async function scanForTest() {
     addLog('scanFor TEST service, 10 s');
     try {
@@ -323,12 +338,27 @@ export function DevChecksScreen() {
         </Text>
       </Group>
       <Group name="Test peripheral">
-        <Button testID="sink-1mb" title="Send 1 MB without response" onPress={sinkMegabyte} />
-        <Button testID="stream-1mb" title="Stream 1 MB (writeStream)" onPress={streamMegabyte} />
-        <Button testID="stream-abort" title="Stream 1 MB, abort at 25 %" onPress={abortStream} />
         <Text testID="sink-status" style={styles.result}>
           {sinkStatus}
         </Text>
+        <Button testID="sink-1mb" title="Send 1 MB without response" onPress={sinkMegabyte} />
+        <Button testID="stream-1mb" title="Stream 1 MB (writeStream)" onPress={streamMegabyte} />
+        <Button testID="stream-abort" title="Stream 1 MB, abort at 25 %" onPress={abortStream} />
+        <Button
+          testID="batch-30s"
+          title="100 Hz batched stream, 30 s"
+          onPress={() => batchedStream(30)}
+        />
+        <Button
+          testID="batch-60min"
+          title="100 Hz batched stream, 60 min"
+          onPress={() => batchedStream(3600)}
+        />
+        <Button
+          testID="batch-stop"
+          title="Stop the batched stream"
+          onPress={() => batchRun.current?.abort()}
+        />
       </Group>
       <Group name="Scanning">
         <Button testID="scan-all" title="Scan all" onPress={() => startSession('all', {})} />

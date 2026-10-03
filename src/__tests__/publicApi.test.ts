@@ -21,7 +21,6 @@ const LATER: Record<string, Record<string, string>> = {
     setLogHandler: 'P2-07',
   },
   Peripheral: {
-    subscribeBatched: 'P2-04',
     addServicesChangedListener: 'P2-06',
     android: 'P5-01',
     openL2CAPChannel: 'P5-03',
@@ -30,8 +29,6 @@ const LATER: Record<string, Record<string, string>> = {
 
 /** Interfaces of the later tasks themselves (P2–P5), not yet in src/types.ts. */
 const LATER_INTERFACES = new Set([
-  'BatchOptions',
-  'NotificationBatch',
   'L2CAPChannel',
   'LogEntry',
   'ServiceDefinition',

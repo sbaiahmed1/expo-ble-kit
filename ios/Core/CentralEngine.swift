@@ -38,6 +38,10 @@ final class CentralEngine: CentralManagingDelegate {
   var onNotification: ((_ peripheralId: String, _ service: String, _ characteristic: String, Data, Double) -> Void)?
   /// The MTU of a ready connection changed (P1-09), on `queue`.
   var onMtuChange: ((_ peripheralId: String, Int) -> Void)?
+  /// A batched subscriber's values (P2-04), on `queue`.
+  var onNotificationBatch: ((_ peripheralId: String, _ subscriptionId: Int, NotificationBatch) -> Void)?
+  /// Something worth telling the app that isn't an error of a call, on `queue`.
+  var onWarning: ((CoreError) -> Void)?
 
   private let environment: Environment
   private let scheduler: Scheduling
@@ -338,18 +342,7 @@ extension CentralEngine {
       stateLock.unlock()
       onMtuChange?(identifier.uuidString, mtu)
     }
-    session.onNotification = { [weak self] characteristic, value in
-      guard let self else {
-        return
-      }
-      onNotification?(
-        identifier.uuidString,
-        characteristic.parentService?.uuid.fullUUIDString ?? "",
-        characteristic.uuid.fullUUIDString,
-        value,
-        clock.epochMs(monotonic: scheduler.now)
-      )
-    }
+    wireNotifications(session, identifier)
     session.onServicesChange = { [weak self] services in
       guard let self else {
         return
@@ -362,30 +355,35 @@ extension CentralEngine {
     session.connect(spec, completion: completion)
   }
 
+  /// Notifications, batches (P2-04) and warnings of `session`, with epoch timestamps (plan §4.10).
+  private func wireNotifications(_ session: PeripheralSession, _ identifier: UUID) {
+    session.clock = { [weak self] in
+      guard let self else {
+        return 0
+      }
+      return clock.epochMs(monotonic: scheduler.now)
+    }
+    session.onNotification = { [weak self] characteristic, value, timestamp in
+      self?.onNotification?(
+        identifier.uuidString,
+        characteristic.parentService?.uuid.fullUUIDString ?? "",
+        characteristic.uuid.fullUUIDString,
+        value,
+        timestamp
+      )
+    }
+    session.onNotificationBatch = { [weak self] subscriptionId, batch in
+      self?.onNotificationBatch?(identifier.uuidString, subscriptionId, batch)
+    }
+    session.onWarning = { [weak self] warning in self?.onWarning?(warning) }
+  }
+
   private func publishConnectionState(_ peripheralId: String, _ state: SessionState, _ error: CoreError?, mtu: Int?) {
     stateLock.lock()
     connectionStates[peripheralId] = state.js
     mtus[peripheralId] = mtu
     stateLock.unlock()
     onConnectionStateChange?(peripheralId, state, error)
-  }
-
-  func central(_ central: CentralManaging, didConnect peripheral: PeripheralLike) {
-    sessions[peripheral.identifier]?.didConnect()
-  }
-
-  func central(_ central: CentralManaging, didFailToConnect peripheral: PeripheralLike, error: Error?) {
-    sessions[peripheral.identifier]?.didFailToConnect(error)
-  }
-
-  func central(
-    _ central: CentralManaging,
-    didDisconnect peripheral: PeripheralLike,
-    isReconnecting: Bool,
-    error: Error?
-  ) {
-    // `isReconnecting`: iOS 17 auto-reconnect (opt-in, ConnectSpec.enableAutoReconnect) connects again.
-    sessions[peripheral.identifier]?.didDisconnect(error, isReconnecting: isReconnecting)
   }
 
   private func runPendingConnects(_ result: Result<CentralManaging, CoreError>) {

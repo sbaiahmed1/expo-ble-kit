@@ -5,6 +5,12 @@ import Foundation
 // again, and restore the subscriptions before the connection counts as ready again.
 
 extension PeripheralSession {
+  /// The state as JS sees it: the setup steps of a reconnection read as `reconnecting` (plan §4.8).
+  var visibleState: SessionState {
+    let settingUp = state == .connecting || state == .connected || state == .discovering
+    return reconnectAttempt > 0 && settingUp ? .reconnecting : state
+  }
+
   /// A ready connection was lost unexpectedly and a policy is set. `system`: iOS 17 auto-reconnect
   /// connects again by itself, so no attempts of ours run until it fails.
   func startReconnecting(_ error: CoreError, system: Bool) {
@@ -123,6 +129,7 @@ extension PeripheralSession {
 
   private func endSubscriptions(_ entry: CharacteristicSubscriptions, _ error: CoreError) {
     subscriptions.removeValue(forKey: Self.key(entry.characteristic))
+    flushBatches(Array(entry.subscribers))
     for id in entry.subscribers {
       subscriptionKeys.removeValue(forKey: id)
       onSubscriptionEnded?(id, error)

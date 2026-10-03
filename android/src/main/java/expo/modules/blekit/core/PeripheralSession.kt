@@ -32,6 +32,13 @@ enum class SessionState {
     }
 }
 
+/** How a batched subscriber receives values (plan §4.10, P2-04). */
+data class BatchSpec(val intervalMs: Long, val maxItems: Int = DEFAULT_MAX_ITEMS) {
+  companion object {
+    const val DEFAULT_MAX_ITEMS = 4096
+  }
+}
+
 /** JS `SubscribeOptions.mode` (plan §5.4). `AUTO` takes notify when the characteristic has both. */
 enum class SubscribeMode {
   AUTO,
@@ -107,8 +114,17 @@ class PeripheralSession(
   /** A non-fatal problem, such as a refused MTU request during setup. */
   var onWarning: ((CoreError) -> Unit)? = null
 
-  /** Notifications and indications of subscribed characteristics, on the BLE thread. */
-  var onNotification: ((GattCharacteristicRef, ByteArray) -> Unit)? = null
+  /**
+   * Notifications and indications for the characteristic's unbatched subscribers, on the BLE
+   * thread, with their arrival time from [clock].
+   */
+  var onNotification: ((GattCharacteristicRef, ByteArray, Double) -> Unit)? = null
+
+  /** A batched subscriber's values (P2-04). */
+  var onNotificationBatch: ((subscriptionId: Int, batch: NotificationBatch) -> Unit)? = null
+
+  /** Arrival times of notifications; the engine makes them epoch milliseconds (plan §4.10). */
+  var clock: () -> Double = { executor.nowMs().toDouble() }
 
   /**
    * Subscriptions that end while the connection lives on (reconnecting): a reconnection without
@@ -126,6 +142,9 @@ class PeripheralSession(
   }
 
   private val subscriptions = mutableMapOf<String, CharacteristicSubscriptions>()
+
+  /** The batched subscribers' batchers, by subscription id (P2-04). */
+  private val batchers = mutableMapOf<Int, NotificationBatcher>()
 
   /** Characteristic key of every active or pending subscription id. */
   private val subscriptionKeys = mutableMapOf<Int, String>()
@@ -490,6 +509,7 @@ class PeripheralSession(
     mode: SubscribeMode,
     subscriptionId: Int,
     timeoutMs: Long?,
+    batch: BatchSpec? = null,
     completion: (Result<Unit>) -> Unit,
   ) {
     val entry = try {
@@ -520,6 +540,7 @@ class PeripheralSession(
     }
     val key = key(entry.ref)
     subscriptionKeys[subscriptionId] = key
+    batch?.let { batchers[subscriptionId] = batcher(subscriptionId, it) }
     if (entry.enabled) {
       entry.subscribers += subscriptionId
       return completion(Result.success(Unit))
@@ -538,6 +559,7 @@ class PeripheralSession(
         },
         onFailure = {
           waiting.keys.forEach(subscriptionKeys::remove)
+          waiting.keys.forEach { batchers.remove(it)?.cancel() }
           if (subscriptions[key] === entry && entry.subscribers.isEmpty()) subscriptions.remove(key)
         },
       )
@@ -551,6 +573,7 @@ class PeripheralSession(
    */
   fun unsubscribe(subscriptionId: Int, timeoutMs: Long?, completion: (Result<Unit>) -> Unit) {
     val key = subscriptionKeys.remove(subscriptionId) ?: return completion(Result.success(Unit))
+    batchers.remove(subscriptionId)?.cancel()
     val entry = subscriptions[key] ?: return completion(Result.success(Unit))
     entry.subscribers -= subscriptionId
     entry.waiting.remove(subscriptionId)?.invoke(
@@ -564,6 +587,34 @@ class PeripheralSession(
       return completion(Result.success(Unit))
     }
     setNotification(entry, enable = false, timeoutMs, completion = completion)
+  }
+
+  /** A batcher for [subscriptionId], whose first drop is a BUFFER_OVERFLOW warning (plan §4.10). */
+  private fun batcher(subscriptionId: Int, spec: BatchSpec) = NotificationBatcher(
+    spec.intervalMs,
+    spec.maxItems,
+    executor,
+    onFirstDrop = {
+      val message = "Subscription $subscriptionId dropped values: more than ${spec.maxItems} arrived within " +
+        "${spec.intervalMs} ms. Later drops are counted in NotificationBatch.dropped"
+      onWarning?.invoke(CoreError(CoreError.Code.BUFFER_OVERFLOW, message))
+    },
+  ) { onNotificationBatch?.invoke(subscriptionId, it) }
+
+  /** One value to the characteristic's subscribers: the batched ones collect it (P2-04). */
+  private fun deliver(entry: CharacteristicSubscriptions, value: ByteArray) {
+    val timestamp = clock()
+    var unbatched = false
+    for (id in entry.subscribers) {
+      val batcher = batchers[id]
+      if (batcher == null) unbatched = true else batcher.add(value, timestamp)
+    }
+    if (unbatched) onNotification?.invoke(entry.ref, value, timestamp)
+  }
+
+  /** The batched subscribers get what they collected before their subscriptions end with the link. */
+  private fun flushBatches(ids: Collection<Int>) {
+    ids.forEach { batchers.remove(it)?.flush() }
   }
 
   /** Android needs both the local registration and the CCCD write on the peripheral. */
@@ -694,8 +745,9 @@ class PeripheralSession(
 
     override fun onCharacteristicChanged(ref: GattCharacteristicRef, value: ByteArray) {
       // Only subscribed characteristics deliver; a stray value after unsubscribing is dropped.
-      if (attemptGeneration == generation && subscriptions[key(ref)]?.enabled == true) {
-        onNotification?.invoke(ref, value)
+      val entry = subscriptions[key(ref)]
+      if (attemptGeneration == generation && entry?.enabled == true) {
+        deliver(entry, value)
       }
     }
 
@@ -993,6 +1045,7 @@ class PeripheralSession(
 
   private fun endSubscriptions(entry: CharacteristicSubscriptions, error: CoreError) {
     subscriptions.remove(key(entry.ref))
+    flushBatches(entry.subscribers)
     entry.subscribers.forEach { id ->
       subscriptionKeys.remove(id)
       onSubscriptionEnded?.invoke(id, error)
@@ -1135,6 +1188,8 @@ class PeripheralSession(
     // Handles, the database and the MTU can differ on the next connection.
     services = emptyList()
     mtu = DEFAULT_MTU
+    // Batched subscribers get their last values before JS hears that their subscriptions ended.
+    flushBatches(batchers.keys.toList())
     // The state changes first, so callbacks of the operations failed below see the final state.
     setState(SessionState.DISCONNECTED, error)
     queue.failAll(CoreError(CoreError.Code.DISCONNECTED, "Disconnected from $address"))
