@@ -1,0 +1,17 @@
+# Part of e2e/soak/bluetooth-toggle.sh: launches the app and starts the toggle soak, which keeps
+# operations running until _soak-toggle-report.yaml stops it. Not a flow of its own.
+appId: expo.modules.blekit.example
+---
+- runFlow: _setup.yaml
+- tapOn:
+    id: tab-checks
+- scrollUntilVisible:
+    element:
+      id: long-scan-stop
+- tapOn:
+    id: toggle-soak-start
+- extendedWaitUntil:
+    visible:
+      id: soak-status
+      text: "Toggle soak running.*"
+    timeout: 20000

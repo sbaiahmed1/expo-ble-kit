@@ -1,0 +1,26 @@
+# P2-09: the toggle soak in demo mode, where the check turns the virtual adapter off and on 50
+# times itself: every operation settles with a coded error, right after each off.
+#   maestro test -e DEMO=true e2e/maestro/soak-toggle.yaml
+# On a phone, Bluetooth is toggled from the host: e2e/soak/bluetooth-toggle.sh.
+appId: expo.modules.blekit.example
+name: Bluetooth toggle soak (demo)
+---
+- runFlow: _setup.yaml
+- tapOn:
+    id: tab-checks
+- scrollUntilVisible:
+    element:
+      id: long-scan-stop
+- tapOn:
+    id: toggle-soak-start
+- extendedWaitUntil:
+    visible:
+      id: soak-status
+      text: "Toggle soak (OK|FAILED).*"
+    timeout: 300000
+- copyTextFrom:
+    id: soak-status
+- evalScript: ${console.log(maestro.copiedText)}
+- assertVisible:
+    id: soak-status
+    text: "Toggle soak OK: 50 offs, .* 0 uncoded, 0 late, 0 unsettled.*"

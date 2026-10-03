@@ -3,8 +3,9 @@ import { BleManager, type Peripheral } from 'expo-ble-kit';
 import { TestProfile } from './gattNames';
 
 // P2-06 acceptance: a service change on the test peripheral (CONTROL TOGGLE_SECONDARY_SERVICE)
-// invalidates the cache and emits servicesChanged; 500 connect/disconnect cycles leave no GATT
-// client open (Android `openGattClients`).
+// invalidates the cache and emits servicesChanged. P2-06 and the soak suite (P2-09, plan §8.5):
+// 500 connect/disconnect cycles succeed at least 99% of the time and leave no GATT client open
+// (Android `openGattClients`) and no zombie session.
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 const TOGGLE_SECONDARY = Uint8Array.of(0x03);
@@ -76,11 +77,16 @@ export type CyclesReport = {
   failures: number;
   /** Android only: GATT clients still open at the end (should be 0). */
   openGattClients: number | null;
+  /** Sessions not disconnected, or with operations queued, at the end (should be 0). */
+  zombieSessions: number;
   ms: number;
   ok: boolean;
 };
 
-/** Connects and disconnects `cycles` times, then reads the open GATT client count. */
+/** The soak suite's bar (plan §8.5): at least 99% of the connects succeed. */
+const MIN_SUCCESS = 0.99;
+
+/** Connects and disconnects `cycles` times, then reads the open GATT clients and the sessions. */
 export async function runConnectCycles(
   peripheral: Peripheral,
   cycles: number,
@@ -103,18 +109,30 @@ export async function runConnectCycles(
   await sleep(500);
   const diagnostics = await BleManager.getDiagnostics();
   const openGattClients = diagnostics.android?.openGattClients ?? null;
+  const zombieSessions = diagnostics.sessions.filter(
+    (session) => session.state !== 'disconnected' || session.queueDepth > 0
+  ).length;
   return {
     cycles: done,
     failures,
     openGattClients,
+    zombieSessions,
     ms: Date.now() - started,
-    ok: done === cycles && failures === 0 && (openGattClients ?? 0) === 0,
+    ok:
+      done === cycles &&
+      done - failures >= done * MIN_SUCCESS &&
+      (openGattClients ?? 0) === 0 &&
+      zombieSessions === 0,
   };
 }
 
+/** `Connect cycles OK: 500 cycles, 99.8% connected (1 failed), open GATT clients 0, …`. */
 export function describeCycles(report: CyclesReport): string {
+  const connected = report.cycles ? ((report.cycles - report.failures) / report.cycles) * 100 : 0;
   return (
-    `Connect cycles ${report.ok ? 'OK' : 'FAILED'}: ${report.cycles} cycles, ${report.failures} failed, ` +
-    `open GATT clients ${report.openGattClients ?? 'n/a'}, ${(report.ms / 1000).toFixed(0)} s`
+    `Connect cycles ${report.ok ? 'OK' : 'FAILED'}: ${report.cycles} cycles, ` +
+    `${Number(connected.toFixed(1))}% connected (${report.failures} failed), ` +
+    `open GATT clients ${report.openGattClients ?? 'n/a'}, zombie sessions ${report.zombieSessions}, ` +
+    `${(report.ms / 1000).toFixed(0)} s`
   );
 }

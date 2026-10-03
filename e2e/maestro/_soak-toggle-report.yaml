@@ -1,0 +1,22 @@
+# Part of e2e/soak/bluetooth-toggle.sh, after the toggles: stops the toggle soak and checks that
+# the app saw every off (TOGGLES, from the script) and that every operation settled with a coded
+# error, right after each off. Not a flow of its own.
+appId: expo.modules.blekit.example
+---
+- scrollUntilVisible:
+    element:
+      id: toggle-soak-stop
+- tapOn:
+    id: toggle-soak-stop
+# Operations in flight get 25 s to settle on their own.
+- extendedWaitUntil:
+    visible:
+      id: soak-status
+      text: "Toggle soak (OK|FAILED).*"
+    timeout: 60000
+- copyTextFrom:
+    id: soak-status
+- evalScript: ${console.log(maestro.copiedText)}
+- assertVisible:
+    id: soak-status
+    text: "Toggle soak OK: ${TOGGLES} offs, .* 0 uncoded, 0 late, 0 unsettled.*"

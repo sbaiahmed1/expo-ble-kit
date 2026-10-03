@@ -24,6 +24,7 @@ import {
   toNativeConnectOptions,
   validateMtu,
 } from './internal/connectOptions';
+import { log } from './internal/log';
 import {
   abortedError,
   cancellable,
@@ -33,7 +34,6 @@ import {
   reportListenerError,
   toBleError,
 } from './internal/operations';
-import { log } from './internal/log';
 import type { NativePeripheralPort } from './internal/port';
 import type {
   BatchOptions,

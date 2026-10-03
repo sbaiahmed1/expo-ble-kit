@@ -3524,6 +3524,7 @@ __metadata:
     "@types/react": "npm:~19.2.2"
     expo: "npm:~57.0.26"
     expo-build-properties: "npm:~57.0.22"
+    expo-keep-awake: "npm:~57.0.2"
     jest: "npm:^29.7.0"
     jest-expo: "npm:~57.0.5"
     react: "npm:19.2.3"

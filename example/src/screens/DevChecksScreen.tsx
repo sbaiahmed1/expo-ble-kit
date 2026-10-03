@@ -25,10 +25,12 @@ import {
 } from '../lib/gattHygiene';
 import { describeMultipleDevices, runMultipleDevices } from '../lib/multipleDevices';
 import { abortStreamToSink, sendToSink, streamToSink, type SinkReport } from '../lib/sink';
+import { checkStyles as styles, Group } from './checksUi';
+import { SoakChecks } from './SoakChecks';
 
 // Developer checks on the public API (P1-12): adapter state, permissions, scanning, connections
 // to a device that isn't there, throughput, batching, several test peripherals at once, GATT
-// hygiene and the log (P2-02 to P2-07).
+// hygiene and the log (P2-02 to P2-07), and the soak suite (P2-09).
 
 const TEST_SERVICE = '0c6c1000-b347-4cfa-9827-1c5a13658519';
 const TEST_NAME = 'BleKit-Test';
@@ -420,6 +422,7 @@ export function DevChecksScreen() {
         />
         <Button testID="connect-cycles" title="Connect/disconnect ×500" onPress={connectCycles} />
       </Group>
+      <SoakChecks />
       <Group name="Scanning">
         <Button testID="scan-all" title="Scan all" onPress={() => startSession('all', {})} />
         <Button
@@ -498,19 +501,3 @@ export function DevChecksScreen() {
     </View>
   );
 }
-
-function Group(props: { name: string; children: React.ReactNode }) {
-  return (
-    <View style={styles.group}>
-      <Text style={styles.groupHeader}>{props.name}</Text>
-      {props.children}
-    </View>
-  );
-}
-
-const styles = {
-  groupHeader: { fontSize: 20, marginBottom: 20 },
-  group: { marginBottom: 16, backgroundColor: '#fff', borderRadius: 10, padding: 20 },
-  value: { fontSize: 24, marginBottom: 10 },
-  result: { marginTop: 10, fontSize: 12 },
-};

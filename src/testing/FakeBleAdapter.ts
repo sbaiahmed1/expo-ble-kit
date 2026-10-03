@@ -11,13 +11,13 @@ import type {
 } from '../internal/attributeRequest';
 import type { NativeConnectOptions } from '../internal/connectOptions';
 import { DEFAULT_DISCOVERY_TIMEOUT_MS, reconnectDelay } from '../internal/connectOptions';
-import { NotificationBatcher } from '../internal/notificationBatcher';
 import {
   GattQueue,
   type GattOperation,
   type GattOperationKind,
   type GattResult,
 } from '../internal/gattQueue';
+import { NotificationBatcher } from '../internal/notificationBatcher';
 import type { NativeBleKitPort, NativeDiagnostics, NativePeripheralPort } from '../internal/port';
 import type { NativeScanOptions } from '../internal/scanOptions';
 import { timerScheduler, type Scheduler } from '../internal/scheduler';

@@ -90,18 +90,26 @@ class AndroidLeScanner(
       callback.onScanFailed(SCAN_FAILED_INTERNAL_ERROR)
       return
     }
+    // Android calls ScanCallback on the main thread; the core runs on the BLE thread (plan §4.7),
+    // so every callback hops to `handler`. Callbacks from a scan stopped meanwhile are dropped.
     val platformCallback =
       object : ScanCallback() {
+        private fun onBleThread(block: () -> Unit) {
+          handler.post { if (platformCallbacks[callback] === this) block() }
+        }
+
         override fun onScanResult(callbackType: Int, result: ScanResult) {
-          callback.onScanResults(listOf(result.toRecord(context, handler)))
+          val record = result.toRecord(context, handler)
+          onBleThread { callback.onScanResults(listOf(record)) }
         }
 
         override fun onBatchScanResults(results: MutableList<ScanResult>) {
-          callback.onScanResults(results.map { it.toRecord(context, handler) })
+          val records = results.map { it.toRecord(context, handler) }
+          onBleThread { callback.onScanResults(records) }
         }
 
         override fun onScanFailed(errorCode: Int) {
-          callback.onScanFailed(errorCode)
+          onBleThread { callback.onScanFailed(errorCode) }
         }
       }
     platformCallbacks[callback] = platformCallback

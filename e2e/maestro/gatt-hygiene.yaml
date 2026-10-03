@@ -37,4 +37,4 @@ name: GATT hygiene
 - evalScript: ${console.log(maestro.copiedText)}
 - assertVisible:
     id: sink-status
-    text: "Connect cycles OK: 500 cycles, 0 failed, open GATT clients (0|n/a).*"
+    text: "Connect cycles OK: 500 cycles, .* open GATT clients (0|n/a), zombie sessions 0.*"

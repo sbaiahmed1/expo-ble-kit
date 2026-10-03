@@ -1,0 +1,27 @@
+# P2-09: a filtered scan left running for 45 minutes with the screen on keeps delivering results
+# every minute (Android restarts long scans before the system downgrades them, plan §4.4).
+#   maestro test e2e/maestro/long-scan.yaml                # Bumble or the nRF52840 advertising
+#   maestro test -e FILTER=apple e2e/maestro/long-scan.yaml  # no test peripheral: Apple devices nearby
+appId: expo.modules.blekit.example
+name: Long scan
+---
+- evalScript: "${output.scanButton = typeof FILTER !== 'undefined' && FILTER == 'apple' ? 'long-scan-apple' : 'long-scan-test'}"
+- runFlow: _setup.yaml
+- tapOn:
+    id: tab-checks
+- scrollUntilVisible:
+    element:
+      id: long-scan-stop
+- tapOn:
+    id: ${output.scanButton}
+- extendedWaitUntil:
+    visible:
+      id: soak-status
+      text: "Long scan (OK|FAILED).*"
+    timeout: 3000000
+- copyTextFrom:
+    id: soak-status
+- evalScript: ${console.log(maestro.copiedText)}
+- assertVisible:
+    id: soak-status
+    text: "Long scan OK: .* 45 / 45 min, .* no empty minute.*"

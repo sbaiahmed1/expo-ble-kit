@@ -142,6 +142,11 @@ export function driveTestPeripheral(device: VirtualPeripheral): () => void {
 /** Test peripherals in demo mode: BleKit-Test, then BleKit-Test-2… like extra hardware instances. */
 export const DEMO_DEVICES = 5;
 
+let running: FakeBle | null = null;
+
+/** The fake while demo mode runs, so checks can drive it (the soak suite turns its adapter off). */
+export const runningDemo = (): FakeBle | null => running;
+
 /**
  * Installs the fake with `count` test peripherals advertising (BleKit-Test first), and starts their
  * drivers. `device` is BleKit-Test.
@@ -158,5 +163,10 @@ export function startDemo(count = DEMO_DEVICES): {
     ble.addPeripheral(testPeripheralConfig(n === 0 ? name : `${name}-${n + 1}`))
   );
   const stops = devices.map(driveTestPeripheral);
-  return { ble, device: devices[0], devices, stop: () => stops.forEach((stop) => stop()) };
+  running = ble;
+  const stop = () => {
+    stops.forEach((stopDriver) => stopDriver());
+    if (running === ble) running = null;
+  };
+  return { ble, device: devices[0], devices, stop };
 }

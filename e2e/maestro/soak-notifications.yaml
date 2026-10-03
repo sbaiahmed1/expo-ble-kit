@@ -1,0 +1,25 @@
+# P2-09: 60 minutes of notifications at 100 Hz × 20 B, batched: no gaps, nothing dropped. Run
+# e2e/soak/meminfo.sh alongside on Android for the memory growth (under 10%).
+#   maestro test e2e/maestro/soak-notifications.yaml   # Bumble or the nRF52840 advertising
+appId: expo.modules.blekit.example
+name: Notification soak (60 min)
+---
+- runFlow: _setup.yaml
+- tapOn:
+    id: tab-checks
+- scrollUntilVisible:
+    element:
+      id: batch-60min
+- tapOn:
+    id: batch-60min
+- extendedWaitUntil:
+    visible:
+      id: sink-status
+      text: "Batched stream (OK|FAILED).*"
+    timeout: 3900000
+- copyTextFrom:
+    id: sink-status
+- evalScript: ${console.log(maestro.copiedText)}
+- assertVisible:
+    id: sink-status
+    text: "Batched stream OK: .* 0 gaps, 0 dropped.*"
