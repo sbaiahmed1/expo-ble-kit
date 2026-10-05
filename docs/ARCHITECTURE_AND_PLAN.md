@@ -191,6 +191,7 @@ expo-ble-kit/
 │   ├── bumble/                       # Python virtual peripheral for the Android emulator (netsim)
 │   └── zephyr/                       # nRF52840 firmware implementing the same profile
 ├── e2e/maestro/                      # E2E flows for the example app
+├── e2e/macos-central/                # a Mac as the central for the example's GATT server (P4-01, P4-02)
 ├── benchmarks/                       # native reference apps (Kotlin, Swift) for docs/benchmarks.md (P2-08)
 └── skills/                           # co-located agent skill (P6) ⚠️ VERIFY Expo convention
 ```
@@ -1421,7 +1422,7 @@ Parallelism: P0-06/P0-07 can run alongside P0-03/P0-04. With two people, P4 can 
   - JS: `BleManager.openGattServer`, `GattServer` (`notify` came with P4-02), `ServiceDefinition`, `CharacteristicDefinition`, `AttributePermission`, `ReadRequest`, `WriteRequest`; definitions validated identically for both platforms (unique characteristic UUIDs, supported properties, permissions matching properties, static values read-only, descriptors 2901 and 2904 only, values ≤ 512 bytes); thrown BleErrors become ATT errors; one handler per kind, replaced by the next. Testing: `FakeBle.connectCentral()` and `VirtualCentral` (§5.8), the fake server in `src/testing/FakeGattServer.ts`.
   - Example: a **GATT server** group (`src/screens/ServerChecks.tsx`) serving the test profile's TEST service (`src/lib/serverProfile.ts`: STATIC_READ static, LONG_READ shifting by one per handler call so a stitched read would show, ECHO_WRITE/ECHO_READ, SINK_NO_RSP/SINK_COUNTER, STREAM with its user description); the profile value decoder moved to `src/lib/profile.ts`.
   - Tests: 10 Android (`GattServerTest`, the contract included), 6 Swift (`GattServerTests`), 22 Jest (16 server, 6 contract), 1 example.
-  - iPhone 14 Pro Max (iOS 27.0.1, 2026-10-05), with a Mac as the central (a CoreBluetooth test app connecting to the phone's own Apple advertisement, since the app can't advertise before P4-03): the example's server publishes the TEST service (9 characteristics) and answers the static read (20 bytes), two 512-byte long reads each from one handler result (the second shifted by one), a 300-byte long write read back through ECHO, and 20 writes without response (SINK_COUNTER 2000). The Mac negotiated a large MTU, so the MTU 23 case of the acceptance and nRF Connect remain open.
+  - iPhone 14 Pro Max (iOS 27.0.1, 2026-10-05), with a Mac as the central (`e2e/macos-central`, which connects to the phone's own Apple advertisement since the app can't advertise before P4-03): the example's server publishes the TEST service (9 characteristics) and answers the static read (20 bytes), two 512-byte long reads each from one handler result (the second shifted by one), a 300-byte long write read back through ECHO, and 20 writes without response (SINK_COUNTER 2000). The Mac negotiated a large MTU, so the MTU 23 case of the acceptance and nRF Connect remain open.
 - [ ] **P4-02 Server notifications with flow control** — deps: P4-01.
   **Accept:** 100 Hz notifications from phone B to phone A for 10 minutes with zero sequence gaps.
   **Progress 2026-10-05 (open: the acceptance needs two phones and advertising, P4-03; the Galaxy A52 is the only phone here):** `GattServer.notify` works on both platforms in unit tests and the fake (rules in §5.5 and the §4.4 notes).

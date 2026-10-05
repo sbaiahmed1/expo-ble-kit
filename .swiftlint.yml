@@ -1,6 +1,7 @@
 included:
   - ios
   - benchmarks/ios-reference
+  - e2e/macos-central
 excluded:
   - ios/build
   - ios/.build
