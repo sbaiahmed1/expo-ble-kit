@@ -55,12 +55,13 @@ extension ExpoBleKitModule {
       session.writeStream(
         request.path,
         stream,
-        onProgress: { [weak ref] sent, total in
-          var event = StreamProgressEventRecord()
+        // Weak: the session keeps this closure for the whole stream.
+        onProgress: { [weak object = ref] sent, total in
+          let event = StreamProgressEventRecord()
           event.operationId = request.operationId
           event.sent = sent
           event.total = total
-          ref?.emit(event: "streamProgress", payload: event)
+          object?.emit(event: "streamProgress", payload: event)
         },
         completion: { done($0.map { _ in nil }) }
       )

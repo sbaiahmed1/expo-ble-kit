@@ -10,7 +10,7 @@ final class GattServerObject: SharedObject, GattServerListener, @unchecked Senda
   var onWarning: ((CoreError) -> Void)?
 
   func gattServer(_ server: GattServer, readRequest id: Int, central: UUID, characteristic: CBUUID, offset: Int) {
-    var event = ServerRequestEventRecord()
+    let event = ServerRequestEventRecord()
     event.requestId = id
     event.centralId = central.uuidString
     event.characteristic = characteristic.uuidString.lowercased()
@@ -28,7 +28,7 @@ final class GattServerObject: SharedObject, GattServerListener, @unchecked Senda
     value: Data,
     withResponse: Bool
   ) {
-    var event = ServerRequestEventRecord()
+    let event = ServerRequestEventRecord()
     event.requestId = id
     event.centralId = central.uuidString
     event.characteristic = characteristic.uuidString.lowercased()
@@ -39,7 +39,7 @@ final class GattServerObject: SharedObject, GattServerListener, @unchecked Senda
   }
 
   func gattServer(_ server: GattServer, central: UUID, characteristic: CBUUID, subscribed: Bool) {
-    var event = SubscriptionChangeEventRecord()
+    let event = SubscriptionChangeEventRecord()
     event.centralId = central.uuidString
     event.characteristic = characteristic.uuidString.lowercased()
     event.subscribed = subscribed
