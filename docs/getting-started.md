@@ -238,6 +238,39 @@ await BleManager.registerBackgroundTask('sensor-nearby', {
 - `unregisterBackgroundTask('sensor-nearby')` stops it. Registering again changes its filters.
 - iOS: not supported yet (rejects with `NOT_SUPPORTED`).
 
+## Acting as a peripheral: a GATT server
+
+The phone can also be the device: publish services, and answer the reads and writes of centrals (other phones, computers, gateways).
+
+```ts
+const server = await BleManager.openGattServer([
+  {
+    uuid: SERVICE,
+    characteristics: [
+      { uuid: VERSION, properties: ['read'], permissions: ['readable'], value: Uint8Array.of(1, 0) },
+      { uuid: COUNTER, properties: ['read', 'notify'], permissions: ['readable'] },
+      { uuid: COMMAND, properties: ['write'], permissions: ['writeable'] },
+    ],
+  },
+]);
+
+server.onReadRequest(({ characteristic }) => currentCounterBytes()); // the whole value
+server.onWriteRequest(({ value }) => {
+  if (value.length !== 1) throw new BleError('INVALID_ATTRIBUTE_LENGTH', 'one byte');
+  runCommand(value[0]);
+});
+server.addSubscriptionListener(({ centralId, subscribed }) => console.log(centralId, subscribed));
+// later: await server.close();
+```
+
+- A `value` makes a characteristic static and read-only: it is answered without your handler. The others go to your handlers, which must answer within 25 seconds; otherwise the central gets an ATT error and a warning goes to the log.
+- Return the whole value from `onReadRequest`. A value longer than one packet is read in parts; the server calls your handler once and answers the other parts from that value, so a central never gets parts of two different values.
+- A long write arrives as one `WriteRequest` once the central completes it. Throw a `BleError` to refuse a request: its code becomes the ATT error (`READ_NOT_PERMITTED`, `WRITE_NOT_PERMITTED`, `INVALID_ATTRIBUTE_LENGTH`, `INSUFFICIENT_ENCRYPTION`…).
+- Characteristic UUIDs must be unique within the server. Descriptors: user description (`2901`) and presentation format (`2904`); notifiable characteristics get their CCCD automatically.
+- One server at a time. It needs Bluetooth on and the connect permission; turning Bluetooth off closes it.
+- Centrals find the phone through advertising, which comes in a later version; sending notifications too.
+- In Jest, `installFakeBle().connectCentral()` gives you a central that reads and writes your server like a real one.
+
 ## With React hooks
 
 ```tsx
@@ -326,6 +359,6 @@ The fake answers on later timer ticks, like a radio; Jest fake timers work (`awa
 
 ## Not in this version yet
 
-Background operation on iOS (background modes, state restoration, background tasks), background events other than scan results, and the peripheral role (advertising, GATT server) come in later versions. Options for them reject with `NOT_SUPPORTED` rather than being ignored.
+Background operation on iOS (background modes, state restoration, background tasks), background events other than scan results, and the rest of the peripheral role (advertising, notifications from the GATT server) come in later versions. Options for them reject with `NOT_SUPPORTED` rather than being ignored.
 
 Problems? See [troubleshooting](troubleshooting.md).

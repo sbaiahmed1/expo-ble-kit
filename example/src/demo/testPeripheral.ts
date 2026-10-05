@@ -7,7 +7,7 @@ import {
 } from 'expo-ble-kit/testing';
 
 import profile from '../../../test-peripherals/profile.json';
-import { fromUtf8, parseHex } from '../lib/bytes';
+import { profileValue as decode, type ProfileValue } from '../lib/profile';
 import { TestProfile } from '../lib/gattNames';
 
 // Demo mode: the test peripheral (test-peripherals/profile.json) as a virtual device in the fake
@@ -15,23 +15,6 @@ import { TestProfile } from '../lib/gattNames';
 // plays the peripheral's side: heart-rate notifications, ECHO_WRITE → ECHO_READ, SINK_NO_RSP →
 // SINK_COUNTER, STREAM frames, and CONTROL SET_STREAM, DISCONNECT_AFTER, TOGGLE_SECONDARY_SERVICE
 // and RESET_COUNTERS. Real hardware runs the Bumble peripheral or the nRF52840 instead.
-
-type ProfileValue = {
-  pattern?: { length: number; multiplier: number; offset: number; modulus: number };
-  hex?: string;
-  utf8?: string;
-};
-
-function decode(value: ProfileValue | undefined): Uint8Array | undefined {
-  if (!value) return undefined;
-  if (value.pattern) {
-    const { length, multiplier, offset, modulus } = value.pattern;
-    return Uint8Array.from({ length }, (_, i) => (i * multiplier + offset) % modulus);
-  }
-  if (value.hex !== undefined) return parseHex(value.hex);
-  if (value.utf8 !== undefined) return fromUtf8(value.utf8);
-  return undefined;
-}
 
 /** The test services: those always present, and SECONDARY while toggled on (CONTROL 0x03). */
 function testServices(withSecondary: boolean): VirtualPeripheralConfig['services'] {

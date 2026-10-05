@@ -4,6 +4,8 @@ import type {
   PeripheralObjectEvents,
 } from '../ExpoBleKit.types';
 import { BleError, BleErrorCode } from '../errors';
+import { Emitter } from './Emitter';
+import { FakeGattServer, type VirtualCentral } from './FakeGattServer';
 import type {
   NativeAttributeRequest,
   NativeBatch,
@@ -18,6 +20,7 @@ import {
   type GattOperationKind,
   type GattResult,
 } from '../internal/gattQueue';
+import type { NativeServiceDefinition } from '../internal/gattServer';
 import { NotificationBatcher } from '../internal/notificationBatcher';
 import type { NativeBleKitPort, NativeDiagnostics, NativePeripheralPort } from '../internal/port';
 import type { NativeScanOptions } from '../internal/scanOptions';
@@ -32,7 +35,6 @@ import type {
   LogLevel,
   ScanResult,
   Service,
-  Subscription,
 } from '../types';
 import { normalizeUUID, type UUID } from '../uuid';
 
@@ -103,6 +105,11 @@ export interface FakeBle {
   ): void;
   /** Removes every peripheral and error and restores the initial state and permissions. */
   reset(): void;
+  /**
+   * A central connected to the open GATT server (`BleManager.openGattServer`), to test the
+   * server's handlers. `mtu` (default 23) sets how a long value is read and written.
+   */
+  connectCentral(options?: { id?: string; mtu?: number }): VirtualCentral;
 }
 
 /** The peripheral side of a virtual peripheral. */
@@ -146,22 +153,6 @@ const MIN_MTU = 23;
 const MAX_MTU = 517;
 
 const fail = (code: BleErrorCode, message: string) => new BleError(code, message);
-
-/** Minimal synchronous event emitter with Expo's `addListener` shape. */
-class Emitter<Events extends Record<string, (event: any) => void>> {
-  private readonly listeners = new Map<keyof Events, Set<(event: any) => void>>();
-
-  addListener<E extends keyof Events>(event: E, listener: Events[E]): Subscription {
-    const set = this.listeners.get(event) ?? new Set();
-    set.add(listener);
-    this.listeners.set(event, set);
-    return { remove: () => set.delete(listener) };
-  }
-
-  emit<E extends keyof Events>(event: E, payload: Parameters<Events[E]>[0]): void {
-    [...(this.listeners.get(event) ?? [])].forEach((listener) => listener(payload));
-  }
-}
 
 interface VirtualAttribute {
   value: Uint8Array;
@@ -1382,6 +1373,7 @@ export class FakeBleAdapter implements NativeBleKitPort {
         this.emitter.emit('scanError', { sessionId, code: error.code, message: error.message });
       }
       this.handles.forEach((handle) => handle.forceDisconnected(error));
+      this.server?.close();
     }
   }
 
@@ -1403,6 +1395,7 @@ export class FakeBleAdapter implements NativeBleKitPort {
     this.sessions.clear();
     this.names.clear();
     this.errors = [];
+    this.server?.close();
     this.state = this.initial.state;
     this.permissions = { ...this.initial.permissions };
   }
@@ -1483,6 +1476,35 @@ export class FakeBleAdapter implements NativeBleKitPort {
 
   async unregisterBackgroundTask(taskName: string): Promise<void> {
     this.backgroundTasks.delete(taskName);
+  }
+
+  /**
+   * The GATT server (P4-01), one at a time, behind the same preconditions as the native cores; it
+   * closes when the adapter leaves `poweredOn`. `connectCentral` gives tests a central to drive it.
+   */
+  private server: FakeGattServer | null = null;
+
+  async openGattServer(services: NativeServiceDefinition[]): Promise<FakeGattServer> {
+    const precondition = adapterError(this.state) ?? this.permissionError('connect');
+    if (precondition) throw precondition;
+    if (this.server)
+      throw fail(BleErrorCode.INVALID_ARGUMENT, 'A GATT server is already open: close it first');
+    const server = new FakeGattServer(
+      services,
+      this.scheduler,
+      (code, message) => this.warn(code, message),
+      () => {
+        if (this.server === server) this.server = null;
+      }
+    );
+    this.server = server;
+    await new Promise<void>((resolve) => this.scheduler.schedule(resolve));
+    return server;
+  }
+
+  connectCentral(options: { id?: string; mtu?: number } = {}): VirtualCentral {
+    if (!this.server) throw fail(BleErrorCode.DISCONNECTED, 'No GATT server is open');
+    return this.server.connect(options.id ?? `central-${this.nextId++}`, options.mtu ?? MIN_MTU);
   }
 
   /** Android's keep-alive notification (P3-03). The fake keeps it; it has no service to show it. */

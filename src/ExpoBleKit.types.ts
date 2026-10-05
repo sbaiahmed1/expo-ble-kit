@@ -70,3 +70,25 @@ export type PeripheralObjectEvents = {
   /** The services changed and were discovered again (P2-06). */
   servicesChanged: (event: Record<string, never>) => void;
 };
+
+/** A central's request to the GATT server (P4-01). Reads carry no value. */
+export type ServerRequestEvent = {
+  requestId: number;
+  centralId: string;
+  characteristic: string;
+  offset: number;
+  value?: Uint8Array | null;
+  withResponse?: boolean;
+};
+
+export type SubscriptionChangeEvent = {
+  centralId: string;
+  characteristic: string;
+  subscribed: boolean;
+};
+
+export type GattServerObjectEvents = {
+  readRequest: (event: ServerRequestEvent) => void;
+  writeRequest: (event: ServerRequestEvent) => void;
+  subscriptionChange: (event: SubscriptionChangeEvent) => void;
+};

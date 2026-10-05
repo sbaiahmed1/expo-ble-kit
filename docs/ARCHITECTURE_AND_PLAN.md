@@ -1,6 +1,6 @@
 # Expo BLE (`expo-ble-kit`) — Architecture & Implementation Plan
 
-> **Status:** Draft v0.39 · **Date:** 2026-10-03 · **Scope:** proposition #3, an Expo-first Bluetooth Low Energy module · **Changes:** Appendix D
+> **Status:** Draft v0.40 · **Date:** 2026-10-05 · **Scope:** proposition #3, an Expo-first Bluetooth Low Energy module · **Changes:** Appendix D
 >
 > **Package name:** `expo-ble-kit` (D0a, decided 2026-10-02) · native module `ExpoBleKit` · Android package `expo.modules.blekit`.
 >
@@ -203,7 +203,7 @@ expo-ble-kit/
 | `ScanController` | `scanForPeripherals(withServices:options:)`, advertisement parsing into `ScanResult`, name/manufacturer filtering in the core (CoreBluetooth only filters by service). CoreBluetooth runs one scan at a time (a new call replaces the previous one), so the controller multiplexes JS scan sessions (§5.3) |
 | `PeripheralSession` | Wraps `CBPeripheral` and its delegate. Connection state machine (§4.8), `GattQueue`, discovery cache, subscription registry, write-without-response flow control (`canSendWriteWithoutResponse`, `peripheralIsReady(toSendWriteWithoutResponse:)`), `maximumWriteValueLength(for:)` |
 | `GattQueue` | Generic serial operation queue (§4.9) |
-| `Advertiser`, `GattServer` | One `CBPeripheralManager` on queue `expo.blekit.peripheral`. Service publication, read/write requests, `updateValue` with `peripheralManagerIsReady(toUpdateSubscribers:)` flow control |
+| `Advertiser`, `GattServer` | One `CBPeripheralManager` on queue `expo.blekit.peripheral`. Service publication, read/write requests, `updateValue` with `peripheralManagerIsReady(toUpdateSubscribers:)` flow control. P4-01: the manager is created with the first server (`ShowPowerAlert` off, after the authorization check, so it never prompts); iOS answers static values and keeps subscriptions itself; a write request array is one long write, answered through its first request (Apple's `didReceiveWrite` docs). iOS tells a peripheral nothing about central disconnects, so cached long-read values just expire |
 | `Restoration` | `willRestoreState` for both managers. Rehydrates sessions and re-arms subscriptions natively. Buffers events until the binding attaches |
 | `AccessorySetup` (iOS 18+) | `ASAccessorySession` lifecycle, picker presentation, mapping authorized accessories to peripherals. Opt-in only (see §10) |
 | `CBAbstractions` | Protocols over CoreBluetooth types (`CentralManaging`, `PeripheralLike`, `PeripheralManaging`) so XCTest can inject fakes |
@@ -231,7 +231,7 @@ iOS platform rules:
 | `PeripheralSession` | `connectGatt(context, autoConnect, callback, TRANSPORT_LE, phyMask, handler)` (API 26+) so every callback lands on `blekit-gatt`. State machine, `GattQueue`, API 33+ overloads (`writeCharacteristic(c, value, writeType)` returning a status, `onCharacteristicChanged(gatt, c, value)`) with legacy fallbacks, CCCD handling, `requestMtu` (≤ 517), `close()` discipline, bounded retry for status 133 |
 | `BondManager` | `createBond()`, `ACTION_BOND_STATE_CHANGED` receiver, bond state per device. Never auto-confirms pairing |
 | `Advertiser` | `BluetoothLeAdvertiser` and `AdvertisingSet` (extended advertising when `isLeExtendedAdvertisingSupported`) |
-| `GattServer` | `BluetoothGattServer`, request handling, `notifyCharacteristicChanged` gated by `onNotificationSent` |
+| `GattServer` | `BluetoothGattServer`, request handling, `notifyCharacteristicChanged` gated by `onNotificationSent`. `openGattServer` takes no Handler and the stub calls the callback on Binder threads (checked in the API 34 sources), so `AndroidGattServerOpener` posts every callback to `blekit-server`. Services are added one at a time (`addService` docs: wait for `onServiceAdded`). Static values and descriptors are answered by the core (Android asks the app for every read); notifiable characteristics get a CCCD the core tracks per central |
 | `ConnectionService` | Foreground service of type `connectedDevice` (Android 14+ also needs `FOREGROUND_SERVICE_CONNECTED_DEVICE`). Runs while at least one session has `keepAliveInBackground`. Android 12+ refuses foreground-service starts from the background (`ForegroundServiceStartNotAllowedException`; exemptions include CompanionDeviceManager apps holding `REQUEST_COMPANION_START_FOREGROUND_SERVICES_FROM_BACKGROUND` or `REQUEST_COMPANION_RUN_IN_BACKGROUND`, verified in [Restrictions on starting a foreground service from the background](https://developer.android.com/develop/background-work/services/fgs/restrictions-bg-start)), so the service starts when a `keepAliveInBackground` connect is issued while the app is in the foreground. It then stays up through link loss and reconnects until the last such session ends, and never needs a restart from the background. If a start is refused, emit a `warning` (`FOREGROUND_SERVICE_FAILED`) and continue without keep-alive. Implementation (P3-03): `AndroidKeepAlive` starts it with `startService` (refused at once from the background) and the service calls `startForeground(id, notification, FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE)` in `onStartCommand`. Unlike `startForegroundService`, a refused promotion can't crash the app with `ForegroundServiceDidNotStartInTimeException` ([troubleshooting](https://developer.android.com/develop/background-work/services/fgs/troubleshooting)). Android 14+ throws `SecurityException` there unless a Bluetooth runtime permission is granted ([service types](https://developer.android.com/develop/background-work/services/fgs/service-types)); connecting already needs `BLUETOOTH_CONNECT`. `START_NOT_STICKY`: after the process dies there's no connection to keep. Observed on Android 14 (A52): Android allows a background start for 10 s after the adapter's `ACTION_STATE_CHANGED` broadcast (`code:BLUETOOTH_BROADCAST` in ActivityManager's log), so reconnecting with keep-alive when Bluetooth comes back on works. Without `POST_NOTIFICATIONS` (Android 13+) the service still runs and its notice only shows in the Task Manager ([notification permission](https://developer.android.com/develop/ui/views/notifications/notification-permission)) |
 | `BackgroundScans` | `startScan(filters, settings, PendingIntent)` (API 26+) → TaskManager → the JS task. Works even when the process is dead. The PendingIntent comes from TaskManager (`TaskManagerUtilsInterface.createTaskIntent`: a mutable broadcast to expo-task-manager's own `TaskBroadcastReceiver`, which restores the task and calls the consumer's `didReceiveBroadcast`, the path expo-location takes for geofencing), so the library declares no receiver (P3-04 replaced the planned `ScanResultReceiver`). Low power, first match where the controller filters, else 10 s batches. `AndroidBackgroundScanner` (core) starts, stops and reads the scan; `BackgroundScanTaskConsumer` (binding) is the TaskManager glue |
 | `Companion` | `CompanionDeviceManager` association (system picker) and device presence observation ⚠️ VERIFY API levels (31 / 33 / 36 differ) |
@@ -857,34 +857,43 @@ Reconnection rules (decided in P2-01):
 ```ts
 export type AttributePermission = 'readable' | 'writeable' | 'readEncryptionRequired' | 'writeEncryptionRequired';
 
-export interface ServiceDefinition { uuid: UUID; primary?: boolean; characteristics: CharacteristicDefinition[] }
+export interface ServiceDefinition { uuid: UUID; primary?: boolean; characteristics: CharacteristicDefinition[] } // primary default true
 export interface CharacteristicDefinition {
-  uuid: UUID;
-  properties: CharacteristicProperty[];
-  permissions: AttributePermission[];
-  /** Static value. On iOS this makes the characteristic read-only and cached by the OS. */
+  uuid: UUID;                              // unique within the server: requests name a characteristic by UUID
+  properties: CharacteristicProperty[];    // read, write, writeWithoutResponse, notify, indicate
+  permissions: AttributePermission[];      // read needs a read permission, writes a write permission
+  /** Static value, answered without the handler. Read-only on both platforms (iOS caches it): properties ['read']. */
   value?: Uint8Array;
+  /** Only 2901 (user description, UTF-8) and 2904 (format): the two iOS publishes. The CCCD is added automatically. */
   descriptors?: Array<{ uuid: UUID; value: Uint8Array }>;
 }
 
 export interface ReadRequest { centralId: string; characteristic: UUID; offset: number }
+/** A long write (prepared writes) arrives as one request with offset 0 once executed. iOS reports withResponse true unless the characteristic only allows writes without response. */
 export interface WriteRequest { centralId: string; characteristic: UUID; offset: number; value: Uint8Array; withResponse: boolean }
 
 export interface GattServer {
   /**
-   * Must answer before the platform deadline, otherwise the core answers with an ATT error.
-   * Long reads: the handler is called once per read sequence, with offset 0. The core caches the
-   * returned value and answers the continuation requests (offset > 0) from that cache. A central
-   * therefore never sees a value stitched together from two different handler results. A request
-   * that starts at a non-zero offset with no cached value is passed to the handler with that offset.
-   * ⚠️ VERIFY how each platform sequences blob reads.
+   * Must answer within 25 s (ATT gives 30 s), otherwise the core answers with an ATT error (unlikely
+   * error) and logs a warning. The handler returns the whole value; the core answers with the part
+   * from the request's offset. Long reads: the handler is called once per read sequence, with
+   * offset 0. The core caches the returned value (per central and characteristic, 30 s) and answers
+   * the continuation requests (offset > 0) from that cache. A central therefore never sees a value
+   * stitched together from two different handler results. A request that starts at a non-zero
+   * offset with no cached value is passed to the handler with that offset, and its value cached.
+   * Shared contract: test-contracts/gatt-server-reads.json. Verified (P4-01): both platforms
+   * deliver each Read / Read Blob as one request with its offset and expect the value from that
+   * offset (Apple's CBATTRequest docs and the peripheral-role guide; Android's sendResponse passes
+   * the value through with the offset as a separate field). Thrown BleErrors map to ATT errors
+   * (READ_NOT_PERMITTED 0x02 … INSUFFICIENT_ENCRYPTION 0x0F, else 0x0E); without a handler, reads
+   * get READ_NOT_PERMITTED and writes WRITE_NOT_PERMITTED. Registering another handler replaces it.
    */
   onReadRequest(handler: (request: ReadRequest) => Uint8Array | Promise<Uint8Array>): Subscription;
   onWriteRequest(handler: (request: WriteRequest) => void | Promise<void>): Subscription;
-  /** Flow-controlled. Resolves once queued for every target central. */
+  /** Flow-controlled. Resolves once queued for every target central. (P4-02) */
   notify(characteristic: UUID, value: Uint8Array, options?: { centrals?: string[] }): Promise<void>;
   addSubscriptionListener(listener: (e: { centralId: string; characteristic: UUID; subscribed: boolean }) => void): Subscription;
-  close(): Promise<void>;
+  close(): Promise<void>; // turning Bluetooth off closes the server too
 }
 
 export interface AdvertisingData {
@@ -995,6 +1004,18 @@ export interface FakeBle {
   /** Make the next matching op fail with this code. Ops: requestPermissions, startScan, connect, discover, read, write, readDescriptor, writeDescriptor, subscribe, unsubscribe, requestMtu, readRssi. */
   injectError(match: { op: string; peripheralId?: string; characteristic?: UUID }, code: BleErrorCode): void;
   reset(): void;
+  /** P4-01: a central connected to the open GATT server, to test the server's handlers. mtu default 23. */
+  connectCentral(options?: { id?: string; mtu?: number }): VirtualCentral;
+}
+
+/** Reads and writes like a real central: long reads as Read + Read Blobs of MTU − 1, long writes as prepared writes. */
+export interface VirtualCentral {
+  readonly id: string;
+  read(characteristic: UUID): Promise<Uint8Array>;
+  write(characteristic: UUID, value: Uint8Array, options?: { withResponse?: boolean }): Promise<void>;
+  subscribe(characteristic: UUID, mode?: 'notify' | 'indicate'): Promise<void>;
+  unsubscribe(characteristic: UUID): Promise<void>;
+  disconnect(): void;
 }
 
 export interface VirtualPeripheral {
@@ -1013,7 +1034,7 @@ export interface VirtualPeripheral {
 }
 ```
 
-Fake rules (P1-13): Bluetooth is on and every permission granted unless `installFakeBle` says otherwise; a peripheral advertises from `addPeripheral` until `advertise(false)`; a connect to a peripheral that isn't advertising waits (times out, or completes when it advertises), like a real absent device; writes store the value, so a later read returns it; writes without response take at most MTU − 3 bytes (20 at the default MTU); the MTU is negotiated like on Android, during the connect and in `requestMtu()`, as the smaller of the request and the peripheral's `mtu` (23 unless its config says more), and a failed setup exchange (`injectError` op `requestMtu`) is a `warning`; results and operation answers arrive on later timer ticks, so tests advance timers (Jest fake timers work). `notify()` reaches a connected client only while it has the CCCD enabled, as on a real peripheral, and a disconnect resets the CCCDs; `mode: 'indicate'` follows Android (allowed on a characteristic that also notifies). A peripheral's `name` is known once a scan delivered it or a connection reached `connected`. `getKnownPeripherals` drops ids without a virtual peripheral (like iOS); `getSystemConnectedPeripherals` lists the connected ones that have one of the services. Cancelled operations behave like the native queues: a queued one never runs, a running one finishes at the radio after its caller was answered. `writeStream` chunks like the native cores (each chunk a queued write, recorded in `writes`, queuing the next one first) and emits the same progress events. Batched subscriptions batch like the native cores (same interval, overflow and end-of-link rules, `BUFFER_OVERFLOW` warning). `setServices()` replaces a peripheral's database and, when connected, follows the service-change rules (§5.4); `android.refreshGattCache()` discovers again and resolves `true`. The fake logs like the native cores (§4.16).
+Fake rules (P1-13): Bluetooth is on and every permission granted unless `installFakeBle` says otherwise; a peripheral advertises from `addPeripheral` until `advertise(false)`; a connect to a peripheral that isn't advertising waits (times out, or completes when it advertises), like a real absent device; writes store the value, so a later read returns it; writes without response take at most MTU − 3 bytes (20 at the default MTU); the MTU is negotiated like on Android, during the connect and in `requestMtu()`, as the smaller of the request and the peripheral's `mtu` (23 unless its config says more), and a failed setup exchange (`injectError` op `requestMtu`) is a `warning`; results and operation answers arrive on later timer ticks, so tests advance timers (Jest fake timers work). `notify()` reaches a connected client only while it has the CCCD enabled, as on a real peripheral, and a disconnect resets the CCCDs; `mode: 'indicate'` follows Android (allowed on a characteristic that also notifies). A peripheral's `name` is known once a scan delivered it or a connection reached `connected`. `getKnownPeripherals` drops ids without a virtual peripheral (like iOS); `getSystemConnectedPeripherals` lists the connected ones that have one of the services. Cancelled operations behave like the native queues: a queued one never runs, a running one finishes at the radio after its caller was answered. `writeStream` chunks like the native cores (each chunk a queued write, recorded in `writes`, queuing the next one first) and emits the same progress events. Batched subscriptions batch like the native cores (same interval, overflow and end-of-link rules, `BUFFER_OVERFLOW` warning). `setServices()` replaces a peripheral's database and, when connected, follows the service-change rules (§5.4); `android.refreshGattCache()` discovers again and resolves `true`. The fake logs like the native cores (§4.16). The fake GATT server (P4-01) follows the native cores: one server at a time behind the connect preconditions, closed when the adapter leaves `poweredOn`; static values answered without the handler; the 25 s deadline with its warning; the shared long-read contract; prepared writes delivered as one value per characteristic at execute; subscriptions through the CCCD, ended by `VirtualCentral.disconnect()`; ATT errors reach the virtual central as the matching BleErrorCode (else `GATT_ERROR`).
 
 ### 5.9 Usage examples
 
@@ -1380,6 +1401,14 @@ Parallelism: P0-06/P0-07 can run alongside P0-03/P0-04. With two people, P4 can 
 - [ ] **P4-01 GATT server** — deps: P2-07.
   Definitions, static and dynamic values, read/write requests with deadlines, long reads served from a per-sequence cache (§5.5), long writes, subscriptions.
   **Accept:** nRF Connect acting as a central can read, write and subscribe against the example app; a 512-byte dynamic value read at MTU 23 returns one consistent snapshot even when the handler's value changes mid-read.
+  **Progress 2026-10-05 (open: the nRF Connect check needs advertising, P4-03, and a phone or computer as the central; the Galaxy A52 was disconnected for the device run):** the GATT server works on both platforms in unit tests and the fake; the ⚠️ VERIFY of §5.5 on blob reads is resolved (sources in §5.5).
+  - Shared contract `test-contracts/gatt-server-reads.json` (6 cases: one snapshot, a new sequence, per central and characteristic, offsets at and past the end, the 30 s expiry, a disconnect), run by Kotlin (through the whole server), Swift and the TS fake.
+  - Android core: `GattServerSpecs.kt` (definitions, `AttributePermissions`, `AttErrors`, the `GattServerPort`/`GattServerEvents` port, `ServerReadCache`), `GattServer.kt` (services added one at a time with a 10 s timeout each, static values and descriptors answered natively, JS requests by the core's own ids with the 25 s deadline and its warning, prepared writes assembled per characteristic at execute and answered once every JS write is, CCCD subscriptions per central, a disconnect dropping requests, cache, prepared writes and subscriptions), `AndroidGattServerOpener` (Binder callbacks posted to `blekit-server`; CCCDs added to notifiable characteristics). `CentralEngine.checkGattServer` (connect permission, adapter on).
+  - iOS core: `GattServerSpecs.swift` (definitions, `ATTRequestLike`/`PeripheralManaging` abstraction, `ServerReadCache`), `GattServer.swift` (waits for a new manager to leave `.unknown`, maps its state to errors, the same request, deadline, cache and long-write rules), `PeripheralManagerAdapter.swift` (`CBPeripheralManager`, `CBMutableService`; a user description descriptor takes a string).
+  - Bindings: `GattServerObject` on both platforms (events `readRequest`, `writeRequest`, `subscriptionChange`; `respondToRead`, `respondToWrite`, `close`); `openGattServer` (one at a time); the server closes when the adapter leaves `poweredOn`; its warnings go through the engine's log and `warning` event.
+  - JS: `BleManager.openGattServer`, `GattServer` (`notify` waits for P4-02), `ServiceDefinition`, `CharacteristicDefinition`, `AttributePermission`, `ReadRequest`, `WriteRequest`; definitions validated identically for both platforms (unique characteristic UUIDs, supported properties, permissions matching properties, static values read-only, descriptors 2901 and 2904 only, values ≤ 512 bytes); thrown BleErrors become ATT errors; one handler per kind, replaced by the next. Testing: `FakeBle.connectCentral()` and `VirtualCentral` (§5.8), the fake server in `src/testing/FakeGattServer.ts`.
+  - Example: a **GATT server** group (`src/screens/ServerChecks.tsx`) serving the test profile's TEST service (`src/lib/serverProfile.ts`: STATIC_READ static, LONG_READ shifting by one per handler call so a stitched read would show, ECHO_WRITE/ECHO_READ, SINK_NO_RSP/SINK_COUNTER, STREAM with its user description); the profile value decoder moved to `src/lib/profile.ts`.
+  - Tests: 10 Android (`GattServerTest`, the contract included), 6 Swift (`GattServerTests`), 22 Jest (16 server, 6 contract), 1 example.
 - [ ] **P4-02 Server notifications with flow control** — deps: P4-01.
   **Accept:** 100 Hz notifications from phone B to phone A for 10 minutes with zero sequence gaps.
 - [ ] **P4-03 Advertiser** — deps: P4-01.
@@ -1725,3 +1754,4 @@ Submit results (`BluetoothStatusCodes`, API 33+): 1 not enabled → `BLUETOOTH_P
 | v0.37 | 2026-10-03 | P2-09 in progress: the soak suite (`docs/soak.md`, `e2e/soak/`, the Soak group of the developer checks, Maestro flows); the connect-cycle bar is now §8.5's (≥ 99 %, no open client, no zombie session); §8.5 points to the soak doc; the Galaxy A52 passes 50 Bluetooth toggles without a peripheral and, after a fix, the 45-minute scan; the first long scan found an Android crash (scan callbacks on the main thread), fixed in the scanner adapter, §4.4 notes the thread hop |
 | v0.38 | 2026-10-03 | P3-03 in progress: Android's keep-alive foreground service (§4.4 implementation notes and verified sources, §4.15 Play Console note), `keepAliveInBackground` on Android, `BleManager.android.setForegroundServiceNotification` and `ForegroundServiceNotification` (§5.2, §5.6), `Diagnostics.android.foregroundService` (§5.7), `FOREGROUND_SERVICE_FAILED` (§4.11), the plugin option `android.foregroundService` brought forward from P3-05, a §6 row for background connections |
 | v0.39 | 2026-10-03 | P3-04 in progress: Android background scans through an expo-task-manager consumer (§4.4: TaskManager's receiver replaces `ScanResultReceiver`; §4.5: TaskManager ⚠️ VERIFY resolved for Android; ADR-008 note), `registerBackgroundTask` / `unregisterBackgroundTask`, `BackgroundTaskOptions` and `BleBackgroundEvent` notes (§5.6), plugin option `android.backgroundLocation` brought forward and `android.backgroundScanReceiver` dropped (§4.15, P3-05) |
+| v0.40 | 2026-10-05 | P4-01 in progress: the GATT server on both platforms (§4.4 notes on Android's Binder callbacks and iOS's peripheral manager), §5.5 definitions, request and long-read rules with the blob-read ⚠️ VERIFY resolved, shared contract `gatt-server-reads.json`, §5.8 `connectCentral` and `VirtualCentral` |

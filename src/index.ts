@@ -14,6 +14,7 @@ export {
   useCharacteristicValue,
 } from './hooks';
 export type {
+  AttributePermission,
   BackgroundTaskOptions,
   BleBackgroundEvent,
   BleManagerApi,
@@ -22,6 +23,7 @@ export type {
   BatchOptions,
   BleState,
   Characteristic,
+  CharacteristicDefinition,
   CharacteristicProperty,
   CharacteristicSubscription,
   ConnectionState,
@@ -29,6 +31,7 @@ export type {
   Descriptor,
   Diagnostics,
   ForegroundServiceNotification,
+  GattServer,
   LogEntry,
   LogLevel,
   NotificationBatch,
@@ -36,15 +39,18 @@ export type {
   Peripheral,
   PermissionStatus,
   Phy,
+  ReadRequest,
   ReconnectPolicy,
   ScanOptions,
   ScanResult,
   ScanSession,
   Service,
+  ServiceDefinition,
   StreamOptions,
   SubscribeOptions,
   Subscription,
   WriteOptions,
+  WriteRequest,
 } from './types';
 export { BleError, BleErrorCode } from './errors';
 export type { BleErrorDetails } from './errors';

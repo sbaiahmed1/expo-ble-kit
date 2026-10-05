@@ -11,23 +11,20 @@ const read = (path: string) => readFileSync(resolve(root, path), 'utf8');
 
 const LATER: Record<string, Record<string, string>> = {
   BleManagerApi: {
-    openGattServer: 'P4-01',
     startAdvertising: 'P4-03',
     ios: 'P5-04',
   },
   Peripheral: {
     openL2CAPChannel: 'P5-03',
   },
+  GattServer: {
+    notify: 'P4-02',
+  },
 };
 
 /** Interfaces of the later tasks themselves (P2–P5), not yet in src/types.ts. */
 const LATER_INTERFACES = new Set([
   'L2CAPChannel',
-  'ServiceDefinition',
-  'CharacteristicDefinition',
-  'ReadRequest',
-  'WriteRequest',
-  'GattServer',
   'AdvertisingData',
   'AdvertisingOptions',
   'Advertisement',
@@ -77,7 +74,11 @@ describe('the public API matches plan §5', () => {
     [...section.matchAll(/```ts\n([\s\S]*?)```/g)].map((block) => block[1]).join('\n')
   );
   const declared = interfaces(
-    [read('src/types.ts'), read('src/testing/FakeBleAdapter.ts')].join('\n')
+    [
+      read('src/types.ts'),
+      read('src/testing/FakeBleAdapter.ts'),
+      read('src/testing/FakeGattServer.ts'),
+    ].join('\n')
   );
 
   it.each([...specified.keys()].filter((name) => !LATER_INTERFACES.has(name)))('%s', (name) => {

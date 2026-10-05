@@ -1,9 +1,11 @@
 import { Platform } from 'react-native';
 
 import type { LogEvent, ScanErrorEvent, ScanResultsEvent } from './ExpoBleKit.types';
+import { GattServerImpl } from './GattServer';
 import { PeripheralImpl } from './Peripheral';
 import { BleError, BleErrorCode } from './errors';
 import { checkTaskName, toNativeBackgroundTaskOptions } from './internal/backgroundTask';
+import { toNativeServices } from './internal/gattServer';
 import { checkLogLevel, deliver, setHandler, setLevel } from './internal/log';
 import { getNativeModule } from './internal/native';
 import {
@@ -326,6 +328,13 @@ export const BleManager: BleManagerApi = {
         recentErrors: recentErrors(),
         ...(native.android && { android: native.android }),
       };
+    });
+  },
+
+  openGattServer(services) {
+    return guard(async () => {
+      const definitions = toNativeServices(services);
+      return new GattServerImpl(await getNativeModule().openGattServer(definitions));
     });
   },
 

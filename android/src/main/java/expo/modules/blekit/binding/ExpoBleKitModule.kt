@@ -2,6 +2,7 @@ package expo.modules.blekit.binding
 
 import android.os.SystemClock
 import expo.modules.blekit.core.AndroidBluetoothAdapterPort
+import expo.modules.blekit.core.AndroidGattServerOpener
 import expo.modules.blekit.core.AndroidKeepAlive
 import expo.modules.blekit.core.AndroidPermissionSystem
 import expo.modules.blekit.core.BleCapability
@@ -12,6 +13,7 @@ import expo.modules.blekit.core.BleState
 import expo.modules.blekit.core.CentralEngine
 import expo.modules.blekit.core.CoreError
 import expo.modules.blekit.core.EpochClock
+import expo.modules.blekit.core.GattServer
 import expo.modules.blekit.core.HandlerExecutor
 import expo.modules.blekit.core.LogLevel
 import expo.modules.blekit.core.NotificationBatch
@@ -39,6 +41,10 @@ class ExpoBleKitModule : Module() {
   private lateinit var executor: HandlerExecutor
   private lateinit var engine: CentralEngine
 
+  /** The GATT server's own thread (plan §4.7: `blekit-server`) and the server open on it, if any. */
+  private lateinit var serverExecutor: HandlerExecutor
+  private var openServer: GattServerObject? = null
+
   /** One JS object per peripheral id while JS holds it (plan §4.5). Guarded by itself. */
   private val peripherals = HashMap<String, WeakReference<PeripheralObject>>()
 
@@ -64,11 +70,14 @@ class ExpoBleKitModule : Module() {
       )
       engine.listener = EngineEvents()
       executor.execute { engine.start() }
+      serverExecutor = HandlerExecutor.start("blekit-server")
     }
 
     OnDestroy {
       executor.execute { engine.close() }
       executor.handler.looper.quitSafely()
+      serverExecutor.execute { closeServer() }
+      serverExecutor.handler.looper.quitSafely()
     }
 
     OnActivityEntersForeground {
@@ -326,6 +335,62 @@ class ExpoBleKitModule : Module() {
     }
 
     // Plan §4.16: the level applies to Logcat and to JS; JS gets `log` events only with a handler.
+    // The peripheral role's GATT server (P4-01). One at a time; it runs on its own thread.
+    AsyncFunction("openGattServer") { services: List<ServerServiceRecord>, promise: Promise ->
+      executor.execute {
+        settle(promise) {
+          engine.checkGattServer()
+          val specs = services.map { it.toSpec() }
+          val context = appContext.reactContext ?: throw Exceptions.ReactContextLost()
+          serverExecutor.execute {
+            settle(promise) {
+              if (openServer != null) {
+                throw CoreError(CoreError.Code.INVALID_ARGUMENT, "A GATT server is already open: close it first")
+              }
+              val ref = GattServerObject(appContext)
+              val opener = AndroidGattServerOpener(context, serverExecutor.handler)
+              val server = GattServer(specs, serverExecutor, opener::open)
+              server.listener = ref.listener { warning -> executor.execute { engine.reportWarning(warning) } }
+              ref.server = server
+              openServer = ref
+              server.open { error ->
+                if (error == null) {
+                  promise.resolve(ref)
+                } else {
+                  ref.server = null
+                  openServer = null
+                  promise.reject(BleKitException(error))
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+
+    Class(GattServerObject::class) {
+      Constructor {
+        throw CodedException(CoreError.Code.INVALID_ARGUMENT.value, "Use BleManager.openGattServer()", null)
+      }
+
+      // From JS handlers: the whole value or an ATT error code; the core slices and caches.
+      Function("respondToRead") { ref: GattServerObject, requestId: Int, value: ByteArray?, attError: Int? ->
+        serverExecutor.execute { ref.server?.respondToRead(requestId, value, attError) }
+      }
+
+      Function("respondToWrite") { ref: GattServerObject, requestId: Int, attError: Int? ->
+        serverExecutor.execute { ref.server?.respondToWrite(requestId, attError) }
+      }
+
+      AsyncFunction("close") { ref: GattServerObject, promise: Promise ->
+        serverExecutor.execute {
+          if (openServer === ref) closeServer() else ref.server?.close()
+          ref.server = null
+          promise.resolve(null)
+        }
+      }
+    }
+
     // Background scans (P3-04): a TaskManager task whose consumer runs a PendingIntent scan.
     AsyncFunction("registerBackgroundTask") { taskName: String, options: Map<String, Any?>, promise: Promise ->
       executor.execute {
@@ -409,6 +474,8 @@ class ExpoBleKitModule : Module() {
   private inner class EngineEvents : CentralEngine.Listener {
     override fun onStateChange(state: BleState) {
       sendEvent("stateChange", mapOf("state" to state.js))
+      // Android drops the server's services with the adapter: the server closes (plan §5.5).
+      if (state != BleState.POWERED_ON) serverExecutor.execute { closeServer() }
     }
 
     override fun onScanResults(sessionId: Int, results: List<Map<String, Any?>>) {
@@ -492,6 +559,13 @@ class ExpoBleKitModule : Module() {
 
   private fun attributeOperation(promise: Promise, block: () -> Unit) {
     executor.execute { settle(promise, block) }
+  }
+
+  /** Closes the open GATT server. On the server thread. */
+  private fun closeServer() {
+    openServer?.server?.close()
+    openServer?.server = null
+    openServer = null
   }
 
   /** expo-task-manager's native side, which the app installs for background tasks. */

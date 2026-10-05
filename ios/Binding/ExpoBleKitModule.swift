@@ -23,10 +23,17 @@ public class ExpoBleKitModule: Module {
   let peripherals = NSMapTable<NSString, PeripheralObject>.strongToWeakObjects()
   let peripheralsLock = NSLock()
 
+  /// The peripheral role's queue (plan §4.7), its manager once a server opened, and the open server.
+  let peripheralQueue = DispatchQueue(label: "expo.blekit.peripheral")
+  var peripheralManager: CBPeripheralManagerAdapter?
+  var openServer: GattServerObject?
+
   lazy var engine: CentralEngine = {
     let engine = CentralEngine(queue: DispatchQueue(label: "expo.blekit.central"))
     engine.onStateChange = { [weak self] state in
       self?.sendEvent("stateChange", ["state": state.rawValue])
+      // iOS removes the published services with the adapter: the server closes (plan §5.5).
+      if state != .poweredOn, let self { self.peripheralQueue.async { self.closeServer() } }
     }
     engine.scanController.onResults = { [weak self] sessionId, results in
       self?.sendEvent("scanResults", ["sessionId": sessionId, "results": results])
@@ -137,17 +144,18 @@ public class ExpoBleKitModule: Module {
       }
     }
 
-    AsyncFunction("stopScan") { (sessionId: Int) in
-      let engine = self.engine
-      engine.queue.async { engine.stopScan(sessionId) }
-    }
+    AsyncFunction("stopScan") { (sessionId: Int) in self.engine.queue.async { self.engine.stopScan(sessionId) } }
 
     // Never touches CoreBluetooth (plan §5.2).
-    Function("getPeripheral") { (id: String) -> PeripheralObject in
-      self.peripheral(id)
-    }
+    Function("getPeripheral") { (id: String) -> PeripheralObject in self.peripheral(id) }
 
     peripheralClass()
+
+    AsyncFunction("openGattServer") { (services: [ServerServiceRecord], promise: Promise) in
+      self.openGattServer(services, promise)
+    }
+
+    gattServerClass()
 
     // Ids only: JS turns them into peripherals with getPeripheral().
     AsyncFunction("getKnownPeripherals") { (ids: [String], promise: Promise) in

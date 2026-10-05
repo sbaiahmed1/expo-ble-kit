@@ -1,6 +1,7 @@
 import type {
   ConnectionStateEvent,
   ExpoBleKitModuleEvents,
+  GattServerObjectEvents,
   MtuChangeEvent,
   NotificationEvent,
   PeripheralObjectEvents,
@@ -19,6 +20,7 @@ import type {
 import type { NativeAttributeRequest, NativeSubscribeMode } from './attributeRequest';
 import type { NativeBackgroundTaskOptions } from './backgroundTask';
 import type { NativeConnectOptions } from './connectOptions';
+import type { NativeServiceDefinition } from './gattServer';
 import type { NativeScanOptions } from './scanOptions';
 
 /**
@@ -47,6 +49,8 @@ export interface NativeBleKitPort {
   setLogLevel(level: LogLevel): void;
   /** While on, native log lines also arrive as `log` events. */
   setLogForwarding(enabled: boolean): void;
+  /** The GATT server (P4-01): one at a time; resolves once every service is published. */
+  openGattServer(services: NativeServiceDefinition[]): Promise<NativeGattServerPort>;
   /** Android only (P3-04): a TaskManager task with a background scan. */
   registerBackgroundTask?(taskName: string, options: NativeBackgroundTaskOptions): Promise<void>;
   unregisterBackgroundTask?(taskName: string): Promise<void>;
@@ -129,3 +133,14 @@ export interface NativePeripheralPort {
 }
 
 export type { ConnectionStateEvent, MtuChangeEvent, NotificationEvent };
+
+/** The GATT server's native handle (P4-01). Answers go back by request id; the core slices reads. */
+export interface NativeGattServerPort {
+  respondToRead(requestId: number, value: Uint8Array | null, attError: number | null): void;
+  respondToWrite(requestId: number, attError: number | null): void;
+  close(): Promise<void>;
+  addListener<E extends keyof GattServerObjectEvents>(
+    event: E,
+    listener: GattServerObjectEvents[E]
+  ): Subscription;
+}

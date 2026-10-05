@@ -1,0 +1,61 @@
+{
+  "$comment": "GATT server long-read contract (plan §5.5, P4-01). Swift, Kotlin and TypeScript tests all run these cases against their server read cache. A central reads a characteristic at an offset; the handler is the app's onReadRequest, which returns the whole value ('handlerValue', hex). Offset 0 starts a read sequence: the handler is asked and its value cached for that central and characteristic. A later offset is answered from the cache while it is fresh (30 s), so a long read never mixes two handler results; without a cached value the handler is asked with that offset, and its value cached. Answers are the value from the offset (hex), or a BleErrorCode. 'expect.handler' is the offset the handler was asked with, or null when it wasn't asked.",
+  "ttlMs": 30000,
+  "cases": [
+    {
+      "name": "a long read is one snapshot, even when the value changes mid-read",
+      "steps": [
+        { "read": { "central": "A", "characteristic": "c1", "offset": 0 }, "handlerValue": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f", "expect": { "handler": 0, "response": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f" } },
+        { "read": { "central": "A", "characteristic": "c1", "offset": 22 }, "handlerValue": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff", "expect": { "handler": null, "response": "161718191a1b1c1d1e1f" } },
+        { "read": { "central": "A", "characteristic": "c1", "offset": 30 }, "handlerValue": "ff", "expect": { "handler": null, "response": "1e1f" } }
+      ]
+    },
+    {
+      "name": "a new sequence at offset 0 asks the handler again",
+      "steps": [
+        { "read": { "central": "A", "characteristic": "c1", "offset": 0 }, "handlerValue": "0102", "expect": { "handler": 0, "response": "0102" } },
+        { "read": { "central": "A", "characteristic": "c1", "offset": 0 }, "handlerValue": "0304", "expect": { "handler": 0, "response": "0304" } },
+        { "read": { "central": "A", "characteristic": "c1", "offset": 1 }, "handlerValue": "ffff", "expect": { "handler": null, "response": "04" } }
+      ]
+    },
+    {
+      "name": "sequences are per central and per characteristic",
+      "steps": [
+        { "read": { "central": "A", "characteristic": "c1", "offset": 0 }, "handlerValue": "aabbccdd", "expect": { "handler": 0, "response": "aabbccdd" } },
+        { "read": { "central": "B", "characteristic": "c1", "offset": 2 }, "handlerValue": "11223344", "expect": { "handler": 2, "response": "3344" } },
+        { "read": { "central": "A", "characteristic": "c2", "offset": 2 }, "handlerValue": "55667788", "expect": { "handler": 2, "response": "7788" } },
+        { "read": { "central": "B", "characteristic": "c1", "offset": 3 }, "handlerValue": "ffffffff", "expect": { "handler": null, "response": "44" } },
+        { "read": { "central": "A", "characteristic": "c1", "offset": 1 }, "handlerValue": "ffffffff", "expect": { "handler": null, "response": "bbccdd" } }
+      ]
+    },
+    {
+      "name": "an offset at the end is an empty value, past the end INVALID_OFFSET",
+      "steps": [
+        { "read": { "central": "A", "characteristic": "c1", "offset": 0 }, "handlerValue": "0102", "expect": { "handler": 0, "response": "0102" } },
+        { "read": { "central": "A", "characteristic": "c1", "offset": 2 }, "handlerValue": "ff", "expect": { "handler": null, "response": "" } },
+        { "read": { "central": "A", "characteristic": "c1", "offset": 3 }, "handlerValue": "ff", "expect": { "handler": null, "response": "INVALID_OFFSET" } },
+        { "read": { "central": "B", "characteristic": "c1", "offset": 5 }, "handlerValue": "0102", "expect": { "handler": 5, "response": "INVALID_OFFSET" } }
+      ]
+    },
+    {
+      "name": "the cached value expires after 30 s",
+      "steps": [
+        { "read": { "central": "A", "characteristic": "c1", "offset": 0 }, "handlerValue": "01020304", "expect": { "handler": 0, "response": "01020304" } },
+        { "advance": 29999 },
+        { "read": { "central": "A", "characteristic": "c1", "offset": 1 }, "handlerValue": "ffffffff", "expect": { "handler": null, "response": "020304" } },
+        { "advance": 1 },
+        { "read": { "central": "A", "characteristic": "c1", "offset": 2 }, "handlerValue": "05060708", "expect": { "handler": 2, "response": "0708" } }
+      ]
+    },
+    {
+      "name": "a central that disconnects loses its cached values",
+      "steps": [
+        { "read": { "central": "A", "characteristic": "c1", "offset": 0 }, "handlerValue": "01020304", "expect": { "handler": 0, "response": "01020304" } },
+        { "read": { "central": "B", "characteristic": "c1", "offset": 0 }, "handlerValue": "0a0b0c0d", "expect": { "handler": 0, "response": "0a0b0c0d" } },
+        { "disconnect": "A" },
+        { "read": { "central": "A", "characteristic": "c1", "offset": 2 }, "handlerValue": "05060708", "expect": { "handler": 2, "response": "0708" } },
+        { "read": { "central": "B", "characteristic": "c1", "offset": 2 }, "handlerValue": "ffffffff", "expect": { "handler": null, "response": "0c0d" } }
+      ]
+    }
+  ]
+}

@@ -1,9 +1,19 @@
 import { NativeModule, requireOptionalNativeModule, SharedObject } from 'expo';
 
-import type { ExpoBleKitModuleEvents, PeripheralObjectEvents } from './ExpoBleKit.types';
+import type {
+  ExpoBleKitModuleEvents,
+  GattServerObjectEvents,
+  PeripheralObjectEvents,
+} from './ExpoBleKit.types';
 import type { NativeAttributeRequest, NativeSubscribeMode } from './internal/attributeRequest';
 import type { NativeConnectOptions } from './internal/connectOptions';
-import type { NativeBleKitPort, NativeDiagnostics, NativePeripheralPort } from './internal/port';
+import type { NativeServiceDefinition } from './internal/gattServer';
+import type {
+  NativeBleKitPort,
+  NativeDiagnostics,
+  NativeGattServerPort,
+  NativePeripheralPort,
+} from './internal/port';
 import type { NativeScanOptions } from './internal/scanOptions';
 import type {
   BlePermissionRequest,
@@ -52,6 +62,16 @@ export declare class NativePeripheral
   cancelOperation(operationId: number): Promise<void>;
 }
 
+/** The GATT server's native handle (plan §4.5, P4-01). */
+export declare class NativeGattServer
+  extends SharedObject<GattServerObjectEvents>
+  implements NativeGattServerPort
+{
+  respondToRead(requestId: number, value: Uint8Array | null, attError: number | null): void;
+  respondToWrite(requestId: number, attError: number | null): void;
+  close(): Promise<void>;
+}
+
 /** The native module: the real `NativeBleKitPort` (plan §4.6). */
 export declare class ExpoBleKitModule
   extends NativeModule<ExpoBleKitModuleEvents>
@@ -66,6 +86,7 @@ export declare class ExpoBleKitModule
   getKnownPeripherals(ids: string[]): Promise<string[]>;
   getSystemConnectedPeripherals(services: string[]): Promise<string[]>;
   getDiagnosticsAsync(): Promise<NativeDiagnostics>;
+  openGattServer(services: NativeServiceDefinition[]): Promise<NativeGattServer>;
   setLogLevel(level: LogLevel): void;
   setLogForwarding(enabled: boolean): void;
 }

@@ -15,6 +15,7 @@ export type {
   VirtualPeripheral,
   VirtualPeripheralConfig,
 } from './FakeBleAdapter';
+export type { VirtualCentral } from './FakeGattServer';
 export { BleErrorCode };
 
 const ALL_GRANTED: BlePermissions = {
@@ -42,5 +43,6 @@ export function installFakeBle(
     setState: (state) => adapter.setState(state),
     injectError: (match, code) => adapter.injectError(match, code),
     reset: () => adapter.reset(),
+    connectCentral: (options) => adapter.connectCentral(options),
   };
 }

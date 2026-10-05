@@ -366,6 +366,106 @@ export interface BackgroundTaskOptions {
   scan?: Pick<ScanOptions, 'services' | 'manufacturerData' | 'namePrefix'>;
 }
 
+/** Who may read or write a local characteristic, and whether the link must be encrypted (pairing). */
+export type AttributePermission =
+  'readable' | 'writeable' | 'readEncryptionRequired' | 'writeEncryptionRequired';
+
+/** A service of the local GATT server (`BleManager.openGattServer`). */
+export interface ServiceDefinition {
+  /** The service UUID. */
+  uuid: UUID;
+  /**
+   * Whether it is a primary service.
+   * @defaultValue true
+   */
+  primary?: boolean;
+  /** Its characteristics. Their UUIDs must be unique within the server. */
+  characteristics: CharacteristicDefinition[];
+}
+
+/** A characteristic of the local GATT server. */
+export interface CharacteristicDefinition {
+  /** The characteristic UUID, unique within the server. */
+  uuid: UUID;
+  /** Supported: `read`, `write`, `writeWithoutResponse`, `notify`, `indicate`. */
+  properties: CharacteristicProperty[];
+  /** `read` needs a read permission, `write` and `writeWithoutResponse` a write permission. */
+  permissions: AttributePermission[];
+  /**
+   * A static value, answered without your handler. It makes the characteristic read-only
+   * (properties `['read']`, a read permission), as iOS caches it. Omit it for a value your
+   * `onReadRequest` handler provides.
+   */
+  value?: Uint8Array;
+  /**
+   * Static descriptors: user description (`2901`, UTF-8 text) and presentation format (`2904`),
+   * the two iOS publishes. Notifiable characteristics get their CCCD automatically.
+   */
+  descriptors?: {
+    /** `2901` or `2904`. */
+    uuid: UUID;
+    /** Its static value. */
+    value: Uint8Array;
+  }[];
+}
+
+/** A central reads a characteristic with a dynamic value. */
+export interface ReadRequest {
+  /** The central: a Bluetooth address on Android, a per-app UUID on iOS. */
+  centralId: string;
+  /** The characteristic. */
+  characteristic: UUID;
+  /**
+   * 0 for a read; the start of a continuation read when the central asked for a later part with no
+   * read of the whole value before it (the server slices your value from here either way).
+   */
+  offset: number;
+}
+
+/** A central writes a characteristic. */
+export interface WriteRequest {
+  /** The central. */
+  centralId: string;
+  /** The characteristic. */
+  characteristic: UUID;
+  /** Always 0: a long write arrives as one value once the central executes it. */
+  offset: number;
+  /** The value. */
+  value: Uint8Array;
+  /**
+   * Whether the central waits for the answer. iOS can't tell write types apart; it reports `true`
+   * unless the characteristic only allows writes without response.
+   */
+  withResponse: boolean;
+}
+
+/**
+ * The local GATT server of the peripheral role (`BleManager.openGattServer`). Static values are
+ * answered without you; reads and writes of the others go to your handlers, which must answer
+ * within 25 s, or the server answers with an ATT error and a `warning` goes to the log.
+ */
+export interface GattServer {
+  /**
+   * Answers reads: return the whole current value (at most 512 bytes), or throw a `BleError` (its
+   * code becomes the ATT error, e.g. `READ_NOT_PERMITTED`). A long read calls the handler once:
+   * the server answers the central's continuation reads from that value, so the central never sees
+   * parts of two different values. Registering another handler replaces this one. Without a
+   * handler, reads get `READ_NOT_PERMITTED`.
+   */
+  onReadRequest(handler: (request: ReadRequest) => Uint8Array | Promise<Uint8Array>): Subscription;
+  /**
+   * Answers writes: return (or resolve) to accept, throw a `BleError` to refuse. Registering
+   * another handler replaces this one. Without a handler, writes get `WRITE_NOT_PERMITTED`.
+   */
+  onWriteRequest(handler: (request: WriteRequest) => void | Promise<void>): Subscription;
+  /** Calls `listener` when a central turns notifications or indications on or off. */
+  addSubscriptionListener(
+    listener: (event: { centralId: string; characteristic: UUID; subscribed: boolean }) => void
+  ): Subscription;
+  /** Removes the services. Turning Bluetooth off closes the server too. */
+  close(): Promise<void>;
+}
+
 /** What the notification of Android's keep-alive foreground service shows. */
 export interface ForegroundServiceNotification {
   /**
@@ -678,6 +778,13 @@ export interface BleManagerApi {
   setLogHandler(handler: ((entry: LogEntry) => void) | null): void;
   /** A snapshot for bug reports: state, permissions, connections and recent errors. */
   getDiagnostics(): Promise<Diagnostics>;
+
+  /**
+   * Publishes `services` as the local GATT server (peripheral role), one server at a time. Needs
+   * Bluetooth on and the connect permission (`requestPermissionsAsync()` first). Centrals find the
+   * phone through advertising.
+   */
+  openGattServer(services: ServiceDefinition[]): Promise<GattServer>;
 
   /**
    * Delivers events to the `expo-task-manager` task `taskName`, also while the app isn't running:

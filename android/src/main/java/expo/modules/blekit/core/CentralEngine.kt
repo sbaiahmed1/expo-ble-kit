@@ -173,6 +173,23 @@ class CentralEngine(
     logger.log(LogLevel.INFO) { "scan session $sessionId started" }
   }
 
+  /** Throws unless a GATT server can be opened now: the connect permission and an adapter that is on (P4-01). */
+  fun checkGattServer() {
+    val policy = permissionPolicy()
+    policy.checkDeclared(listOf(BleCapability.CONNECT))
+    val missing = policy.runtimePermissions(BleCapability.CONNECT).filterNot(permissionSystem::isGranted)
+    if (missing.isNotEmpty()) {
+      throw CoreError(
+        CoreError.Code.PERMISSION_DENIED,
+        "A GATT server needs ${missing.joinToString()}. Call requestPermissionsAsync() first.",
+      )
+    }
+    adapterError(adapter.state)?.let { throw it }
+  }
+
+  /** A warning from another component (the GATT server) goes the same way as the engine's. */
+  fun reportWarning(warning: CoreError) = warn(warning)
+
   /** Throws unless a background scan can be registered now (plan §4.13, P3-04). */
   fun checkBackgroundScan() =
     BackgroundScanning.check(permissionPolicy(), permissionSystem::isGranted, adapterError(adapter.state))

@@ -35,7 +35,7 @@ maestro test e2e/maestro/explorer-basic.yaml            # example flows; add -e 
 
 `test-peripherals/profile.json` is the single source of truth for the test GATT profile; change it before any implementation.
 
-`test-contracts/` holds behavior cases shared by the native cores and the TypeScript fake (for now the GATT queue). Swift, Kotlin and Jest tests all run them; a change of queue behavior starts there.
+`test-contracts/` holds behavior cases shared by the native cores and the TypeScript fake: the GATT queue and the GATT server's long reads. Swift, Kotlin and Jest tests all run them; a change of that behavior starts there.
 
 ## Conventions
 
