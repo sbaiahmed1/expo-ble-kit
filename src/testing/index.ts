@@ -44,5 +44,8 @@ export function installFakeBle(
     injectError: (match, code) => adapter.injectError(match, code),
     reset: () => adapter.reset(),
     connectCentral: (options) => adapter.connectCentral(options),
+    get advertisement() {
+      return adapter.currentAdvertisement();
+    },
   };
 }

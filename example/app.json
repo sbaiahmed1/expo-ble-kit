@@ -27,9 +27,13 @@
       [
         "../app.plugin.js",
         {
+          "ios": {
+            "backgroundModes": ["peripheral"]
+          },
           "android": {
             "foregroundService": true,
-            "backgroundLocation": true
+            "backgroundLocation": true,
+            "advertise": true
           }
         }
       ],

@@ -1,9 +1,11 @@
 import { Platform } from 'react-native';
 
+import { AdvertisementImpl } from './Advertiser';
 import type { LogEvent, ScanErrorEvent, ScanResultsEvent } from './ExpoBleKit.types';
 import { GattServerImpl } from './GattServer';
 import { PeripheralImpl } from './Peripheral';
 import { BleError, BleErrorCode } from './errors';
+import { toNativeAdvertising } from './internal/advertising';
 import { checkTaskName, toNativeBackgroundTaskOptions } from './internal/backgroundTask';
 import { toNativeServices } from './internal/gattServer';
 import { checkLogLevel, deliver, setHandler, setLevel } from './internal/log';
@@ -335,6 +337,15 @@ export const BleManager: BleManagerApi = {
     return guard(async () => {
       const definitions = toNativeServices(services);
       return new GattServerImpl(await getNativeModule().openGattServer(definitions));
+    });
+  },
+
+  startAdvertising(data, options) {
+    return guard(async () => {
+      const native = toNativeAdvertising(data, options);
+      const module = getNativeModule();
+      const id = await module.startAdvertising(native.data, native.options);
+      return new AdvertisementImpl(module, id);
     });
   },
 

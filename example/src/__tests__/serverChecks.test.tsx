@@ -95,4 +95,20 @@ describe('GATT server checks', () => {
     await fireEvent.press(screen.getByTestId('server-close'));
     await settle();
   });
+
+  it('advertises the TEST service until stopped (P4-03)', async () => {
+    await render(<ServerChecks />);
+    await settle();
+    await fireEvent.press(screen.getByTestId('advertising-start'));
+    await settle();
+    expect(screen.getByText('Advertising the TEST service')).toBeTruthy();
+    expect(demo.ble.advertisement?.data).toMatchObject({
+      localName: 'BleKit-Test',
+      serviceUUIDs: [TestProfile.TEST],
+    });
+    await fireEvent.press(screen.getByTestId('advertising-stop'));
+    await settle();
+    expect(screen.getByText('Not advertising')).toBeTruthy();
+    expect(demo.ble.advertisement).toBeNull();
+  });
 });

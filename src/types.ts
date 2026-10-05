@@ -477,6 +477,70 @@ export interface GattServer {
   close(): Promise<void>;
 }
 
+/**
+ * What the phone advertises (`BleManager.startAdvertising`). Each platform advertises what it can
+ * and reports the rest as a `NOT_SUPPORTED` warning (plan §6):
+ * - iOS advertises only `localName` and `serviceUUIDs`, the name not while the app is in the
+ *   background. Service UUIDs that don't fit go to Apple's overflow area, which only iOS devices
+ *   scanning for them see.
+ * - Android can't advertise a name of the app's choosing: with `localName`, it advertises the
+ *   phone's Bluetooth name.
+ */
+export interface AdvertisingData {
+  /** The name to advertise (in the scan response on Android). */
+  localName?: string;
+  /** Service UUIDs, so centrals scanning with a service filter find the phone. */
+  serviceUUIDs?: UUID[];
+  /** Android only: ignored with a warning on iOS. */
+  manufacturerData?: {
+    /** The Bluetooth SIG company identifier, 0 to 0xFFFF. */
+    companyId: number;
+    /** The data after the company identifier. */
+    data: Uint8Array;
+  };
+  /** Android only: data per service UUID. Ignored with a warning on iOS. */
+  serviceData?: Record<UUID, Uint8Array>;
+  /** Android only: adds the TX power level. Ignored with a warning on iOS. */
+  includeTxPower?: boolean;
+}
+
+/** How to advertise (`BleManager.startAdvertising`). */
+export interface AdvertisingOptions {
+  /**
+   * Whether centrals may connect. iOS always advertises connectable: `false` is ignored there
+   * with a warning.
+   * @defaultValue true
+   */
+  connectable?: boolean;
+  /** Android only. */
+  android?: {
+    /**
+     * The advertising interval: about 100 ms (`lowLatency`), 250 ms (`balanced`) or 1 s (`lowPower`).
+     * @defaultValue 'lowLatency'
+     */
+    mode?: 'lowPower' | 'balanced' | 'lowLatency';
+    /**
+     * The transmit power: about -21, -15, -7 or 1 dBm.
+     * @defaultValue 'medium'
+     */
+    txPower?: 'ultraLow' | 'low' | 'medium' | 'high';
+    /**
+     * Bluetooth 5 extended advertising: more data in one advertisement, but only Bluetooth 5
+     * scanners see it. Rejects with `NOT_SUPPORTED` where the phone can't.
+     * @defaultValue false
+     */
+    extended?: boolean;
+    /** Stop by itself after this long, 10 ms to 655,350 ms. */
+    timeoutMs?: number;
+  };
+}
+
+/** A running advertisement (`BleManager.startAdvertising`). */
+export interface Advertisement {
+  /** Stops advertising. Does nothing once it stopped (Bluetooth off, `timeoutMs` elapsed). */
+  stop(): Promise<void>;
+}
+
 /** What the notification of Android's keep-alive foreground service shows. */
 export interface ForegroundServiceNotification {
   /**
@@ -796,6 +860,17 @@ export interface BleManagerApi {
    * phone through advertising.
    */
   openGattServer(services: ServiceDefinition[]): Promise<GattServer>;
+
+  /**
+   * Advertises the phone as a peripheral, one advertisement at a time, so centrals find it and
+   * connect to the GATT server. Needs Bluetooth on and the advertise permission (Android 12+:
+   * `requestPermissionsAsync({ advertise: true })`, declared by the config plugin's
+   * `android.advertise`). Rejects with `ADVERTISING_FAILED` when one is already running or the
+   * data doesn't fit, `NOT_SUPPORTED` when the phone can't advertise (or can't do
+   * `android.extended`). On iOS, advertising stops in the background unless the app has the
+   * `bluetooth-peripheral` background mode (plugin option `ios.backgroundModes: ['peripheral']`).
+   */
+  startAdvertising(data: AdvertisingData, options?: AdvertisingOptions): Promise<Advertisement>;
 
   /**
    * Delivers events to the `expo-task-manager` task `taskName`, also while the app isn't running:

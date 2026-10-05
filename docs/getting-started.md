@@ -281,7 +281,7 @@ server.addSubscriptionListener(({ centralId, subscribed }) => console.log(centra
 - A long write arrives as one `WriteRequest` once the central completes it. Throw a `BleError` to refuse a request: its code becomes the ATT error (`READ_NOT_PERMITTED`, `WRITE_NOT_PERMITTED`, `INVALID_ATTRIBUTE_LENGTH`, `INSUFFICIENT_ENCRYPTION`…).
 - Characteristic UUIDs must be unique within the server. Descriptors: user description (`2901`) and presentation format (`2904`); notifiable characteristics get their CCCD automatically.
 - One server at a time. It needs Bluetooth on and the connect permission; turning Bluetooth off closes it.
-- Centrals find the phone through advertising, which comes in a later version.
+- Centrals find the phone through advertising (below).
 - In Jest, `installFakeBle().connectCentral()` gives you a central that reads and writes your server like a real one; its `notifications` list what your server sent it.
 
 ### Sending notifications
@@ -297,6 +297,25 @@ await server.notify(COUNTER, frame, { centrals: [centralId] }); // only to these
 - Await each call. It resolves once the system took the value for every target, so a loop of awaited calls sends as fast as the link carries and never more; a value waits at most 10 seconds (`OPERATION_TIMEOUT`).
 - A value takes at most MTU − 3 bytes for each target: 20 bytes until the central negotiates a larger MTU. A longer one rejects with `INVALID_ATTRIBUTE_LENGTH`; nothing is sent.
 - A central that disconnects just drops out. Closing the server rejects what is still waiting with `DISCONNECTED`.
+
+### Advertising
+
+```ts
+await BleManager.requestPermissionsAsync({ advertise: true });
+const advertisement = await BleManager.startAdvertising({
+  localName: 'Thermostat',
+  serviceUUIDs: [SERVICE],
+});
+// later: await advertisement.stop();
+```
+
+- Android 12+ needs the advertise permission: add `android: { advertise: true }` to the plugin options, then ask for it as above.
+- One advertisement at a time; it ends when Bluetooth goes off or `stop()` is called. `stop()` again does nothing.
+- What each platform advertises differs (a `warning` with `NOT_SUPPORTED` names what was left out):
+  - iOS advertises only `localName` and `serviceUUIDs`, and only while the app is in front. With `ios: { backgroundModes: ['peripheral'] }` in the plugin options it keeps advertising in the background, without the name, and with the service UUIDs where only iOS devices scanning for them see them.
+  - Android can't advertise a name of your choice: with `localName` it advertises the phone's Bluetooth name. It advertises `manufacturerData`, `serviceData` and `includeTxPower` too, and takes the `android` options (interval, transmit power, extended advertising, a timeout).
+- Legacy advertisements are small (31 bytes, plus 31 in the scan response): a 128-bit service UUID takes 18. `startAdvertising` rejects with `ADVERTISING_FAILED`, naming the field, when the data doesn't fit.
+- In Jest, `installFakeBle().advertisement` shows what is being advertised.
 
 ## With React hooks
 
@@ -388,6 +407,6 @@ The fake answers on later timer ticks, like a radio; Jest fake timers work (`awa
 
 ## Not in this version yet
 
-Background operation on iOS (background modes, state restoration, background tasks), background events other than scan results, and the rest of the peripheral role (advertising) come in later versions. Options for them reject with `NOT_SUPPORTED` rather than being ignored.
+Background operation on iOS as a central (state restoration, background tasks) and background events other than scan results come in later versions. Options for them reject with `NOT_SUPPORTED` rather than being ignored.
 
 Problems? See [troubleshooting](troubleshooting.md).

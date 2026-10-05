@@ -40,7 +40,7 @@ Inside `<manifest>`, which must declare `xmlns:tools="http://schemas.android.com
 
 - If your app already declares one of these permissions (for example `ACCESS_FINE_LOCATION` for location features), keep your entry and skip this one. In particular, don't add `maxSdkVersion` to a location permission your app needs on Android 12+. In that case also skip the `android.hardware.location` line: your app decides whether location hardware is required.
 - `neverForLocation` tells Android 12+ that your app doesn't derive location from scans. Without it, Android requires location permission for scanning. Drop the flag only if you do derive location from Bluetooth scans; some beacon advertisements are filtered while it is set. Without the flag, also remove `android:maxSdkVersion` from `ACCESS_FINE_LOCATION`; `requestPermissionsAsync` then asks for location too.
-- The `android.hardware.bluetooth` line matters: the legacy `BLUETOOTH` permission otherwise makes Google Play treat classic Bluetooth as *required*. Set `android:required="true"` on both features only if the app is useless without Bluetooth LE: Play then hides it from devices without it.
+- The `android.hardware.bluetooth` line matters: the legacy `BLUETOOTH` permission otherwise makes Google Play treat classic Bluetooth as _required_. Set `android:required="true"` on both features only if the app is useless without Bluetooth LE: Play then hides it from devices without it.
 
 ## Android: keep-alive foreground service (optional)
 
@@ -74,6 +74,30 @@ Inside `<application>`:
 - Google Play asks apps that declare background location to justify it in Play Console.
 - To restart background scans after a reboot, also declare the `android.permission.RECEIVE_BOOT_COMPLETED` permission (the plugin doesn't); otherwise they restart the next time the app runs.
 
+## Android: advertising (optional)
+
+Only for `BleManager.startAdvertising`; the plugin writes this with `android: { advertise: true }`. Inside `<manifest>`:
+
+```xml
+<uses-permission android:name="android.permission.BLUETOOTH_ADVERTISE" />
+```
+
+- Without it, `startAdvertising` rejects with `MISCONFIGURED`; declared but not granted, with `PERMISSION_DENIED`. `requestPermissionsAsync({ advertise: true })` asks for it. Android 11 and older need no runtime permission.
+
 ## Android: minimum SDK 26
 
 The library needs Android 8.0 (API 26). In `android/build.gradle`, set `minSdkVersion = 26` in `ext` (or `android.minSdkVersion=26` in `android/gradle.properties` for Expo autolinking projects).
+
+## iOS: advertising in the background (optional)
+
+iOS stops advertising and serving the GATT server while the app is in the background, unless the app has the `bluetooth-peripheral` background mode; the plugin adds it with `ios: { backgroundModes: ['peripheral'] }`. In `Info.plist`:
+
+```xml
+<key>UIBackgroundModes</key>
+<array>
+  <string>bluetooth-peripheral</string>
+</array>
+```
+
+- Keep the modes your app already has in the array.
+- In the background, iOS doesn't advertise the local name, and service UUIDs go to the overflow area, which only iOS devices scanning for them see.

@@ -47,6 +47,11 @@ protocol PeripheralManaging: AnyObject {
   func updateValue(_ value: Data, for characteristic: CBUUID, onSubscribedCentrals centrals: [UUID]) -> Bool
   /// The most a notification to `central` carries (`CBCentral.maximumUpdateValueLength`), if known.
   func maximumUpdateValueLength(for central: UUID) -> Int?
+  /// The advertiser's callbacks (P4-03); `delegate` stays the GATT server's.
+  var advertisingDelegate: PeripheralAdvertisingDelegate? { get set }
+  /// Advertises the two keys iOS supports (Apple's `startAdvertising(_:)` docs).
+  func startAdvertising(localName: String?, serviceUUIDs: [CBUUID])
+  func stopAdvertising()
 }
 
 /// Callbacks of `PeripheralManaging`, on the peripheral queue.

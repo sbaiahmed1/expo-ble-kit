@@ -17,6 +17,7 @@ import type {
   Service,
   Subscription,
 } from '../types';
+import type { NativeAdvertisingData, NativeAdvertisingOptions } from './advertising';
 import type { NativeAttributeRequest, NativeSubscribeMode } from './attributeRequest';
 import type { NativeBackgroundTaskOptions } from './backgroundTask';
 import type { NativeConnectOptions } from './connectOptions';
@@ -51,6 +52,10 @@ export interface NativeBleKitPort {
   setLogForwarding(enabled: boolean): void;
   /** The GATT server (P4-01): one at a time; resolves once every service is published. */
   openGattServer(services: NativeServiceDefinition[]): Promise<NativeGattServerPort>;
+  /** P4-03: one advertisement at a time; resolves with its id once it runs. */
+  startAdvertising(data: NativeAdvertisingData, options: NativeAdvertisingOptions): Promise<number>;
+  /** Stops advertisement `id`; does nothing once it ended. */
+  stopAdvertising(id: number): Promise<void>;
   /** Android only (P3-04): a TaskManager task with a background scan. */
   registerBackgroundTask?(taskName: string, options: NativeBackgroundTaskOptions): Promise<void>;
   unregisterBackgroundTask?(taskName: string): Promise<void>;

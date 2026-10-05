@@ -7,7 +7,7 @@ extension ExpoBleKitModule {
     let specs: [ServerServiceSpec]
     do {
       specs = try services.map { try $0.spec() }
-      try Self.checkAuthorization()
+      try Self.checkAuthorization("A GATT server")
     } catch let error as BleKitException {
       return promise.reject(error)
     } catch {
@@ -18,8 +18,7 @@ extension ExpoBleKitModule {
         let error = CoreError(.invalidArgument, "A GATT server is already open: close it first")
         return promise.reject(BleKitException(error))
       }
-      let manager = self.peripheralManager ?? CBPeripheralManagerAdapter(queue: self.peripheralQueue)
-      self.peripheralManager = manager
+      let manager = self.sharedPeripheralManager()
       let ref = GattServerObject()
       let server = GattServer(services: specs, manager: manager, scheduler: QueueScheduler(queue: self.peripheralQueue))
       server.listener = ref
@@ -42,18 +41,27 @@ extension ExpoBleKitModule {
     }
   }
 
-  /// The prompt only comes from requestPermissionsAsync(): a server never shows it.
-  private static func checkAuthorization() throws {
+  /// The prompt only comes from requestPermissionsAsync(): the peripheral role never shows it.
+  static func checkAuthorization(_ what: String) throws {
     switch CBManager.authorization {
     case .allowedAlways:
       return
     case .notDetermined:
       throw BleKitException(
-        CoreError(.permissionDenied, "A GATT server needs Bluetooth permission. Call requestPermissionsAsync() first.")
+        CoreError(.permissionDenied, "\(what) needs Bluetooth permission. Call requestPermissionsAsync() first.")
       )
     default:
       throw BleKitException(CoreError(.bluetoothUnauthorized, "The app may not use Bluetooth"))
     }
+  }
+
+  /// The peripheral manager of the server and the advertiser, created on first use. On the
+  /// peripheral queue.
+  func sharedPeripheralManager() -> CBPeripheralManagerAdapter {
+    if let peripheralManager { return peripheralManager }
+    let manager = CBPeripheralManagerAdapter(queue: peripheralQueue)
+    peripheralManager = manager
+    return manager
   }
 
   /// Closes the open server. On the peripheral queue.

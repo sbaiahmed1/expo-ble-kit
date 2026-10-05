@@ -1,11 +1,18 @@
 /**
  * Config plugin options (plan §4.15): the base declarations, Android's keep-alive foreground
- * service (P3-03) and background location for background scans (P3-04). The other background,
- * peripheral-role and onboarding options arrive with P3, P4 and P5.
+ * service (P3-03), background location for background scans (P3-04), and advertising (P4-03). The
+ * other background and onboarding options arrive with P3 and P5.
  */
 export type ExpoBleKitPluginProps = {
   /** iOS NSBluetoothAlwaysUsageDescription. `false` skips it (only for apps that set it elsewhere). */
   bluetoothAlwaysPermission?: string | false;
+  ios?: {
+    /**
+     * `UIBackgroundModes` to add. `'peripheral'` (`bluetooth-peripheral`) keeps advertising and the
+     * GATT server going in the background. `'central'` arrives with P3.
+     */
+    backgroundModes?: 'peripheral'[];
+  };
   android?: {
     /** Declare BLUETOOTH_SCAN with `neverForLocation` (Android 12+). Default true. */
     neverForLocation?: boolean;
@@ -21,18 +28,27 @@ export type ExpoBleKitPluginProps = {
      * 10 and 11. Google Play asks apps that declare it to justify it. Default false.
      */
     backgroundLocation?: boolean;
+    /** Declare BLUETOOTH_ADVERTISE (Android 12+), which `startAdvertising` needs. Default false. */
+    advertise?: boolean;
   };
 };
 
-const TOP_LEVEL = new Set(['bluetoothAlwaysPermission', 'android']);
+const TOP_LEVEL = new Set(['bluetoothAlwaysPermission', 'ios', 'android']);
+const IOS = new Set(['backgroundModes']);
+const BACKGROUND_MODES = ['peripheral'];
 const ANDROID = new Set([
   'neverForLocation',
   'requireBleHardware',
   'foregroundService',
   'backgroundLocation',
+  'advertise',
 ]);
 /** Options from plan §4.15 that later versions add. */
-const NOT_YET = new Set(['ios', 'android.advertise', 'android.companionDevice']);
+const NOT_YET = new Set([
+  'ios.restoreIdentifier',
+  'ios.accessorySetupKit',
+  'android.companionDevice',
+]);
 
 function fail(message: string): never {
   throw new Error(`expo-ble-kit config plugin: ${message}`);
@@ -64,6 +80,27 @@ export function validateProps(props: unknown): ExpoBleKitPluginProps {
   const permission = value.bluetoothAlwaysPermission;
   if (permission !== undefined && permission !== false && typeof permission !== 'string') {
     fail('"bluetoothAlwaysPermission" must be a string or false.');
+  }
+
+  const ios = value.ios;
+  if (ios !== undefined) {
+    if (typeof ios !== 'object' || ios === null || Array.isArray(ios)) {
+      fail('"ios" must be an object.');
+    }
+    const iosProps = ios as Record<string, unknown>;
+    checkKeys(iosProps, IOS, 'ios.');
+    const modes = iosProps.backgroundModes;
+    if (modes !== undefined) {
+      if (!Array.isArray(modes)) fail('"ios.backgroundModes" must be an array.');
+      for (const mode of modes) {
+        if (mode === 'central') {
+          fail('the "ios.backgroundModes" value "central" is not available in this version yet.');
+        }
+        if (!BACKGROUND_MODES.includes(mode)) {
+          fail(`"ios.backgroundModes" takes ${BACKGROUND_MODES.map((m) => `"${m}"`).join(', ')}.`);
+        }
+      }
+    }
   }
 
   const android = value.android;

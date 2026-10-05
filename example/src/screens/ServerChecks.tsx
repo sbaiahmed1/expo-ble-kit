@@ -1,14 +1,20 @@
 import { useEffect, useRef, useState } from 'react';
 import { Button, Text } from 'react-native';
 
-import { BleError, BleManager, type GattServer, type Subscription } from 'expo-ble-kit';
+import {
+  BleError,
+  BleManager,
+  type Advertisement,
+  type GattServer,
+  type Subscription,
+} from 'expo-ble-kit';
 
-import { serverServices, serveTestProfile } from '../lib/serverProfile';
+import { serverAdvertisement, serverServices, serveTestProfile } from '../lib/serverProfile';
 import { checkStyles as styles, Group } from './checksUi';
 
-// P4-01, P4-02: the phone as a GATT server with the test profile's TEST service, CONTROL streaming
-// included, so a second phone can run the central checks (the batched stream) against it. Centrals
-// find it through advertising (P4-03); until then a central that knows the phone's address connects.
+// P4-01 … P4-03: the phone as a GATT server with the test profile's TEST service, CONTROL streaming
+// included, advertising the TEST service so a second phone (or e2e/macos-central) finds it and runs
+// the central checks against it.
 
 const time = () => new Date().toISOString().slice(14, 23);
 
@@ -17,13 +23,34 @@ export function ServerChecks() {
   const [requests, setRequests] = useState<string[]>([]);
   const server = useRef<GattServer | null>(null);
   const handlers = useRef<Subscription[]>([]);
+  const advertisement = useRef<Advertisement | null>(null);
+  const [advertising, setAdvertising] = useState('');
   useEffect(
     () => () => {
       handlers.current.forEach((handler) => handler.remove());
       void server.current?.close();
+      void advertisement.current?.stop();
     },
     []
   );
+
+  async function advertise() {
+    if (advertisement.current) return;
+    try {
+      await BleManager.requestPermissionsAsync({ advertise: true });
+      advertisement.current = await BleManager.startAdvertising(serverAdvertisement);
+      setAdvertising('Advertising the TEST service');
+    } catch (error) {
+      const bleError = BleError.fromNative(error);
+      setAdvertising(`Advertising: ${bleError.code}: ${bleError.message}`);
+    }
+  }
+
+  async function stopAdvertising() {
+    await advertisement.current?.stop();
+    advertisement.current = null;
+    setAdvertising('Not advertising');
+  }
 
   async function open() {
     if (server.current) return;
@@ -67,6 +94,23 @@ export function ServerChecks() {
         title="Close it"
         onPress={() => {
           close();
+        }}
+      />
+      <Text testID="advertising-status" style={styles.result}>
+        {advertising}
+      </Text>
+      <Button
+        testID="advertising-start"
+        title="Advertise the TEST service"
+        onPress={() => {
+          advertise();
+        }}
+      />
+      <Button
+        testID="advertising-stop"
+        title="Stop advertising"
+        onPress={() => {
+          stopAdvertising();
         }}
       />
       <Text testID="server-requests" style={styles.result}>

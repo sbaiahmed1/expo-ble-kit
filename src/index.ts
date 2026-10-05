@@ -14,6 +14,9 @@ export {
   useCharacteristicValue,
 } from './hooks';
 export type {
+  Advertisement,
+  AdvertisingData,
+  AdvertisingOptions,
   AttributePermission,
   BackgroundTaskOptions,
   BleBackgroundEvent,

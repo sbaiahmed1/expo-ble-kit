@@ -21,7 +21,7 @@ It scans for 8 seconds, then tries the devices in this order:
 1. Devices advertising the TEST service: a test peripheral, or a phone once it advertises (P4-03).
 2. Connectable Apple advertisements, strongest first. An iPhone serves its apps' services behind its own advertisement, usually named after the phone. So an iPhone can be tested before P4-03; an Android phone can't, because it doesn't advertise by itself.
 
-It connects to each one and looks for the TEST service.
+It connects to each one and looks for the TEST service. For each device advertising the TEST service it first logs what the advertisement carried (name, service UUIDs, manufacturer and service data, TX power, connectable): the check for P4-03. To advertise, tap **Advertise the TEST service** under the GATT server group.
 
 ## What it checks
 

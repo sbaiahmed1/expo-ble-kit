@@ -23,10 +23,12 @@ public class ExpoBleKitModule: Module {
   let peripherals = NSMapTable<NSString, PeripheralObject>.strongToWeakObjects()
   let peripheralsLock = NSLock()
 
-  /// The peripheral role's queue (plan §4.7), its manager once a server opened, and the open server.
+  /// The peripheral role's queue (plan §4.7), its manager once a server opened or advertising
+  /// started, the open server and the advertiser.
   let peripheralQueue = DispatchQueue(label: "expo.blekit.peripheral")
   var peripheralManager: CBPeripheralManagerAdapter?
   var openServer: GattServerObject?
+  var advertiser: Advertiser?
 
   lazy var engine: CentralEngine = {
     let engine = CentralEngine(queue: DispatchQueue(label: "expo.blekit.central"))
@@ -151,11 +153,11 @@ public class ExpoBleKitModule: Module {
 
     peripheralClass()
 
-    AsyncFunction("openGattServer") { (services: [ServerServiceRecord], promise: Promise) in
-      self.openGattServer(services, promise)
-    }
-
+    // The peripheral role (P4): the GATT server and advertising.
+    AsyncFunction("openGattServer", openGattServer)
     gattServerClass()
+    AsyncFunction("startAdvertising", startAdvertising)
+    AsyncFunction("stopAdvertising", stopAdvertising)
 
     // Ids only: JS turns them into peripherals with getPeripheral().
     AsyncFunction("getKnownPeripherals") { (ids: [String], promise: Promise) in

@@ -1,6 +1,8 @@
 package expo.modules.blekit.binding
 
 import android.os.SystemClock
+import expo.modules.blekit.core.Advertiser
+import expo.modules.blekit.core.AndroidAdvertiser
 import expo.modules.blekit.core.AndroidBluetoothAdapterPort
 import expo.modules.blekit.core.AndroidGattServerOpener
 import expo.modules.blekit.core.AndroidKeepAlive
@@ -45,6 +47,9 @@ class ExpoBleKitModule : Module() {
   private lateinit var serverExecutor: HandlerExecutor
   private var openServer: GattServerObject? = null
 
+  /** The advertiser (P4-03), on the server thread too: both are the peripheral role. */
+  private lateinit var advertiser: Advertiser
+
   /** One JS object per peripheral id while JS holds it (plan §4.5). Guarded by itself. */
   private val peripherals = HashMap<String, WeakReference<PeripheralObject>>()
 
@@ -71,12 +76,17 @@ class ExpoBleKitModule : Module() {
       engine.listener = EngineEvents()
       executor.execute { engine.start() }
       serverExecutor = HandlerExecutor.start("blekit-server")
+      advertiser = Advertiser(serverExecutor, AndroidAdvertiser(context, serverExecutor.handler))
+      advertiser.onWarning = { warning -> executor.execute { engine.reportWarning(warning) } }
     }
 
     OnDestroy {
       executor.execute { engine.close() }
       executor.handler.looper.quitSafely()
-      serverExecutor.execute { closeServer() }
+      serverExecutor.execute {
+        closeServer()
+        advertiser.close(CoreError(CoreError.Code.DISCONNECTED, "The module was destroyed"))
+      }
       serverExecutor.handler.looper.quitSafely()
     }
 
@@ -368,6 +378,32 @@ class ExpoBleKitModule : Module() {
       }
     }
 
+    // P4-03: one advertisement at a time; JS stops it by the id this resolves with.
+    AsyncFunction("startAdvertising") {
+        data: AdvertisingDataRecord,
+        options: AdvertisingOptionsRecord,
+        promise: Promise,
+      ->
+      executor.execute {
+        settle(promise) {
+          engine.checkAdvertising()
+          val spec = advertisingSpec(data, options)
+          serverExecutor.execute {
+            advertiser.start(spec) { id, error ->
+              if (error == null) promise.resolve(id) else promise.reject(BleKitException(error))
+            }
+          }
+        }
+      }
+    }
+
+    AsyncFunction("stopAdvertising") { id: Int, promise: Promise ->
+      serverExecutor.execute {
+        advertiser.stop(id)
+        promise.resolve(null)
+      }
+    }
+
     Class(GattServerObject::class) {
       Constructor {
         throw CodedException(CoreError.Code.INVALID_ARGUMENT.value, "Use BleManager.openGattServer()", null)
@@ -494,7 +530,12 @@ class ExpoBleKitModule : Module() {
     override fun onStateChange(state: BleState) {
       sendEvent("stateChange", mapOf("state" to state.js))
       // Android drops the server's services with the adapter: the server closes (plan §5.5).
-      if (state != BleState.POWERED_ON) serverExecutor.execute { closeServer() }
+      if (state != BleState.POWERED_ON) {
+        serverExecutor.execute {
+          closeServer()
+          advertiser.close(CoreError(CoreError.Code.BLUETOOTH_POWERED_OFF, "Bluetooth went off"))
+        }
+      }
     }
 
     override fun onScanResults(sessionId: Int, results: List<Map<String, Any?>>) {

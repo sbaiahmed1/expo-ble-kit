@@ -18,12 +18,18 @@ import {
   MIN_ANDROID_SDK,
   applyAndroidManifest,
   applyGradleProperties,
+  ADVERTISE,
   BACKGROUND_LOCATION,
   blePermissions,
   CONNECTION_SERVICE,
   foregroundServicePermissions,
 } from '../android';
-import { BLUETOOTH_ALWAYS_KEY, DEFAULT_BLUETOOTH_ALWAYS_PERMISSION, applyInfoPlist } from '../ios';
+import {
+  BACKGROUND_MODES_KEY,
+  BLUETOOTH_ALWAYS_KEY,
+  DEFAULT_BLUETOOTH_ALWAYS_PERMISSION,
+  applyInfoPlist,
+} from '../ios';
 import { validateProps } from '../schema';
 
 const TEMPLATE_MANIFEST = `<manifest xmlns:android="http://schemas.android.com/apk/res/android" xmlns:tools="http://schemas.android.com/tools">
@@ -43,21 +49,34 @@ function permissionsOf(manifest: AndroidConfig.Manifest.AndroidManifest) {
 describe('validateProps', () => {
   it('accepts nothing or the supported options', () => {
     expect(validateProps(undefined)).toEqual({});
-    expect(
-      validateProps({
-        bluetoothAlwaysPermission: false,
-        android: { neverForLocation: false, requireBleHardware: true, foregroundService: true },
-      })
-    ).toEqual({
-      bluetoothAlwaysPermission: false,
-      android: { neverForLocation: false, requireBleHardware: true, foregroundService: true },
-    });
+    const props = {
+      bluetoothAlwaysPermission: false as const,
+      ios: { backgroundModes: ['peripheral' as const] },
+      android: {
+        neverForLocation: false,
+        requireBleHardware: true,
+        foregroundService: true,
+        advertise: true,
+      },
+    };
+    expect(validateProps(props)).toEqual(props);
   });
 
   it.each([
     [{ bluetoothPermission: 'typo' }, 'unknown option "bluetoothPermission"'],
     [{ android: { neverForLocations: true } }, 'unknown option "android.neverForLocations"'],
-    [{ ios: { restoreIdentifier: 'x' } }, '"ios" is not available in this version yet'],
+    [
+      { ios: { restoreIdentifier: 'x' } },
+      '"ios.restoreIdentifier" is not available in this version yet',
+    ],
+    [
+      { ios: { backgroundModes: ['central'] } },
+      'value "central" is not available in this version yet',
+    ],
+    [{ ios: { backgroundModes: ['radio'] } }, '"ios.backgroundModes" takes "peripheral"'],
+    [{ ios: { backgroundModes: 'peripheral' } }, '"ios.backgroundModes" must be an array'],
+    [{ ios: true }, '"ios" must be an object'],
+    [{ android: { advertise: 'yes' } }, '"android.advertise" must be a boolean'],
     [{ android: { companionDevice: true } }, '"android.companionDevice" is not available'],
     [{ android: { backgroundLocation: 1 } }, '"android.backgroundLocation" must be a boolean'],
     [{ android: { foregroundService: 'yes' } }, '"android.foregroundService" must be a boolean'],
@@ -84,6 +103,17 @@ describe('iOS Info.plist', () => {
       applyInfoPlist({ [BLUETOOTH_ALWAYS_KEY]: 'Old' }, { bluetoothAlwaysPermission: 'New' })
     ).toEqual({ [BLUETOOTH_ALWAYS_KEY]: 'New' });
     expect(applyInfoPlist({}, { bluetoothAlwaysPermission: false })).toEqual({});
+  });
+
+  it("ios.backgroundModes adds bluetooth-peripheral once, next to the app's own modes", () => {
+    const props = { ios: { backgroundModes: ['peripheral' as const] } };
+    const plist = applyInfoPlist({ [BACKGROUND_MODES_KEY]: ['audio'] }, props);
+    expect(plist).toMatchSnapshot();
+    expect(applyInfoPlist(plist, props)[BACKGROUND_MODES_KEY]).toEqual([
+      'audio',
+      'bluetooth-peripheral',
+    ]);
+    expect(applyInfoPlist({})).not.toHaveProperty(BACKGROUND_MODES_KEY);
   });
 });
 
@@ -160,6 +190,16 @@ describe('Android manifest', () => {
         (p) => p['android:name'] === BACKGROUND_LOCATION.name
       )
     ).toEqual([{ 'android:name': BACKGROUND_LOCATION.name }]);
+  });
+
+  it('android.advertise declares BLUETOOTH_ADVERTISE', async () => {
+    const manifest = applyAndroidManifest(await parseManifest(TEMPLATE_MANIFEST), {
+      android: { advertise: true },
+    });
+    expect(XML.format(manifest)).toMatchSnapshot();
+    expect(permissionsOf(manifest)).toContainEqual({ 'android:name': ADVERTISE.name });
+    const without = applyAndroidManifest(await parseManifest(TEMPLATE_MANIFEST));
+    expect(permissionsOf(without).map((p) => p['android:name'])).not.toContain(ADVERTISE.name);
   });
 
   describe('android.foregroundService', () => {
@@ -340,11 +380,22 @@ describe('bare setup guide', () => {
   it('lists the background location entry of android.backgroundLocation', () => {
     const section = guide.slice(
       guide.indexOf('## Android: background scans'),
-      guide.indexOf('## Android: minimum SDK')
+      guide.indexOf('## Android: advertising')
     );
     expect(permissionsIn(section)).toEqual([
       { 'android:name': BACKGROUND_LOCATION.name, 'android:maxSdkVersion': '30' },
     ]);
+  });
+
+  it('lists the advertising entries of android.advertise and ios.backgroundModes', () => {
+    const section = guide.slice(
+      guide.indexOf('## Android: advertising'),
+      guide.indexOf('## Android: minimum SDK')
+    );
+    expect(permissionsIn(section)).toEqual([{ 'android:name': ADVERTISE.name }]);
+    const ios = guide.slice(guide.indexOf('## iOS: advertising in the background'));
+    expect(ios).toContain(`<key>${BACKGROUND_MODES_KEY}</key>`);
+    expect(ios).toContain('<string>bluetooth-peripheral</string>');
   });
 
   it('lists the feature, the Info.plist key and the minimum SDK', () => {

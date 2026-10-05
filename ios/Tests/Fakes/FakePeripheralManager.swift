@@ -22,6 +22,7 @@ final class FakeATTRequest: ATTRequestLike {
 final class FakePeripheralManager: PeripheralManaging {
   var state: CBManagerState
   weak var delegate: PeripheralManagingDelegate?
+  weak var advertisingDelegate: PeripheralAdvertisingDelegate?
   var confirmsAdds = true
   private(set) var added: [CBUUID] = []
   private(set) var answers: [(request: FakeATTRequest, result: CBATTError.Code)] = []
@@ -67,5 +68,27 @@ final class FakePeripheralManager: PeripheralManaging {
   func becomes(_ state: CBManagerState) {
     self.state = state
     delegate?.peripheralManagerDidUpdateState(self)
+    advertisingDelegate?.peripheralManagerStateChanged(self)
+  }
+
+  struct Advertisement: Equatable {
+    let localName: String?
+    let serviceUUIDs: [CBUUID]
+  }
+
+  /// What `startAdvertising` was asked; the test answers with `didStartAdvertising(error:)`.
+  private(set) var advertisements: [Advertisement] = []
+  private(set) var advertisingStops = 0
+
+  func startAdvertising(localName: String?, serviceUUIDs: [CBUUID]) {
+    advertisements.append(Advertisement(localName: localName, serviceUUIDs: serviceUUIDs))
+  }
+
+  func stopAdvertising() {
+    advertisingStops += 1
+  }
+
+  func didStartAdvertising(error: Error? = nil) {
+    advertisingDelegate?.peripheralManagerDidStartAdvertising(self, error: error)
   }
 }

@@ -52,6 +52,9 @@ export const BACKGROUND_LOCATION: PermissionDeclaration = {
   maxSdkVersion: 30,
 };
 
+/** `android.advertise` (P4-03, plan §4.13): advertising needs BLUETOOTH_ADVERTISE on Android 12+. */
+export const ADVERTISE: PermissionDeclaration = { name: 'android.permission.BLUETOOTH_ADVERTISE' };
+
 /** The keep-alive service class (plan §4.4), declared only with `android.foregroundService`. */
 export const CONNECTION_SERVICE = 'expo.modules.blekit.core.ConnectionService';
 
@@ -89,6 +92,7 @@ export function applyAndroidManifest(
     ...blePermissions(props),
     ...(foregroundService ? foregroundServicePermissions() : []),
     ...(props.android?.backgroundLocation ? [BACKGROUND_LOCATION] : []),
+    ...(props.android?.advertise ? [ADVERTISE] : []),
   ]) {
     if (declared.has(permission.name)) {
       continue;

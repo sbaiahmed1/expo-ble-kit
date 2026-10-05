@@ -11,6 +11,7 @@ import type {
   NativeBatch,
   NativeSubscribeMode,
 } from '../internal/attributeRequest';
+import type { NativeAdvertisingData, NativeAdvertisingOptions } from '../internal/advertising';
 import type { NativeBackgroundTaskOptions } from '../internal/backgroundTask';
 import type { NativeConnectOptions } from '../internal/connectOptions';
 import { DEFAULT_DISCOVERY_TIMEOUT_MS, reconnectDelay } from '../internal/connectOptions';
@@ -26,6 +27,8 @@ import type { NativeBleKitPort, NativeDiagnostics, NativePeripheralPort } from '
 import type { NativeScanOptions } from '../internal/scanOptions';
 import { timerScheduler, type Scheduler } from '../internal/scheduler';
 import type {
+  AdvertisingData,
+  AdvertisingOptions,
   BlePermissionRequest,
   BlePermissions,
   BleState,
@@ -90,7 +93,8 @@ export type FakeOperation =
   | 'subscribe'
   | 'unsubscribe'
   | 'requestMtu'
-  | 'readRssi';
+  | 'readRssi'
+  | 'startAdvertising';
 
 /** Controls the fake, from `installFakeBle()`. */
 export interface FakeBle {
@@ -110,6 +114,16 @@ export interface FakeBle {
    * server's handlers. `mtu` (default 23) sets how a long value is read and written.
    */
   connectCentral(options?: { id?: string; mtu?: number }): VirtualCentral;
+  /**
+   * The running advertisement (`BleManager.startAdvertising`), validated with the defaults
+   * applied, or null. The fake records what was asked; it doesn't apply a platform's limits.
+   */
+  readonly advertisement: {
+    /** What is advertised. */
+    data: AdvertisingData;
+    /** How. */
+    options: AdvertisingOptions;
+  } | null;
 }
 
 /** The peripheral side of a virtual peripheral. */
@@ -1374,6 +1388,7 @@ export class FakeBleAdapter implements NativeBleKitPort {
       }
       this.handles.forEach((handle) => handle.forceDisconnected(error));
       this.server?.close();
+      this.advertising = null;
     }
   }
 
@@ -1396,6 +1411,7 @@ export class FakeBleAdapter implements NativeBleKitPort {
     this.names.clear();
     this.errors = [];
     this.server?.close();
+    this.advertising = null;
     this.state = this.initial.state;
     this.permissions = { ...this.initial.permissions };
   }
@@ -1502,6 +1518,57 @@ export class FakeBleAdapter implements NativeBleKitPort {
     return server;
   }
 
+  /** The advertisement (P4-03): one at a time, ended when the adapter leaves `poweredOn`. */
+  private advertising: {
+    id: number;
+    data: NativeAdvertisingData;
+    options: NativeAdvertisingOptions;
+  } | null = null;
+
+  private nextAdvertisement = 1;
+
+  async startAdvertising(
+    data: NativeAdvertisingData,
+    options: NativeAdvertisingOptions
+  ): Promise<number> {
+    const precondition =
+      this.takeError('startAdvertising') ??
+      adapterError(this.state) ??
+      this.permissionError('advertise');
+    if (precondition) throw precondition;
+    if (this.advertising) {
+      throw fail(
+        BleErrorCode.ADVERTISING_FAILED,
+        'Already advertising: stop the current advertisement first'
+      );
+    }
+    const id = this.nextAdvertisement++;
+    this.advertising = { id, data, options };
+    await new Promise<void>((resolve) => this.scheduler.schedule(resolve));
+    return id;
+  }
+
+  async stopAdvertising(id: number): Promise<void> {
+    if (this.advertising?.id === id) this.advertising = null;
+  }
+
+  /** The public shape of the running advertisement, for `FakeBle.advertisement`. */
+  currentAdvertisement(): FakeBle['advertisement'] {
+    if (!this.advertising) return null;
+    const { data, options } = this.advertising;
+    const { connectable, ...android } = options;
+    return {
+      data: {
+        ...(data.localName !== undefined && { localName: data.localName }),
+        serviceUUIDs: data.serviceUuids,
+        ...(data.manufacturerData && { manufacturerData: data.manufacturerData }),
+        serviceData: Object.fromEntries(data.serviceData.map((entry) => [entry.uuid, entry.data])),
+        includeTxPower: data.includeTxPower,
+      },
+      options: { connectable, android },
+    };
+  }
+
   connectCentral(options: { id?: string; mtu?: number } = {}): VirtualCentral {
     if (!this.server) throw fail(BleErrorCode.DISCONNECTED, 'No GATT server is open');
     return this.server.connect(options.id ?? `central-${this.nextId++}`, options.mtu ?? MIN_MTU);
@@ -1530,7 +1597,9 @@ export class FakeBleAdapter implements NativeBleKitPort {
     if (name) this.names.set(id, name);
   }
 
-  permissionError(capability: 'scan' | 'connect' | 'backgroundScan'): BleError | null {
+  permissionError(
+    capability: 'scan' | 'connect' | 'advertise' | 'backgroundScan'
+  ): BleError | null {
     return this.permissions[capability] === 'granted'
       ? null
       : fail(

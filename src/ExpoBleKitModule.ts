@@ -5,6 +5,7 @@ import type {
   GattServerObjectEvents,
   PeripheralObjectEvents,
 } from './ExpoBleKit.types';
+import type { NativeAdvertisingData, NativeAdvertisingOptions } from './internal/advertising';
 import type { NativeAttributeRequest, NativeSubscribeMode } from './internal/attributeRequest';
 import type { NativeConnectOptions } from './internal/connectOptions';
 import type { NativeServiceDefinition } from './internal/gattServer';
@@ -88,6 +89,8 @@ export declare class ExpoBleKitModule
   getSystemConnectedPeripherals(services: string[]): Promise<string[]>;
   getDiagnosticsAsync(): Promise<NativeDiagnostics>;
   openGattServer(services: NativeServiceDefinition[]): Promise<NativeGattServer>;
+  startAdvertising(data: NativeAdvertisingData, options: NativeAdvertisingOptions): Promise<number>;
+  stopAdvertising(id: number): Promise<void>;
   setLogLevel(level: LogLevel): void;
   setLogForwarding(enabled: boolean): void;
 }

@@ -187,6 +187,27 @@ class CentralEngine(
     adapterError(adapter.state)?.let { throw it }
   }
 
+  /** Throws unless the phone may advertise now (P4-03): the permission declared and granted, Bluetooth on. */
+  fun checkAdvertising() {
+    val policy = permissionPolicy()
+    if (!policy.isDeclared(BleCapability.ADVERTISE)) {
+      val missing = policy.missingDeclarations(listOf(BleCapability.ADVERTISE)).joinToString()
+      throw CoreError(
+        CoreError.Code.MISCONFIGURED,
+        "AndroidManifest.xml doesn't declare $missing, which advertising needs. Set android.advertise: true in " +
+          "the expo-ble-kit config plugin options, or add it by hand (${CoreError.SETUP_GUIDE}).",
+      )
+    }
+    val missing = policy.runtimePermissions(BleCapability.ADVERTISE).filterNot(permissionSystem::isGranted)
+    if (missing.isNotEmpty()) {
+      throw CoreError(
+        CoreError.Code.PERMISSION_DENIED,
+        "Advertising needs ${missing.joinToString()}. Call requestPermissionsAsync({ advertise: true }) first.",
+      )
+    }
+    adapterError(adapter.state)?.let { throw it }
+  }
+
   /** A warning from another component (the GATT server) goes the same way as the engine's. */
   fun reportWarning(warning: CoreError) = warn(warning)
 

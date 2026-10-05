@@ -26,6 +26,8 @@ struct Candidate {
   let peripheral: CBPeripheral
   var rssi: Int
   let advertisesTest: Bool
+  /// What a TEST-service advertisement carried, for the log (P4-03).
+  let advertisement: String?
 }
 
 /// The central: finds the server, then runs the checks (Checks.swift). Its state lives on `queue`,
@@ -110,6 +112,9 @@ final class Central: NSObject, @unchecked Sendable {
         ($0.advertisesTest ? 1 : 0, $0.rssi) > ($1.advertisesTest ? 1 : 0, $1.rssi)
       }
       Log.write("\(sorted.count) candidates")
+      for candidate in sorted where candidate.advertisement != nil {
+        Log.write("advertises TEST: \(candidate.advertisement ?? "")")
+      }
       return Array(sorted.prefix(12))
     }
   }
@@ -211,7 +216,35 @@ extension Central: CBCentralManagerDelegate {
     let advertisesTest = services.contains(profile.service)
     guard advertisesTest || (connectable && apple), RSSI.intValue < 0 else { return }
     let rssi = max(candidates[peripheral.identifier]?.rssi ?? -127, RSSI.intValue)
-    candidates[peripheral.identifier] = Candidate(peripheral: peripheral, rssi: rssi, advertisesTest: advertisesTest)
+    let summary = advertisesTest ? describe(advertisementData, rssi: RSSI.intValue) : nil
+    candidates[peripheral.identifier] = Candidate(
+      peripheral: peripheral,
+      rssi: rssi,
+      advertisesTest: advertisesTest,
+      advertisement: summary ?? candidates[peripheral.identifier]?.advertisement
+    )
+  }
+
+  /// The fields an advertisement carried (the scan response included, as macOS merges them).
+  private func describe(_ data: [String: Any], rssi: Int) -> String {
+    let name = data[CBAdvertisementDataLocalNameKey] as? String
+    let services = (data[CBAdvertisementDataServiceUUIDsKey] as? [CBUUID] ?? []).map(\.uuidString)
+    let overflow = (data[CBAdvertisementDataOverflowServiceUUIDsKey] as? [CBUUID] ?? []).map(\.uuidString)
+    let manufacturer = (data[CBAdvertisementDataManufacturerDataKey] as? Data).map(hex)
+    let serviceData = (data[CBAdvertisementDataServiceDataKey] as? [CBUUID: Data] ?? [:])
+      .map { "\($0.key.uuidString)=\(hex($0.value))" }
+    let txPower = data[CBAdvertisementDataTxPowerLevelKey] as? NSNumber
+    let connectable = (data[CBAdvertisementDataIsConnectable] as? NSNumber)?.boolValue ?? false
+    return [
+      "name \(name.map { "'\($0)'" } ?? "none")",
+      "services \(services)",
+      overflow.isEmpty ? nil : "overflow \(overflow)",
+      manufacturer.map { "manufacturer \($0)" },
+      serviceData.isEmpty ? nil : "service data \(serviceData)",
+      txPower.map { "TX power \($0) dBm" },
+      "connectable \(connectable)",
+      "\(rssi) dBm"
+    ].compactMap { $0 }.joined(separator: ", ")
   }
 
   func centralManager(_ central: CBCentralManager, didConnect peripheral: CBPeripheral) {

@@ -1,4 +1,10 @@
-import { BleError, type GattServer, type ServiceDefinition, type Subscription } from 'expo-ble-kit';
+import {
+  BleError,
+  type AdvertisingData,
+  type GattServer,
+  type ServiceDefinition,
+  type Subscription,
+} from 'expo-ble-kit';
 
 import profile from '../../../test-peripherals/profile.json';
 import { TestProfile } from './gattNames';
@@ -49,6 +55,15 @@ export const serverServices: ServiceDefinition[] = [
     ],
   },
 ];
+
+/**
+ * The test peripheral's name and service (profile.json advertising), so central checks written for
+ * it find the phone. Android advertises the phone's own name instead, with a warning.
+ */
+export const serverAdvertisement: AdvertisingData = {
+  localName: profile.advertising.localName,
+  serviceUUIDs: [TestProfile.TEST],
+};
 
 const longRead = profileValue(spec('LONG_READ').value)!;
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));

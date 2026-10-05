@@ -4,6 +4,7 @@ import Foundation
 /// `PeripheralManaging` on a real `CBPeripheralManager`, created on the peripheral queue (plan §4.4).
 final class CBPeripheralManagerAdapter: NSObject, PeripheralManaging {
   weak var delegate: PeripheralManagingDelegate?
+  weak var advertisingDelegate: PeripheralAdvertisingDelegate?
   private var manager: CBPeripheralManager!
   /// What notifications need: the published characteristics and the subscribed centrals.
   private var characteristics: [CBUUID: CBMutableCharacteristic] = [:]
@@ -48,11 +49,27 @@ final class CBPeripheralManagerAdapter: NSObject, PeripheralManaging {
     guard let request = request as? ATTRequestAdapter else { return }
     manager.respond(to: request.request, withResult: result)
   }
+
+  func startAdvertising(localName: String?, serviceUUIDs: [CBUUID]) {
+    var data: [String: Any] = [:]
+    if let localName { data[CBAdvertisementDataLocalNameKey] = localName }
+    if !serviceUUIDs.isEmpty { data[CBAdvertisementDataServiceUUIDsKey] = serviceUUIDs }
+    manager.startAdvertising(data.isEmpty ? nil : data)
+  }
+
+  func stopAdvertising() {
+    manager.stopAdvertising()
+  }
 }
 
 extension CBPeripheralManagerAdapter: CBPeripheralManagerDelegate {
   func peripheralManagerDidUpdateState(_ peripheral: CBPeripheralManager) {
     delegate?.peripheralManagerDidUpdateState(self)
+    advertisingDelegate?.peripheralManagerStateChanged(self)
+  }
+
+  func peripheralManagerDidStartAdvertising(_ peripheral: CBPeripheralManager, error: Error?) {
+    advertisingDelegate?.peripheralManagerDidStartAdvertising(self, error: error)
   }
 
   func peripheralManagerIsReady(toUpdateSubscribers peripheral: CBPeripheralManager) {
