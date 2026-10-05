@@ -65,8 +65,15 @@ class GattServerTest {
   private class FakePort : GattServerPort {
     val added = mutableListOf<UUID>()
     val responses = mutableListOf<Response>()
+    val notified = mutableListOf<String>()
+    var notifyStatus = SubmitStatus.SUCCESS
     var closed = false
     var events: GattServerEvents? = null
+
+    override fun notify(central: String, characteristic: UUID, value: ByteArray, confirm: Boolean): Int {
+      if (notifyStatus == SubmitStatus.SUCCESS) notified += "$central ${value.size}${if (confirm) " indicate" else ""}"
+      return notifyStatus
+    }
 
     override fun addService(service: ServerServiceSpec): Boolean {
       added += service.uuid
@@ -324,6 +331,9 @@ class GattServerTest {
 
       override fun sendResponse(central: String, requestId: Int, status: Int, offset: Int, value: ByteArray?) = true
 
+      override fun notify(central: String, characteristic: UUID, value: ByteArray, confirm: Boolean) =
+        SubmitStatus.SUCCESS
+
       override fun close() {
         closed = true
       }
@@ -336,5 +346,114 @@ class GattServerTest {
     var refused: CoreError? = null
     GattServer(listOf(service), executor) { null }.open { refused = it }
     assertEquals(CoreError.Code.INTERNAL, refused?.code)
+  }
+
+  private val both = UUID.fromString("0c6c2005-b347-4cfa-9827-1c5a13658519")
+
+  private fun subscribe(central: String, characteristic: UUID = notifying, mode: Byte = 1) =
+    events.onDescriptorWriteRequest(central, 99, characteristic, GattServer.CCCD, false, true, 0, byteArrayOf(mode, 0))
+
+  private fun notify(value: ByteArray, centrals: List<String>? = null, characteristic: UUID = notifying): () -> String {
+    var result = "pending"
+    server.notify(characteristic, value, centrals) { result = it?.code?.value ?: "ok" }
+    return { result }
+  }
+
+  @Test
+  fun `notifications go one at a time per central, to subscribers, and resolve once all are sent`() {
+    open()
+    subscribe("A")
+    subscribe("B")
+    val first = notify(ByteArray(20))
+    val second = notify(ByteArray(10))
+    assertEquals("one in flight per central", listOf("A 20", "B 20"), port.notified)
+    events.onNotificationSent("A", GATT_SUCCESS)
+    assertEquals(listOf("A 20", "B 20", "A 10"), port.notified)
+    assertEquals("pending", first())
+    events.onNotificationSent("B", GATT_SUCCESS)
+    assertEquals("ok", first())
+    events.onNotificationSent("A", GATT_SUCCESS)
+    events.onNotificationSent("B", GATT_SUCCESS)
+    assertEquals("ok", second())
+
+    val onlyB = notify(ByteArray(1), centrals = listOf("B", "C"))
+    assertEquals("B 1", port.notified.last())
+    events.onNotificationSent("B", GATT_SUCCESS)
+    assertEquals("ok", onlyB())
+    assertEquals("nobody subscribed: nothing to send", "ok", notify(ByteArray(1), centrals = listOf("C"))())
+  }
+
+  @Test
+  fun `the value must fit each target's MTU, busy stacks are retried, and a stuck notification times out`() {
+    open()
+    subscribe("A")
+    assertEquals("INVALID_ATTRIBUTE_LENGTH", notify(ByteArray(21))())
+    events.onMtuChanged("A", 247)
+    port.notifyStatus = SubmitStatus.ERROR_GATT_WRITE_REQUEST_BUSY
+    val busy = notify(ByteArray(244))
+    executor.advanceBy(GattServer.BUSY_RETRY_MS * 3)
+    port.notifyStatus = SubmitStatus.SUCCESS
+    executor.advanceBy(GattServer.BUSY_RETRY_MS)
+    assertEquals(listOf("A 244"), port.notified)
+    // The deadline counts from the first attempt, busy retries included.
+    executor.advanceBy(GattServer.NOTIFY_TIMEOUT_MS - GattServer.BUSY_RETRY_MS * 4 - 1)
+    assertEquals("pending", busy())
+    executor.advanceBy(1)
+    assertEquals("OPERATION_TIMEOUT", busy())
+    port.notifyStatus = SubmitStatus.ERROR_GATT_WRITE_REQUEST_BUSY
+    val stuck = notify(ByteArray(1))
+    executor.advanceBy(GattServer.NOTIFY_TIMEOUT_MS)
+    assertEquals("a stack busy for good times out too", "OPERATION_TIMEOUT", stuck())
+    port.notifyStatus = 0x85
+    assertEquals("GATT_ERROR", notify(ByteArray(1))())
+  }
+
+  @Test
+  fun `indications for centrals that asked for them, and errors before anything is sent`() {
+    val server = GattServer(
+      listOf(
+        ServerServiceSpec(
+          serviceUuid,
+          true,
+          listOf(
+            ServerCharacteristicSpec(
+              both,
+              CharacteristicProperties.NOTIFY or CharacteristicProperties.INDICATE,
+              0,
+              null,
+              emptyList(),
+            ),
+            ServerCharacteristicSpec(dynamic, readWrite, AttributePermissions.READ, null, emptyList()),
+          ),
+        ),
+      ),
+      executor,
+    ) { events -> port.also { it.events = events } }
+    server.open {}
+    subscribe("A", both, 2)
+    var result: String? = null
+    server.notify(both, byteArrayOf(1), null) { result = it?.code?.value ?: "ok" }
+    assertEquals(listOf("A 1 indicate"), port.notified)
+    events.onNotificationSent("A", GATT_SUCCESS)
+    assertEquals("ok", result)
+    server.notify(dynamic, byteArrayOf(1), null) { result = it?.code?.value }
+    assertEquals("NOT_SUPPORTED", result)
+    server.notify(UUID.randomUUID(), byteArrayOf(1), null) { result = it?.code?.value }
+    assertEquals("CHARACTERISTIC_NOT_FOUND", result)
+  }
+
+  @Test
+  fun `a central that disconnects drops out, and closing fails what is left`() {
+    open()
+    subscribe("A")
+    subscribe("B")
+    val sent = notify(ByteArray(1))
+    events.onConnectionStateChange("B", false)
+    events.onNotificationSent("A", GATT_SUCCESS)
+    assertEquals("ok", sent())
+    val left = notify(ByteArray(1))
+    server.close()
+    assertEquals("DISCONNECTED", left())
+    assertEquals("DISCONNECTED", notify(ByteArray(1))())
   }
 }

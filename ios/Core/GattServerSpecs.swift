@@ -42,6 +42,11 @@ protocol PeripheralManaging: AnyObject {
   func add(_ service: ServerServiceSpec)
   func removeAllServices()
   func respond(to request: ATTRequestLike, withResult result: CBATTError.Code)
+  /// Sends a notification or indication (P4-02); false when the transmit queue is full: wait for
+  /// `peripheralManagerIsReady`, then send again (Apple's `updateValue` docs).
+  func updateValue(_ value: Data, for characteristic: CBUUID, onSubscribedCentrals centrals: [UUID]) -> Bool
+  /// The most a notification to `central` carries (`CBCentral.maximumUpdateValueLength`), if known.
+  func maximumUpdateValueLength(for central: UUID) -> Int?
 }
 
 /// Callbacks of `PeripheralManaging`, on the peripheral queue.
@@ -52,6 +57,7 @@ protocol PeripheralManagingDelegate: AnyObject {
   func peripheralManager(_ manager: PeripheralManaging, didReceiveWrite requests: [ATTRequestLike])
   func peripheralManager(_ manager: PeripheralManaging, central: UUID, didSubscribeTo characteristic: CBUUID)
   func peripheralManager(_ manager: PeripheralManaging, central: UUID, didUnsubscribeFrom characteristic: CBUUID)
+  func peripheralManagerIsReady(toUpdateSubscribers manager: PeripheralManaging)
 }
 
 /// The long-read cache of plan §5.5 (shared contract `test-contracts/gatt-server-reads.json`): one

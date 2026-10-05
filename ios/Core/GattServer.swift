@@ -19,6 +19,7 @@ final class GattServer {
   weak var listener: GattServerListener?
 
   let readCache: ServerReadCache
+  private let notifier: ServerNotifier
   private let services: [ServerServiceSpec]
   private let characteristics: [CBUUID: ServerCharacteristicSpec]
   private let manager: PeripheralManaging
@@ -73,6 +74,22 @@ final class GattServer {
       uniquingKeysWith: { first, _ in first }
     )
     readCache = ServerReadCache(now: { [scheduler] in scheduler.now })
+    notifier = ServerNotifier(manager: manager, scheduler: scheduler)
+  }
+
+  /// Sends `value` to the centrals subscribed to `characteristic` (only those in `centrals` when
+  /// given); `completion` gets nil once iOS took it for all of them (P4-02).
+  func notify(_ characteristic: CBUUID, value: Data, centrals: [UUID]?, completion: @escaping (CoreError?) -> Void) {
+    guard manager.delegate === self else { return completion(CoreError(.disconnected, "The GATT server is closed")) }
+    guard let spec = characteristics[characteristic] else {
+      let message = "No characteristic \(characteristic.uuidString) on the server"
+      return completion(CoreError(.characteristicNotFound, message))
+    }
+    guard !spec.properties.isDisjoint(with: [.notify, .indicate]) else {
+      return completion(CoreError(.notSupported, "\(characteristic.uuidString) doesn't notify or indicate"))
+    }
+    let targets = subscribedCentrals(characteristic).filter { centrals?.contains($0) ?? true }
+    notifier.send(value, for: characteristic, to: Array(targets), completion: completion)
   }
 
   /// Publishes the services one at a time, once the manager is powered on.
@@ -122,6 +139,7 @@ final class GattServer {
   }
 
   func close() {
+    notifier.cancelAll()
     waiting?.timeout.cancel()
     waiting = nil
     pending.values.forEach { $0.deadline?.cancel() }
@@ -296,6 +314,10 @@ extension GattServer: PeripheralManagingDelegate {
     if subscribers[characteristic, default: []].insert(central).inserted {
       listener?.gattServer(self, central: central, characteristic: characteristic, subscribed: true)
     }
+  }
+
+  func peripheralManagerIsReady(toUpdateSubscribers manager: PeripheralManaging) {
+    notifier.ready()
   }
 
   func peripheralManager(_ manager: PeripheralManaging, central: UUID, didUnsubscribeFrom characteristic: CBUUID) {

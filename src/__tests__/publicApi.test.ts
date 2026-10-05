@@ -17,9 +17,6 @@ const LATER: Record<string, Record<string, string>> = {
   Peripheral: {
     openL2CAPChannel: 'P5-03',
   },
-  GattServer: {
-    notify: 'P4-02',
-  },
 };
 
 /** Interfaces of the later tasks themselves (P2–P5), not yet in src/types.ts. */

@@ -40,6 +40,7 @@ private struct WriteSeen {
 final class GattServerTests: XCTestCase, GattServerListener {
   private let dynamic = CBUUID(string: "0c6c2001-b347-4cfa-9827-1c5a13658519")
   private let other = CBUUID(string: "0c6c2002-b347-4cfa-9827-1c5a13658519")
+  private let notifying = CBUUID(string: "0c6c2003-b347-4cfa-9827-1c5a13658519")
   private let central = UUID()
   private var scheduler: TestScheduler!
   private var manager: FakePeripheralManager!
@@ -63,7 +64,7 @@ final class GattServerTests: XCTestCase, GattServerListener {
     let permissions: CBAttributePermissions = [.readable, .writeable]
     let characteristics = [dynamic, other].map {
       ServerCharacteristicSpec(uuid: $0, properties: properties, permissions: permissions, value: nil, descriptors: [])
-    }
+    } + [ServerCharacteristicSpec(uuid: notifying, properties: .notify, permissions: [], value: nil, descriptors: [])]
     let service = ServerServiceSpec(uuid: CBUUID(string: "0c6c2000-b347-4cfa-9827-1c5a13658519"), primary: true,
                                     characteristics: characteristics)
     let server = GattServer(services: [service], manager: manager, scheduler: scheduler)
@@ -228,5 +229,54 @@ final class GattServerTests: XCTestCase, GattServerListener {
     scheduler.advance(by: GattServer.addServiceTimeout)
     XCTAssertEqual(result?.code, .operationTimeout)
     XCTAssertTrue(manager.removedAll)
+  }
+
+  private func notify(_ count: Int, to centrals: [UUID]? = nil, on characteristic: CBUUID? = nil) -> () -> String {
+    var result = "pending"
+    server.notify(characteristic ?? notifying, value: Data(count: count), centrals: centrals) {
+      result = $0?.code.rawValue ?? "ok"
+    }
+    return { result }
+  }
+
+  func testNotificationsGoToSubscribersAndWaitWhenTheQueueIsFull() {
+    open()
+    let other = UUID()
+    server.peripheralManager(manager, central: central, didSubscribeTo: notifying)
+    server.peripheralManager(manager, central: other, didSubscribeTo: notifying)
+    XCTAssertEqual(notify(20)(), "ok")
+    XCTAssertEqual(Set(manager.updates.last?.centrals ?? []), [central, other])
+    XCTAssertEqual(notify(1, to: [other, UUID()])(), "ok")
+    XCTAssertEqual(manager.updates.last?.centrals, [other])
+
+    manager.queueHasRoom = false
+    let waiting = notify(5)
+    let behind = notify(6)
+    XCTAssertEqual(waiting(), "pending")
+    manager.queueHasRoom = true
+    server.peripheralManagerIsReady(toUpdateSubscribers: manager)
+    XCTAssertEqual([waiting(), behind()], ["ok", "ok"])
+    XCTAssertEqual(manager.updates.suffix(2).map { $0.count }, [5, 6], "in order")
+  }
+
+  func testNotificationLimitsTimeoutsAndErrors() {
+    open()
+    server.peripheralManager(manager, central: central, didSubscribeTo: notifying)
+    XCTAssertEqual(notify(21)(), "INVALID_ATTRIBUTE_LENGTH", "20 bytes before the MTU is known")
+    manager.maximumUpdateValueLengths[central] = 182
+    XCTAssertEqual(notify(182)(), "ok")
+    XCTAssertEqual(notify(1, on: dynamic)(), "NOT_SUPPORTED")
+    XCTAssertEqual(notify(1, on: CBUUID(string: "1234"))(), "CHARACTERISTIC_NOT_FOUND")
+    XCTAssertEqual(notify(1, to: [UUID()])(), "ok", "nobody to send to")
+
+    manager.queueHasRoom = false
+    let stuck = notify(1)
+    let next = notify(2)
+    scheduler.advance(by: ServerNotifier.timeout)
+    XCTAssertEqual(stuck(), "OPERATION_TIMEOUT")
+    XCTAssertEqual(next(), "pending", "waits for the queue in turn")
+    server.close()
+    XCTAssertEqual(next(), "DISCONNECTED")
+    XCTAssertEqual(notify(1)(), "DISCONNECTED")
   }
 }

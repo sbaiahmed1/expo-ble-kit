@@ -69,6 +69,7 @@ export declare class NativeGattServer
 {
   respondToRead(requestId: number, value: Uint8Array | null, attError: number | null): void;
   respondToWrite(requestId: number, attError: number | null): void;
+  notify(characteristic: string, value: Uint8Array, centrals: string[] | null): Promise<void>;
   close(): Promise<void>;
 }
 

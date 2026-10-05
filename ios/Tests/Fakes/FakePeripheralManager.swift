@@ -44,6 +44,26 @@ final class FakePeripheralManager: PeripheralManaging {
     if let request = request as? FakeATTRequest { answers.append((request, result)) }
   }
 
+  /// What `updateValue` answers; false is a full transmit queue.
+  var queueHasRoom = true
+  var maximumUpdateValueLengths: [UUID: Int] = [:]
+  struct Update {
+    let count: Int
+    let centrals: [UUID]
+  }
+
+  private(set) var updates: [Update] = []
+
+  func updateValue(_ value: Data, for characteristic: CBUUID, onSubscribedCentrals centrals: [UUID]) -> Bool {
+    guard queueHasRoom else { return false }
+    updates.append(Update(count: value.count, centrals: centrals))
+    return true
+  }
+
+  func maximumUpdateValueLength(for central: UUID) -> Int? {
+    maximumUpdateValueLengths[central]
+  }
+
   func becomes(_ state: CBManagerState) {
     self.state = state
     delegate?.peripheralManagerDidUpdateState(self)

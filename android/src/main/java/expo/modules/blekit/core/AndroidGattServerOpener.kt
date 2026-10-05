@@ -9,7 +9,9 @@ import android.bluetooth.BluetoothGattService
 import android.bluetooth.BluetoothManager
 import android.bluetooth.BluetoothProfile
 import android.content.Context
+import android.os.Build
 import android.os.Handler
+import java.util.UUID
 
 /**
  * Opens Android's GATT server for [GattServer] (P4-01). Android calls the server callback on Binder
@@ -94,10 +96,35 @@ class AndroidGattServerOpener(private val context: Context, private val handler:
 
       override fun onExecuteWrite(device: BluetoothDevice, requestId: Int, execute: Boolean) =
         post(device) { events.onExecuteWrite(it, requestId, execute) }
+
+      override fun onNotificationSent(device: BluetoothDevice, status: Int) =
+        post(device) { events.onNotificationSent(it, status) }
+
+      override fun onMtuChanged(device: BluetoothDevice, mtu: Int) = post(device) { events.onMtuChanged(it, mtu) }
     }
     val server: BluetoothGattServer = manager.openGattServer(context, callback) ?: return null
+    // The published characteristics, which notifications need (their service and instance id).
+    val published = HashMap<UUID, BluetoothGattCharacteristic>()
     return object : GattServerPort {
-      override fun addService(service: ServerServiceSpec): Boolean = server.addService(service.toPlatform())
+      override fun addService(service: ServerServiceSpec): Boolean {
+        val platform = service.toPlatform()
+        platform.characteristics.forEach { published[it.uuid] = it }
+        return server.addService(platform)
+      }
+
+      override fun notify(central: String, characteristic: UUID, value: ByteArray, confirm: Boolean): Int {
+        val device = devices[central] ?: return SubmitStatus.ERROR_UNKNOWN
+        val target = published[characteristic] ?: return SubmitStatus.ERROR_UNKNOWN
+        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+          server.notifyCharacteristicChanged(device, target, confirm, value)
+        } else {
+          @Suppress("DEPRECATION")
+          target.value = value
+          @Suppress("DEPRECATION")
+          val sent = server.notifyCharacteristicChanged(device, target, confirm)
+          if (sent) SubmitStatus.SUCCESS else SubmitStatus.ERROR_GATT_WRITE_REQUEST_BUSY
+        }
+      }
 
       override fun sendResponse(central: String, requestId: Int, status: Int, offset: Int, value: ByteArray?): Boolean {
         val device = devices[central] ?: return false

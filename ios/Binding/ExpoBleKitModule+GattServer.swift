@@ -23,8 +23,9 @@ extension ExpoBleKitModule {
       let ref = GattServerObject()
       let server = GattServer(services: specs, manager: manager, scheduler: QueueScheduler(queue: self.peripheralQueue))
       server.listener = ref
-      ref.onWarning = { [weak self] warning in
-        guard let engine = self?.engine else { return }
+      // Weak: the module keeps the server object, which keeps this closure.
+      ref.onWarning = { [weak module = self] warning in
+        guard let engine = module?.engine else { return }
         engine.queue.async { engine.warn(warning) }
       }
       ref.server = server
@@ -75,6 +76,19 @@ extension ExpoBleKitModule {
 
       Function("respondToWrite") { (ref: GattServerObject, requestId: Int, attError: Int?) in
         self.peripheralQueue.async { ref.server?.respondToWrite(requestId: requestId, attError: attError) }
+      }
+
+      // P4-02: resolves once iOS took the value for every subscribed target.
+      AsyncFunction("notify") { (ref: GattServerObject, uuid: String, value: Data, ids: [String]?, promise: Promise) in
+        self.peripheralQueue.async {
+          guard let server = ref.server else {
+            return promise.reject(BleKitException(CoreError(.disconnected, "The GATT server is closed")))
+          }
+          let targets = ids?.compactMap(UUID.init(uuidString:))
+          server.notify(CBUUID(string: uuid), value: value, centrals: targets) { error in
+            if let error { promise.reject(BleKitException(error)) } else { promise.resolve(nil) }
+          }
+        }
       }
 
       AsyncFunction("close") { (ref: GattServerObject, promise: Promise) in

@@ -41,6 +41,15 @@ export interface VirtualCentral {
   unsubscribe(characteristic: UUID): Promise<void>;
   /** Drops the link: the server forgets the central's subscriptions and cached reads. */
   disconnect(): void;
+  /** What the server sent this central (P4-02), oldest first. */
+  readonly notifications: ReadonlyArray<{
+    /** The characteristic it was sent for. */
+    characteristic: UUID;
+    /** The value, as sent. */
+    value: Uint8Array;
+    /** True for an indication (the central subscribed with `mode: 'indicate'`). */
+    indication: boolean;
+  }>;
 }
 
 /**
@@ -69,6 +78,16 @@ export class FakeGattServer implements NativeGattServerPort {
     { characteristic: UUID; offset: number; value: Uint8Array }[]
   >();
   private readonly subscribers = new Map<UUID, Map<string, number>>();
+  /** Per central: its MTU, what it received, and the notifications not yet delivered (one at a time). */
+  private readonly centrals = new Map<
+    string,
+    {
+      mtu: number;
+      received: VirtualCentral['notifications'][number][];
+      outbox: (() => void)[];
+      sending: boolean;
+    }
+  >();
   private nextRequestId = 1;
   closed = false;
 
@@ -106,11 +125,80 @@ export class FakeGattServer implements NativeGattServerPort {
     request.answer({ status: attError ?? OK });
   }
 
+  async notify(characteristic: string, value: Uint8Array, only: string[] | null): Promise<void> {
+    const uuid = normalizeUUID(characteristic);
+    const definition = this.characteristics.get(uuid);
+    if (this.closed) throw new BleError(BleErrorCode.DISCONNECTED, 'The GATT server is closed');
+    if (!definition)
+      throw new BleError(
+        BleErrorCode.CHARACTERISTIC_NOT_FOUND,
+        `No characteristic ${uuid} on the server`
+      );
+    if (!definition.properties.some((p) => p === 'notify' || p === 'indicate')) {
+      throw new BleError(BleErrorCode.NOT_SUPPORTED, `${uuid} doesn't notify or indicate`);
+    }
+    const targets = [...(this.subscribers.get(uuid) ?? [])].filter(
+      ([id]) => !only || only.includes(id)
+    );
+    for (const [id] of targets) {
+      const limit = (this.centrals.get(id)?.mtu ?? 23) - 3;
+      if (value.length > limit) {
+        throw new BleError(
+          BleErrorCode.INVALID_ATTRIBUTE_LENGTH,
+          `A notification to ${id} takes at most ${limit} bytes (MTU − 3), got ${value.length}`
+        );
+      }
+    }
+    // Like the native cores: one notification in flight per central, each delivered on a later tick.
+    await Promise.all(
+      targets.map(
+        ([id, mode]) =>
+          new Promise<void>((done, fail) => {
+            const central = this.centrals.get(id);
+            if (!central) return done();
+            central.outbox.push(() => {
+              if (this.closed) {
+                return fail(
+                  new BleError(
+                    BleErrorCode.DISCONNECTED,
+                    'The GATT server closed before the notification was sent'
+                  )
+                );
+              }
+              if (this.subscribers.get(uuid)?.has(id)) {
+                central.received.push({
+                  characteristic: uuid,
+                  value: value.slice(),
+                  indication: mode === 2,
+                });
+              }
+              done();
+            });
+            this.pump(central);
+          })
+      )
+    );
+  }
+
+  private pump(central: { outbox: (() => void)[]; sending: boolean }): void {
+    if (central.sending) return;
+    const next = central.outbox.shift();
+    if (!next) return;
+    central.sending = true;
+    this.scheduler.schedule(() => {
+      central.sending = false;
+      next();
+      this.pump(central);
+    });
+  }
+
   async close(): Promise<void> {
     if (this.closed) return;
     this.closed = true;
     this.pending.forEach((request) => request.cancel());
     this.pending.clear();
+    for (const central of this.centrals.values())
+      central.outbox.splice(0).forEach((send) => send());
     this.onClose();
   }
 
@@ -125,6 +213,13 @@ export class FakeGattServer implements NativeGattServerPort {
 
   connect(id: string, mtu: number): VirtualCentral {
     const server = this;
+    const state = {
+      mtu,
+      received: [] as VirtualCentral['notifications'][number][],
+      outbox: [] as (() => void)[],
+      sending: false,
+    };
+    this.centrals.set(id, state);
     const later = <T>(work: () => T | Promise<T>) =>
       new Promise<T>((resolve, reject) =>
         server.scheduler.schedule(() => Promise.resolve().then(work).then(resolve, reject))
@@ -196,6 +291,9 @@ export class FakeGattServer implements NativeGattServerPort {
           check({ status: server.writeCccd(id, known(characteristic), 0) }, 'Unsubscribing');
         }),
       disconnect: () => server.disconnectCentral(id),
+      get notifications() {
+        return state.received;
+      },
     };
   }
 
@@ -314,6 +412,10 @@ export class FakeGattServer implements NativeGattServerPort {
         });
       }
     }
+    // Notifications not delivered yet count as done, without reaching the central.
+    const state = this.centrals.get(central);
+    this.centrals.delete(central);
+    state?.outbox.splice(0).forEach((send) => send());
   }
 }
 

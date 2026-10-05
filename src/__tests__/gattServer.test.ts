@@ -28,7 +28,7 @@ const services: ServiceDefinition[] = [
         value: Uint8Array.of(1, 2, 3),
         descriptors: [{ uuid: '2901', value: new TextEncoder().encode('Static') }],
       },
-      { uuid: NOTIFY, properties: ['notify'], permissions: [] },
+      { uuid: NOTIFY, properties: ['notify', 'indicate'], permissions: [] },
       { uuid: WRITE_ONLY, properties: ['writeWithoutResponse'], permissions: ['writeable'] },
     ],
   },
@@ -150,9 +150,86 @@ describe('GATT server', () => {
       changes.push(`${centralId} ${characteristic === NOTIFY} ${subscribed}`)
     );
     await settle(central.subscribe(NOTIFY));
-    expect(await code(settle(central.subscribe(NOTIFY, 'indicate')))).toBe('GATT_ERROR');
+    await settle(central.subscribe(STATIC).catch(() => {}));
     central.disconnect();
     expect(changes).toEqual(['central-A true true', 'central-A true false']);
+  });
+
+  describe('notify (P4-02)', () => {
+    it('reaches the subscribed centrals, as a notification or an indication', async () => {
+      const other = fake.connectCentral({ id: 'central-B', mtu: 185 });
+      const idle = fake.connectCentral({ id: 'central-C' });
+      await settle(central.subscribe(NOTIFY));
+      await settle(other.subscribe(NOTIFY, 'indicate'));
+      await settle(server.notify(NOTIFY, Uint8Array.of(1)));
+      await settle(server.notify(NOTIFY, Uint8Array.of(2), { centrals: ['central-B'] }));
+      expect(central.notifications).toEqual([
+        { characteristic: NOTIFY, value: Uint8Array.of(1), indication: false },
+      ]);
+      expect(other.notifications.map((n) => [n.value[0], n.indication])).toEqual([
+        [1, true],
+        [2, true],
+      ]);
+      expect(idle.notifications).toEqual([]);
+    });
+
+    it('resolves once the value left, one at a time per central, in order', async () => {
+      await settle(central.subscribe(NOTIFY));
+      const sent: number[] = [];
+      const calls = [1, 2, 3].map((n) =>
+        server.notify(NOTIFY, Uint8Array.of(n)).then(() => sent.push(n))
+      );
+      expect(central.notifications).toEqual([]);
+      await jest.advanceTimersByTimeAsync(0);
+      expect(sent).toEqual([1]);
+      await settle(Promise.all(calls));
+      expect(sent).toEqual([1, 2, 3]);
+      expect(central.notifications.map((n) => n.value[0])).toEqual([1, 2, 3]);
+    });
+
+    it('takes at most MTU − 3 bytes for each target', async () => {
+      const big = fake.connectCentral({ id: 'central-B', mtu: 247 });
+      await settle(big.subscribe(NOTIFY));
+      await settle(server.notify(NOTIFY, new Uint8Array(244)));
+      await settle(central.subscribe(NOTIFY));
+      expect(await code(settle(server.notify(NOTIFY, new Uint8Array(21))))).toBe(
+        'INVALID_ATTRIBUTE_LENGTH'
+      );
+      await settle(server.notify(NOTIFY, new Uint8Array(244), { centrals: ['central-B'] }));
+      expect(big.notifications.map((n) => n.value.length)).toEqual([244, 244]);
+    });
+
+    it('resolves without subscribers, and drops a central that disconnects', async () => {
+      await settle(server.notify(NOTIFY, Uint8Array.of(1)));
+      await settle(central.subscribe(NOTIFY));
+      const calls = [1, 2, 3].map((n) => server.notify(NOTIFY, Uint8Array.of(n)));
+      await jest.advanceTimersByTimeAsync(0);
+      central.disconnect();
+      await settle(Promise.all(calls));
+      expect(central.notifications.map((n) => n.value[0])).toEqual([1]);
+    });
+
+    it('rejects bad arguments, unknown characteristics, and a closed server', async () => {
+      expect(await code(settle(server.notify(NOTIFY, [1] as never)))).toBe('INVALID_ARGUMENT');
+      expect(await code(settle(server.notify(NOTIFY, new Uint8Array(513))))).toBe(
+        'INVALID_ATTRIBUTE_LENGTH'
+      );
+      expect(
+        await code(settle(server.notify(NOTIFY, Uint8Array.of(1), { centrals: 'x' as never })))
+      ).toBe('INVALID_ARGUMENT');
+      expect(await code(settle(server.notify('not-a-uuid', Uint8Array.of(1))))).toBe(
+        'INVALID_ARGUMENT'
+      );
+      expect(await code(settle(server.notify(SERVICE, Uint8Array.of(1))))).toBe(
+        'CHARACTERISTIC_NOT_FOUND'
+      );
+      expect(await code(settle(server.notify(STATIC, Uint8Array.of(1))))).toBe('NOT_SUPPORTED');
+      await settle(central.subscribe(NOTIFY));
+      const queued = [1, 2].map((n) => code(server.notify(NOTIFY, Uint8Array.of(n))));
+      await settle(server.close(), 0);
+      expect(await Promise.all(queued)).toEqual(['DISCONNECTED', 'DISCONNECTED']);
+      expect(await code(settle(server.notify(NOTIFY, Uint8Array.of(1))))).toBe('DISCONNECTED');
+    });
   });
 
   it('is one at a time, needs the preconditions, and Bluetooth off closes it', async () => {

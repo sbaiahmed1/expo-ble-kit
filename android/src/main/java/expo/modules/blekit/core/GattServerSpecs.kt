@@ -64,6 +64,13 @@ interface GattServerPort {
 
   fun sendResponse(central: String, requestId: Int, status: Int, offset: Int, value: ByteArray?): Boolean
 
+  /**
+   * Sends one notification, or an indication with [confirm] (P4-02). Returns a [SubmitStatus];
+   * [GattServerEvents.onNotificationSent] follows a success. Android before 13 answers busy for
+   * any refusal.
+   */
+  fun notify(central: String, characteristic: UUID, value: ByteArray, confirm: Boolean): Int
+
   fun close()
 }
 
@@ -99,6 +106,11 @@ interface GattServerEvents {
   )
 
   fun onExecuteWrite(central: String, requestId: Int, execute: Boolean)
+
+  /** The notification or indication sent to [central] left the stack (indications: confirmed). */
+  fun onNotificationSent(central: String, status: Int)
+
+  fun onMtuChanged(central: String, mtu: Int)
 }
 
 /**

@@ -5,6 +5,9 @@ import Foundation
 final class CBPeripheralManagerAdapter: NSObject, PeripheralManaging {
   weak var delegate: PeripheralManagingDelegate?
   private var manager: CBPeripheralManager!
+  /// What notifications need: the published characteristics and the subscribed centrals.
+  private var characteristics: [CBUUID: CBMutableCharacteristic] = [:]
+  private var centrals: [UUID: CBCentral] = [:]
 
   init(queue: DispatchQueue) {
     super.init()
@@ -18,11 +21,27 @@ final class CBPeripheralManagerAdapter: NSObject, PeripheralManaging {
   var state: CBManagerState { manager.state }
 
   func add(_ service: ServerServiceSpec) {
-    manager.add(service.mutableService())
+    let mutable = service.mutableService()
+    for case let characteristic as CBMutableCharacteristic in mutable.characteristics ?? [] {
+      characteristics[characteristic.uuid] = characteristic
+    }
+    manager.add(mutable)
   }
 
   func removeAllServices() {
     manager.removeAllServices()
+    characteristics.removeAll()
+  }
+
+  func updateValue(_ value: Data, for characteristic: CBUUID, onSubscribedCentrals centrals: [UUID]) -> Bool {
+    guard let target = characteristics[characteristic] else { return true }
+    let subscribed = centrals.compactMap { self.centrals[$0] }
+    guard !subscribed.isEmpty else { return true }
+    return manager.updateValue(value, for: target, onSubscribedCentrals: subscribed)
+  }
+
+  func maximumUpdateValueLength(for central: UUID) -> Int? {
+    centrals[central]?.maximumUpdateValueLength
   }
 
   func respond(to request: ATTRequestLike, withResult result: CBATTError.Code) {
@@ -34,6 +53,10 @@ final class CBPeripheralManagerAdapter: NSObject, PeripheralManaging {
 extension CBPeripheralManagerAdapter: CBPeripheralManagerDelegate {
   func peripheralManagerDidUpdateState(_ peripheral: CBPeripheralManager) {
     delegate?.peripheralManagerDidUpdateState(self)
+  }
+
+  func peripheralManagerIsReady(toUpdateSubscribers peripheral: CBPeripheralManager) {
+    delegate?.peripheralManagerIsReady(toUpdateSubscribers: self)
   }
 
   func peripheralManager(_ peripheral: CBPeripheralManager, didAdd service: CBService, error: Error?) {
@@ -53,6 +76,7 @@ extension CBPeripheralManagerAdapter: CBPeripheralManagerDelegate {
     central: CBCentral,
     didSubscribeTo characteristic: CBCharacteristic
   ) {
+    centrals[central.identifier] = central
     delegate?.peripheralManager(self, central: central.identifier, didSubscribeTo: characteristic.uuid)
   }
 

@@ -2,6 +2,7 @@ import type { ServerRequestEvent, SubscriptionChangeEvent } from './ExpoBleKit.t
 import { BleError, BleErrorCode } from './errors';
 import { AttError, attErrorFor, MAX_VALUE_LENGTH } from './internal/gattServer';
 import { log } from './internal/log';
+import { guard } from './internal/operations';
 import type { NativeGattServerPort } from './internal/port';
 import type { GattServer, ReadRequest, Subscription, WriteRequest } from './types';
 import { normalizeUUID, type UUID } from './uuid';
@@ -44,6 +45,40 @@ export class GattServerImpl implements GattServer {
     if (typeof handler !== 'function') throw invalidHandler();
     this.writeHandler = handler;
     return { remove: () => this.writeHandler === handler && (this.writeHandler = null) };
+  }
+
+  notify(
+    characteristic: UUID,
+    value: Uint8Array,
+    options?: { centrals?: string[] }
+  ): Promise<void> {
+    return guard(async () => {
+      const uuid = normalizeUUID(characteristic);
+      if (!(value instanceof Uint8Array)) {
+        throw new BleError(
+          BleErrorCode.INVALID_ARGUMENT,
+          'Invalid notification value: expected a Uint8Array'
+        );
+      }
+      if (value.length > MAX_VALUE_LENGTH) {
+        throw new BleError(
+          BleErrorCode.INVALID_ATTRIBUTE_LENGTH,
+          `A notification takes at most ${MAX_VALUE_LENGTH} bytes, got ${value.length}`
+        );
+      }
+      const centrals = options?.centrals;
+      if (
+        centrals !== undefined &&
+        (!Array.isArray(centrals) || centrals.some((id) => typeof id !== 'string'))
+      ) {
+        throw new BleError(
+          BleErrorCode.INVALID_ARGUMENT,
+          'Invalid notify option centrals: expected an array of ids'
+        );
+      }
+      if (this.closed) throw new BleError(BleErrorCode.DISCONNECTED, 'The GATT server is closed');
+      await this.native.notify(uuid, value, centrals ?? null);
+    });
   }
 
   addSubscriptionListener(listener: SubscriptionListener): Subscription {

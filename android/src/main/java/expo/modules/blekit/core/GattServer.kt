@@ -68,6 +68,39 @@ class GattServer(
   /** Notify (1) or indicate (2) per central, by characteristic. */
   private val subscribers = HashMap<UUID, MutableMap<String, Int>>()
 
+  /** P4-02: one call of [notify], done once every target central is. */
+  private class NotifyCall(var remaining: Int, val completion: (CoreError?) -> Unit) {
+    var error: CoreError? = null
+
+    fun done(error: CoreError?) {
+      if (error != null && this.error == null) this.error = error
+      if (--remaining == 0) completion(this.error)
+    }
+  }
+
+  private class Notification(val characteristic: UUID, val value: ByteArray, val confirm: Boolean, val call: NotifyCall)
+
+  /**
+   * Per central: notifications waiting, whether Android is sending the first (wait for
+   * onNotificationSent), a busy retry, and the first one's deadline (from its first attempt).
+   */
+  private class Outbox {
+    val queue = ArrayDeque<Notification>()
+    var sending = false
+    var retry: Cancellable? = null
+    var deadline: Cancellable? = null
+
+    fun cancelTimers() {
+      retry?.cancel()
+      retry = null
+      deadline?.cancel()
+      deadline = null
+    }
+  }
+
+  private val outboxes = HashMap<String, Outbox>()
+  private val mtus = HashMap<String, Int>()
+
   /** Opens the server and adds the services one at a time, as Android requires. */
   fun open(completion: (CoreError?) -> Unit) {
     val opened = openPort(Events())
@@ -137,7 +170,98 @@ class GattServer(
     }
   }
 
+  /**
+   * Sends [value] to the centrals subscribed to [characteristic] (only those in [centrals] when
+   * given), one notification in flight per central (plan §4.4: wait for `onNotificationSent`).
+   * [completion] gets null once every target took it, or the first error; a central that
+   * disconnects meanwhile just drops out. The value must fit every target's MTU − 3.
+   */
+  fun notify(characteristic: UUID, value: ByteArray, centrals: List<String>?, completion: (CoreError?) -> Unit) {
+    val spec = characteristics[characteristic]
+    val error = when {
+      port == null -> CoreError(CoreError.Code.DISCONNECTED, "The GATT server is closed")
+
+      spec == null -> CoreError(
+        CoreError.Code.CHARACTERISTIC_NOT_FOUND,
+        "No characteristic $characteristic on the server",
+      )
+
+      !spec.notifiable -> CoreError(CoreError.Code.NOT_SUPPORTED, "$characteristic doesn't notify or indicate")
+
+      else -> null
+    }
+    if (error != null) return completion(error)
+    val targets = subscribers[characteristic].orEmpty().filterKeys { centrals == null || it in centrals }
+    targets.keys.firstOrNull { value.size > (mtus[it] ?: DEFAULT_MTU) - 3 }?.let { central ->
+      val limit = (mtus[central] ?: DEFAULT_MTU) - 3
+      return completion(
+        CoreError(
+          CoreError.Code.INVALID_ATTRIBUTE_LENGTH,
+          "A notification to $central takes at most $limit bytes (MTU − 3), got ${value.size}",
+        ),
+      )
+    }
+    if (targets.isEmpty()) return completion(null)
+    val call = NotifyCall(targets.size, completion)
+    for ((central, mode) in targets) {
+      outboxes.getOrPut(central) { Outbox() }.queue.addLast(Notification(characteristic, value, mode == 2, call))
+      pump(central)
+    }
+  }
+
+  private fun pump(central: String) {
+    val outbox = outboxes[central] ?: return
+    if (outbox.sending || outbox.retry != null) return
+    val next = outbox.queue.firstOrNull() ?: return
+    val port = port ?: return
+    // One deadline over busy retries and the wait for onNotificationSent.
+    if (outbox.deadline == null) {
+      outbox.deadline = executor.executeDelayed(NOTIFY_TIMEOUT_MS) {
+        outbox.deadline = null
+        finishHead(
+          central,
+          CoreError(CoreError.Code.OPERATION_TIMEOUT, "Notifying $central timed out after $NOTIFY_TIMEOUT_MS ms"),
+        )
+      }
+    }
+    when (val status = port.notify(central, next.characteristic, next.value, next.confirm)) {
+      SubmitStatus.SUCCESS -> outbox.sending = true
+
+      // The stack is still sending the previous packets: try again shortly (as for client writes, P2-02).
+      SubmitStatus.ERROR_GATT_WRITE_REQUEST_BUSY -> outbox.retry = executor.executeDelayed(BUSY_RETRY_MS) {
+        outbox.retry = null
+        pump(central)
+      }
+
+      else -> finishHead(
+        central,
+        CoreError(CoreError.Code.GATT_ERROR, "Android refused to notify $central (status $status)"),
+      )
+    }
+  }
+
+  private fun finishHead(central: String, error: CoreError?) {
+    val outbox = outboxes[central] ?: return
+    outbox.cancelTimers()
+    outbox.sending = false
+    outbox.queue.removeFirstOrNull()?.call?.done(error)
+    pump(central)
+  }
+
+  /** The central is gone: its notifications count as done, without an error. */
+  private fun dropOutbox(central: String) {
+    val outbox = outboxes.remove(central) ?: return
+    outbox.cancelTimers()
+    outbox.queue.forEach { it.call.done(null) }
+  }
+
   fun close() {
+    outboxes.keys.toList().forEach { central ->
+      val outbox = outboxes.remove(central) ?: return@forEach
+      outbox.cancelTimers()
+      outbox.queue.forEach { it.call.done(CoreError(CoreError.Code.DISCONNECTED, "The GATT server closed")) }
+    }
+    mtus.clear()
     pending.values.forEach { it.deadline?.cancel() }
     pending.clear()
     prepared.clear()
@@ -200,9 +324,28 @@ class GattServer(
       }
       prepared.remove(central)
       readCache.drop(central)
+      mtus.remove(central)
+      dropOutbox(central)
       subscribers.forEach { (characteristic, centrals) ->
         if (centrals.remove(central) != null) listener?.onSubscriptionChange(central, characteristic, false)
       }
+    }
+
+    override fun onNotificationSent(central: String, status: Int) {
+      val outbox = outboxes[central] ?: return
+      if (!outbox.sending) return
+      val error = if (status ==
+        GATT_SUCCESS
+      ) {
+        null
+      } else {
+        CoreError(CoreError.Code.GATT_ERROR, "Notifying $central failed", status)
+      }
+      finishHead(central, error)
+    }
+
+    override fun onMtuChanged(central: String, mtu: Int) {
+      mtus[central] = mtu
     }
 
     override fun onServiceAdded(status: Int, service: UUID) {
@@ -341,6 +484,11 @@ class GattServer(
     const val RESPONSE_DEADLINE_MS = 25_000L
     const val ADD_SERVICE_TIMEOUT_MS = 10_000L
     const val MAX_VALUE_LENGTH = 512
+    const val DEFAULT_MTU = 23
+
+    /** How long one notification may wait, busy retries and `onNotificationSent` included (rule 4). */
+    const val NOTIFY_TIMEOUT_MS = 10_000L
+    const val BUSY_RETRY_MS = 10L
     val CCCD: UUID = PeripheralSession.CCCD
   }
 }

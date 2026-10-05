@@ -458,6 +458,17 @@ export interface GattServer {
    * another handler replaces this one. Without a handler, writes get `WRITE_NOT_PERMITTED`.
    */
   onWriteRequest(handler: (request: WriteRequest) => void | Promise<void>): Subscription;
+  /**
+   * Sends `value` to the centrals subscribed to `characteristic` (only those in `centrals` when
+   * given), as a notification or an indication, whichever each central asked for. Flow-controlled:
+   * resolves once the system took the value for every target, so awaiting each call paces a stream
+   * to what the link carries. Resolves at once when no central is subscribed; a central that
+   * disconnects meanwhile just drops out. Rejects with `INVALID_ATTRIBUTE_LENGTH` when the value
+   * doesn't fit a target's MTU − 3 (20 bytes until the central negotiated more; never more than
+   * 512), with `OPERATION_TIMEOUT` when one value waited 10 s, and with `DISCONNECTED` when the
+   * server closes first.
+   */
+  notify(characteristic: UUID, value: Uint8Array, options?: { centrals?: string[] }): Promise<void>;
   /** Calls `listener` when a central turns notifications or indications on or off. */
   addSubscriptionListener(
     listener: (event: { centralId: string; characteristic: UUID; subscribed: boolean }) => void

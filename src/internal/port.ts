@@ -138,6 +138,8 @@ export type { ConnectionStateEvent, MtuChangeEvent, NotificationEvent };
 export interface NativeGattServerPort {
   respondToRead(requestId: number, value: Uint8Array | null, attError: number | null): void;
   respondToWrite(requestId: number, attError: number | null): void;
+  /** P4-02: resolves once every subscribed target took the value. */
+  notify(characteristic: string, value: Uint8Array, centrals: string[] | null): Promise<void>;
   close(): Promise<void>;
   addListener<E extends keyof GattServerObjectEvents>(
     event: E,

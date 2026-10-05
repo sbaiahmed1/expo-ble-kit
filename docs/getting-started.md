@@ -29,7 +29,9 @@ Add the config plugin to `app.json`, so the app declares what Bluetooth needs:
     "plugins": [
       [
         "expo-ble-kit",
-        { "bluetoothAlwaysPermission": "Allow $(PRODUCT_NAME) to connect to your heart rate monitor." }
+        {
+          "bluetoothAlwaysPermission": "Allow $(PRODUCT_NAME) to connect to your heart rate monitor."
+        }
       ]
     ]
   }
@@ -40,11 +42,11 @@ Then rebuild the app (`npx expo run:ios`, `npx expo run:android`, or an EAS buil
 
 Plugin options:
 
-| Option | Default | What it does |
-|---|---|---|
-| `bluetoothAlwaysPermission` | A generic sentence | The iOS permission text (`NSBluetoothAlwaysUsageDescription`). Write your own: App Review reads it. `false` skips it, for apps that set it elsewhere. |
-| `android.neverForLocation` | `true` | Tells Android 12+ that the app doesn't derive location from scans, so scanning needs no location permission. Set `false` only if you do. |
-| `android.requireBleHardware` | `false` | Lists Bluetooth LE as required on Google Play, which hides the app from devices without it. |
+| Option                       | Default            | What it does                                                                                                                                          |
+| ---------------------------- | ------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `bluetoothAlwaysPermission`  | A generic sentence | The iOS permission text (`NSBluetoothAlwaysUsageDescription`). Write your own: App Review reads it. `false` skips it, for apps that set it elsewhere. |
+| `android.neverForLocation`   | `true`             | Tells Android 12+ that the app doesn't derive location from scans, so scanning needs no location permission. Set `false` only if you do.              |
+| `android.requireBleHardware` | `false`            | Lists Bluetooth LE as required on Google Play, which hides the app from devices without it.                                                           |
 
 Not using prebuild? Follow the [bare setup guide](guides/bare-setup.md).
 
@@ -180,7 +182,10 @@ When the peripheral's services change while connected (a firmware update, a serv
 
 ```ts
 device.addServicesChangedListener(() => {
-  console.log('services now', device.services.map((s) => s.uuid));
+  console.log(
+    'services now',
+    device.services.map((s) => s.uuid)
+  );
 });
 ```
 
@@ -220,7 +225,10 @@ import { BleManager, type BleBackgroundEvent } from 'expo-ble-kit';
 
 TaskManager.defineTask<BleBackgroundEvent>('sensor-nearby', async ({ data, error }) => {
   if (data?.type === 'scanResults') {
-    console.log('found', data.results.map((r) => r.id)); // the same ScanResult as in the foreground
+    console.log(
+      'found',
+      data.results.map((r) => r.id)
+    ); // the same ScanResult as in the foreground
   }
 });
 
@@ -247,7 +255,12 @@ const server = await BleManager.openGattServer([
   {
     uuid: SERVICE,
     characteristics: [
-      { uuid: VERSION, properties: ['read'], permissions: ['readable'], value: Uint8Array.of(1, 0) },
+      {
+        uuid: VERSION,
+        properties: ['read'],
+        permissions: ['readable'],
+        value: Uint8Array.of(1, 0),
+      },
       { uuid: COUNTER, properties: ['read', 'notify'], permissions: ['readable'] },
       { uuid: COMMAND, properties: ['write'], permissions: ['writeable'] },
     ],
@@ -268,8 +281,22 @@ server.addSubscriptionListener(({ centralId, subscribed }) => console.log(centra
 - A long write arrives as one `WriteRequest` once the central completes it. Throw a `BleError` to refuse a request: its code becomes the ATT error (`READ_NOT_PERMITTED`, `WRITE_NOT_PERMITTED`, `INVALID_ATTRIBUTE_LENGTH`, `INSUFFICIENT_ENCRYPTION`…).
 - Characteristic UUIDs must be unique within the server. Descriptors: user description (`2901`) and presentation format (`2904`); notifiable characteristics get their CCCD automatically.
 - One server at a time. It needs Bluetooth on and the connect permission; turning Bluetooth off closes it.
-- Centrals find the phone through advertising, which comes in a later version; sending notifications too.
-- In Jest, `installFakeBle().connectCentral()` gives you a central that reads and writes your server like a real one.
+- Centrals find the phone through advertising, which comes in a later version.
+- In Jest, `installFakeBle().connectCentral()` gives you a central that reads and writes your server like a real one; its `notifications` list what your server sent it.
+
+### Sending notifications
+
+```ts
+for (const frame of frames) {
+  await server.notify(COUNTER, frame); // paced: resolves once the phone's Bluetooth stack took it
+}
+await server.notify(COUNTER, frame, { centrals: [centralId] }); // only to these centrals
+```
+
+- `notify` reaches the centrals subscribed to the characteristic: a notification, or an indication for a central that asked for indications. Without subscribers it resolves at once.
+- Await each call. It resolves once the system took the value for every target, so a loop of awaited calls sends as fast as the link carries and never more; a value waits at most 10 seconds (`OPERATION_TIMEOUT`).
+- A value takes at most MTU − 3 bytes for each target: 20 bytes until the central negotiates a larger MTU. A longer one rejects with `INVALID_ATTRIBUTE_LENGTH`; nothing is sent.
+- A central that disconnects just drops out. Closing the server rejects what is still waiting with `DISCONNECTED`.
 
 ## With React hooks
 
@@ -328,7 +355,9 @@ controller.abort(); // rejects with OPERATION_CANCELLED; a queued read never rea
 
 ```ts
 BleManager.setLogLevel('debug'); // 'none' | 'error' | 'warn' (default) | 'info' | 'debug' | 'verbose'
-BleManager.setLogHandler((entry) => console.log(entry.level, entry.peripheralId, entry.opId, entry.message));
+BleManager.setLogHandler((entry) =>
+  console.log(entry.level, entry.peripheralId, entry.opId, entry.message)
+);
 ```
 
 At `debug`, every GATT operation logs a line like `read 0c6c1001-…: ok in 34 ms` with its operation id. Logs also go to Logcat (tag `BleKit`) and to the unified log on iOS (subsystem `expo.blekit`). `setLogHandler(null)` stops the handler.
@@ -359,6 +388,6 @@ The fake answers on later timer ticks, like a radio; Jest fake timers work (`awa
 
 ## Not in this version yet
 
-Background operation on iOS (background modes, state restoration, background tasks), background events other than scan results, and the rest of the peripheral role (advertising, notifications from the GATT server) come in later versions. Options for them reject with `NOT_SUPPORTED` rather than being ignored.
+Background operation on iOS (background modes, state restoration, background tasks), background events other than scan results, and the rest of the peripheral role (advertising) come in later versions. Options for them reject with `NOT_SUPPORTED` rather than being ignored.
 
 Problems? See [troubleshooting](troubleshooting.md).

@@ -382,6 +382,25 @@ class ExpoBleKitModule : Module() {
         serverExecutor.execute { ref.server?.respondToWrite(requestId, attError) }
       }
 
+      // P4-02: resolves once every subscribed target took the value (flow control in the core).
+      AsyncFunction("notify") {
+          ref: GattServerObject,
+          characteristic: String,
+          value: ByteArray,
+          centrals: List<String>?,
+          promise: Promise,
+        ->
+        serverExecutor.execute {
+          val server = ref.server
+            ?: return@execute promise.reject(
+              BleKitException(CoreError(CoreError.Code.DISCONNECTED, "The GATT server is closed")),
+            )
+          server.notify(UUID.fromString(characteristic), value, centrals) { error ->
+            if (error == null) promise.resolve(null) else promise.reject(BleKitException(error))
+          }
+        }
+      }
+
       AsyncFunction("close") { ref: GattServerObject, promise: Promise ->
         serverExecutor.execute {
           if (openServer === ref) closeServer() else ref.server?.close()
