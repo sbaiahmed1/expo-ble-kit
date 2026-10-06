@@ -18,8 +18,10 @@ expo-ble-kit lets an Expo or React Native app talk to Bluetooth Low Energy devic
 ## Install
 
 ```bash
-npx expo install expo-ble-kit
+npx expo install expo-ble-kit@next
 ```
+
+Before 1.0, versions are published on npm's `next` tag, hence `@next`.
 
 Add the config plugin to `app.json`, so the app declares what Bluetooth needs:
 

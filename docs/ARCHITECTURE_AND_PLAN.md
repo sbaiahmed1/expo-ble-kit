@@ -1,6 +1,6 @@
 # Expo BLE (`expo-ble-kit`) — Architecture & Implementation Plan
 
-> **Status:** Draft v0.44 · **Date:** 2026-10-06 · **Scope:** proposition #3, an Expo-first Bluetooth Low Energy module · **Changes:** Appendix D
+> **Status:** Draft v0.45 · **Date:** 2026-10-06 · **Scope:** proposition #3, an Expo-first Bluetooth Low Energy module · **Changes:** Appendix D
 >
 > **Package name:** `expo-ble-kit` (D0a, decided 2026-10-02) · native module `ExpoBleKit` · Android package `expo.modules.blekit`.
 >
@@ -1584,7 +1584,8 @@ How each run works, the scripts (`e2e/soak/`, `e2e/maestro/`) and the results pe
 
 ## 9. Release and versioning
 
-- SemVer. One `0.x` minor per phase; pre-releases on the `next` dist-tag.
+- SemVer. One `0.x` minor per phase; pre-releases on the `next` dist-tag. npm 11 ignores `publishConfig.tag` (checked with `npm publish --dry-run` on 11.17), so a `prepublishOnly` check refuses a 0.x publish without `--tag next`.
+- Decided 2026-10-06 (maintainer): the first published version is `0.1.0` on `next`, with everything built through P4 instead of P1 alone. It ships after the hardware session of `docs/releasing.md`, where a second phone running the example's Peripheral tab stands in for the nRF52840 and Bumble of P1's exit criteria. The next minors follow the remaining phases.
 - Changesets generate the changelog.
 - Support the latest two Expo SDKs. CI builds the example app against both.
 - The README carries a compatibility table: package version ↔ Expo SDK ↔ React Native.
@@ -1813,3 +1814,4 @@ An error in `peripheralManagerDidStartAdvertising` (P4-03) is `ADVERTISING_FAILE
 | v0.42 | 2026-10-05 | First runs on a physical iPhone (14 Pro Max, iOS 27.0.1): P1-05 and P1-12 central checks against a Mac, and the P4-01 and P4-02 server checks with the Mac as the central; results in those tasks' progress notes |
 | v0.43 | 2026-10-05 | P4-03 in progress: advertising on both platforms. §5.5 advertising rules (one at a time, preconditions, confirmation deadline, warnings, the Android field layout with AOSP's sizes), §6 rows split (Android advertises only the phone's own name), §4.3 and §4.4 notes with the sources checked, Appendix A advertising statuses, §5.8 `FakeBle.advertisement`, plugin options `android.advertise` and `ios.backgroundModes: ['peripheral']` |
 | v0.44 | 2026-10-06 | P4-05 in progress: the example's Peripheral tab (the phone as the test peripheral, Heart Rate included) and the two-phone suite (Checks, `e2e/maestro/two-phone.sh`); P4-02's acceptance points to the suite's 10-minute run |
+| v0.45 | 2026-10-06 | Release prep: §9 records the maintainer's decision that the first version, `0.1.0` on `next`, carries everything built through P4 and ships after a hardware session with two phones (`docs/releasing.md`); a `prepublishOnly` check keeps 0.x versions on `next` |
