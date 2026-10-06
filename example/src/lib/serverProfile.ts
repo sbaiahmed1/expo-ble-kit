@@ -10,9 +10,10 @@ import profile from '../../../test-peripherals/profile.json';
 import { TestProfile } from './gattNames';
 import { profileValue, type ProfileValue } from './profile';
 
-// P4-01, P4-02: the phone as a GATT server with the test profile's TEST service (a subset; the rest
-// comes with the two-phone suite, P4-05), so the central checks can run against a phone too. CONTROL
-// takes SET_STREAM, RESET_COUNTERS and SEND_INDICATIONS like the Bumble peripheral.
+// P4-01 … P4-05: the phone as the test peripheral, for the two-phone suite and the other central
+// checks: the profile's TEST service (without SECURE and L2CAP_PSM) and Heart Rate. CONTROL takes
+// SET_STREAM, RESET_COUNTERS and SEND_INDICATIONS like the Bumble peripheral; DISCONNECT_AFTER and
+// TOGGLE_SECONDARY_SERVICE need APIs the peripheral role doesn't have.
 
 const test = profile.services.find((service) => service.key === 'TEST')!;
 const spec = (key: string) =>
@@ -21,7 +22,10 @@ const spec = (key: string) =>
     descriptors?: { uuid: string; value?: ProfileValue }[];
   };
 
-/** STATIC_READ static; LONG_READ, ECHO_READ and SINK_COUNTER from the handlers; STREAM and INDICATE sent on CONTROL commands. */
+/**
+ * STATIC_READ static; LONG_READ, ECHO_READ and SINK_COUNTER from the handlers; STREAM and INDICATE
+ * sent on CONTROL commands; Heart Rate Measurement every second while a central subscribes.
+ */
 export const serverServices: ServiceDefinition[] = [
   {
     uuid: TestProfile.TEST,
@@ -54,15 +58,30 @@ export const serverServices: ServiceDefinition[] = [
       { uuid: TestProfile.CONTROL, properties: ['write'], permissions: ['writeable'] },
     ],
   },
+  {
+    uuid: TestProfile.HEART_RATE,
+    characteristics: [
+      { uuid: TestProfile.HEART_RATE_MEASUREMENT, properties: ['notify'], permissions: [] },
+    ],
+  },
 ];
 
+const heartRate = profile.services
+  .flatMap((service) => service.characteristics)
+  .find((c) => c.key === 'HEART_RATE_MEASUREMENT') as unknown as {
+  intervalMs: number;
+  minBpm: number;
+  maxBpm: number;
+};
+
 /**
- * The test peripheral's name and service (profile.json advertising), so central checks written for
- * it find the phone. Android advertises the phone's own name instead, with a warning.
+ * The test peripheral's name and services (profile.json advertising), so central checks written for
+ * it, and the Heart Rate tab, find the phone. Android advertises the phone's own name instead, with
+ * a warning.
  */
 export const serverAdvertisement: AdvertisingData = {
   localName: profile.advertising.localName,
-  serviceUUIDs: [TestProfile.TEST],
+  serviceUUIDs: [TestProfile.TEST, TestProfile.HEART_RATE],
 };
 
 const longRead = profileValue(spec('LONG_READ').value)!;
@@ -93,7 +112,8 @@ const invalidParameters = () =>
  */
 export function serveTestProfile(
   server: GattServer,
-  onRequest: (line: string) => void
+  onRequest: (line: string) => void,
+  onCentral?: (centralId: string) => void
 ): Subscription[] {
   let reads = 0;
   let echo: Uint8Array = new Uint8Array(0);
@@ -102,6 +122,9 @@ export function serveTestProfile(
   let indicateSeq = 0;
   let stopStream: (() => void) | null = null;
   const streamSubscribers = new Set<string>();
+  const heartRateSubscribers = new Set<string>();
+  let heartRateTimer: ReturnType<typeof setInterval> | null = null;
+  let bpm = heartRate.minBpm;
   const name = (uuid: string) =>
     Object.keys(TestProfile).find((key) => TestProfile[key] === uuid) ?? uuid;
   const failed = (what: string) => (error: unknown) =>
@@ -184,8 +207,25 @@ export function serveTestProfile(
     }
   }
 
+  /** Heart Rate Measurement [flags 0x00, bpm] every interval while a central subscribes; bpm wraps. */
+  function updateHeartRate() {
+    if (heartRateSubscribers.size > 0 && !heartRateTimer) {
+      heartRateTimer = setInterval(() => {
+        const value = Uint8Array.of(0x00, bpm);
+        bpm = bpm >= heartRate.maxBpm ? heartRate.minBpm : bpm + 1;
+        server
+          .notify(TestProfile.HEART_RATE_MEASUREMENT, value)
+          .catch(failed('heart rate stopped'));
+      }, heartRate.intervalMs);
+    } else if (heartRateSubscribers.size === 0 && heartRateTimer) {
+      clearInterval(heartRateTimer);
+      heartRateTimer = null;
+    }
+  }
+
   return [
     server.onReadRequest(({ centralId, characteristic, offset }) => {
+      onCentral?.(centralId);
       onRequest(`read ${name(characteristic)} from ${centralId.slice(-5)} at ${offset}`);
       if (characteristic === TestProfile.LONG_READ) {
         const shift = reads++;
@@ -195,20 +235,33 @@ export function serveTestProfile(
       return uint32(sink);
     }),
     server.onWriteRequest(({ centralId, characteristic, value }) => {
+      onCentral?.(centralId);
       onRequest(`write ${name(characteristic)} from ${centralId.slice(-5)}: ${value.length} bytes`);
       if (characteristic === TestProfile.ECHO_WRITE) echo = value;
       else if (characteristic === TestProfile.CONTROL) control(centralId, value);
       else sink += value.length;
     }),
     server.addSubscriptionListener(({ centralId, characteristic, subscribed }) => {
-      if (characteristic === TestProfile.STREAM) {
-        if (subscribed) streamSubscribers.add(centralId);
-        else streamSubscribers.delete(centralId);
-      }
+      onCentral?.(centralId);
+      const subscribers =
+        characteristic === TestProfile.STREAM
+          ? streamSubscribers
+          : characteristic === TestProfile.HEART_RATE_MEASUREMENT
+            ? heartRateSubscribers
+            : null;
+      if (subscribed) subscribers?.add(centralId);
+      else subscribers?.delete(centralId);
+      updateHeartRate();
       onRequest(
         `${subscribed ? 'subscribed to' : 'unsubscribed from'} ${name(characteristic)}: ${centralId.slice(-5)}`
       );
     }),
-    { remove: () => stopStream?.() },
+    {
+      remove: () => {
+        stopStream?.();
+        heartRateSubscribers.clear();
+        updateHeartRate();
+      },
+    },
   ];
 }

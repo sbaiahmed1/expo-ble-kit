@@ -1,0 +1,35 @@
+# P4-05, phone A: the two-phone suite against phone B (the Peripheral tab switched on). LONG=true
+# streams for 10 minutes, P4-02's acceptance. Part of two-phone.sh.
+appId: expo.modules.blekit.example
+name: Two-phone suite, central side
+---
+- runFlow: _setup.yaml
+- evalScript: "${output.long = typeof LONG !== 'undefined' && LONG == 'true'}"
+- tapOn:
+    id: tab-checks
+- scrollUntilVisible:
+    element:
+      id: two-phone-run
+- runFlow:
+    when:
+      true: ${output.long}
+    commands:
+      - tapOn:
+          id: two-phone-run-long
+- runFlow:
+    when:
+      true: ${!output.long}
+    commands:
+      - tapOn:
+          id: two-phone-run
+- extendedWaitUntil:
+    visible:
+      id: two-phone-status
+      text: "Two-phone suite (OK|FAILED).*"
+    timeout: 900000
+- copyTextFrom:
+    id: two-phone-checks
+- evalScript: ${console.log(maestro.copiedText)}
+- assertVisible:
+    id: two-phone-status
+    text: "Two-phone suite OK.*"

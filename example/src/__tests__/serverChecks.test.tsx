@@ -104,7 +104,7 @@ describe('GATT server checks', () => {
     expect(screen.getByText('Advertising the TEST service')).toBeTruthy();
     expect(demo.ble.advertisement?.data).toMatchObject({
       localName: 'BleKit-Test',
-      serviceUUIDs: [TestProfile.TEST],
+      serviceUUIDs: [TestProfile.TEST, TestProfile.HEART_RATE],
     });
     await fireEvent.press(screen.getByTestId('advertising-stop'));
     await settle();

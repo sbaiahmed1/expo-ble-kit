@@ -8,6 +8,7 @@ import { startDemo } from './src/demo/testPeripheral';
 import { DevChecksScreen } from './src/screens/DevChecksScreen';
 import { ExplorerScreen } from './src/screens/ExplorerScreen';
 import { HeartRateScreen } from './src/screens/HeartRateScreen';
+import { PhoneAsPeripheralScreen } from './src/screens/PhoneAsPeripheralScreen';
 import { ThroughputScreen } from './src/screens/ThroughputScreen';
 import { colors } from './src/ui';
 
@@ -15,6 +16,7 @@ const TABS = [
   { key: 'explorer', title: 'Explorer', Screen: ExplorerScreen },
   { key: 'heart-rate', title: 'Heart Rate', Screen: HeartRateScreen },
   { key: 'throughput', title: 'Throughput', Screen: ThroughputScreen },
+  { key: 'peripheral', title: 'Peripheral', Screen: PhoneAsPeripheralScreen },
   { key: 'checks', title: 'Checks', Screen: DevChecksScreen },
 ] as const;
 
@@ -30,8 +32,9 @@ function BluetoothState() {
 }
 
 /**
- * The example app: Explorer and Heart Rate (P1-15), and the developer checks. Demo mode swaps the
- * native module for a virtual test peripheral, so every screen works without hardware.
+ * The example app: Explorer and Heart Rate (P1-15), Throughput (P2-08), the phone as the test
+ * peripheral (P4-05), and the developer checks. Demo mode swaps the native module for a virtual test
+ * peripheral, so every screen works without hardware.
  */
 export default function App() {
   const [tab, setTab] = useState<TabKey>('explorer');
@@ -96,9 +99,9 @@ const styles = StyleSheet.create({
   demo: { flexDirection: 'row', alignItems: 'center', gap: 6 },
   demoLabel: { fontSize: 13, color: colors.muted },
   state: { fontSize: 13, color: colors.muted },
-  tabs: { flexDirection: 'row', gap: 4, marginTop: 4 },
+  tabs: { flexDirection: 'row', flexWrap: 'wrap', gap: 4, marginTop: 4 },
   tab: {
-    paddingHorizontal: 12,
+    paddingHorizontal: 10,
     paddingVertical: 10,
     borderBottomWidth: 2,
     borderBottomColor: 'transparent',

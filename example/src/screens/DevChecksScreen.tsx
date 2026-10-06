@@ -30,6 +30,7 @@ import { checkStyles as styles, Group } from './checksUi';
 import { KeepAliveChecks } from './KeepAliveChecks';
 import { ServerChecks } from './ServerChecks';
 import { SoakChecks } from './SoakChecks';
+import { TwoPhoneChecks } from './TwoPhoneChecks';
 
 // Developer checks on the public API (P1-12): adapter state, permissions, scanning, connections
 // to a device that isn't there, throughput, batching, several test peripherals at once, GATT
@@ -430,6 +431,7 @@ export function DevChecksScreen() {
       <KeepAliveChecks />
       <BackgroundScanChecks />
       <ServerChecks />
+      <TwoPhoneChecks />
       <Group name="Scanning">
         <Button testID="scan-all" title="Scan all" onPress={() => startSession('all', {})} />
         <Button

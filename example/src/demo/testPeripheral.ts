@@ -13,8 +13,9 @@ import { TestProfile } from '../lib/gattNames';
 // Demo mode: the test peripheral (test-peripherals/profile.json) as a virtual device in the fake
 // adapter, so the screens, their tests and the Maestro flows run without hardware. The driver
 // plays the peripheral's side: heart-rate notifications, ECHO_WRITE → ECHO_READ, SINK_NO_RSP →
-// SINK_COUNTER, STREAM frames, and CONTROL SET_STREAM, DISCONNECT_AFTER, TOGGLE_SECONDARY_SERVICE
-// and RESET_COUNTERS. Real hardware runs the Bumble peripheral or the nRF52840 instead.
+// SINK_COUNTER, STREAM frames, and CONTROL SET_STREAM, DISCONNECT_AFTER, TOGGLE_SECONDARY_SERVICE,
+// RESET_COUNTERS and SEND_INDICATIONS. A virtual peripheral can't refuse a write, so invalid CONTROL
+// commands are accepted. Real hardware runs the Bumble peripheral or the nRF52840 instead.
 
 /** The test services: those always present, and SECONDARY while toggled on (CONTROL 0x03). */
 function testServices(withSecondary: boolean): VirtualPeripheralConfig['services'] {
@@ -61,6 +62,7 @@ export function driveTestPeripheral(device: VirtualPeripheral): () => void {
   let handled = 0;
   let sinkCount = 0;
   let streamSequence = 0;
+  let indicateSequence = 0;
   let secondary = false;
   let streamTimer: ReturnType<typeof setInterval> | null = null;
   /** CONTROL SET_STREAM: frames of `frameSize` bytes at `rateHz` (0 stops), see profile.stream. */
@@ -111,6 +113,13 @@ export function driveTestPeripheral(device: VirtualPeripheral): () => void {
       } else if (characteristic === TestProfile.CONTROL && value[0] === 0x04) {
         setSinkCounter(0);
         streamSequence = 0;
+        indicateSequence = 0;
+      } else if (characteristic === TestProfile.CONTROL && value[0] === 0x05 && value.length >= 3) {
+        for (let count = value[1] | (value[2] << 8); count > 0; count--) {
+          const sequence = new Uint8Array(4);
+          new DataView(sequence.buffer).setUint32(0, indicateSequence++, true);
+          device.notify(TEST, TestProfile.INDICATE, sequence);
+        }
       }
     }
   }, 50);

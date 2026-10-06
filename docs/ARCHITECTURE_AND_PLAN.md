@@ -1,6 +1,6 @@
 # Expo BLE (`expo-ble-kit`) — Architecture & Implementation Plan
 
-> **Status:** Draft v0.43 · **Date:** 2026-10-05 · **Scope:** proposition #3, an Expo-first Bluetooth Low Energy module · **Changes:** Appendix D
+> **Status:** Draft v0.44 · **Date:** 2026-10-06 · **Scope:** proposition #3, an Expo-first Bluetooth Low Energy module · **Changes:** Appendix D
 >
 > **Package name:** `expo-ble-kit` (D0a, decided 2026-10-02) · native module `ExpoBleKit` · Android package `expo.modules.blekit`.
 >
@@ -1439,7 +1439,7 @@ Parallelism: P0-06/P0-07 can run alongside P0-03/P0-04. With two people, P4 can 
   - Tests: 10 Android (`GattServerTest`, the contract included), 6 Swift (`GattServerTests`), 22 Jest (16 server, 6 contract), 1 example.
   - iPhone 14 Pro Max (iOS 27.0.1, 2026-10-05), with a Mac as the central (`e2e/macos-central`, which connects to the phone's own Apple advertisement since the app can't advertise before P4-03): the example's server publishes the TEST service (9 characteristics) and answers the static read (20 bytes), two 512-byte long reads each from one handler result (the second shifted by one), a 300-byte long write read back through ECHO, and 20 writes without response (SINK_COUNTER 2000). The Mac negotiated a large MTU, so the MTU 23 case of the acceptance and nRF Connect remain open.
 - [ ] **P4-02 Server notifications with flow control** — deps: P4-01.
-  **Accept:** 100 Hz notifications from phone B to phone A for 10 minutes with zero sequence gaps.
+  **Accept:** 100 Hz notifications from phone B to phone A for 10 minutes with zero sequence gaps (`e2e/maestro/two-phone.sh <phone B> <phone A> --long`, P4-05).
   **Progress 2026-10-05 (open: the acceptance needs two phones and advertising, P4-03; the Galaxy A52 is the only phone here):** `GattServer.notify` works on both platforms in unit tests and the fake (rules in §5.5 and the §4.4 notes).
   - Android core: per-central outboxes in `GattServer.kt` (`notify` through the port, `onNotificationSent` and `onMtuChanged` events, busy retries, one deadline per value, a disconnect dropping the central's queue, `close()` failing what is queued); `AndroidGattServerOpener` uses the API 33 `notifyCharacteristicChanged` overload, else the deprecated one with the characteristic's value.
   - iOS core: `ServerNotifier.swift` (one queue, `updateValue` and `peripheralManagerIsReady`, `maximumUpdateValueLength` per central); `PeripheralManagerAdapter` keeps the `CBCentral`s that subscribed and the published characteristics.
@@ -1462,6 +1462,12 @@ Parallelism: P0-06/P0-07 can run alongside P0-03/P0-04. With two people, P4 can 
   **Accept:** services and advertising survive the system-relaunch scenario.
 - [ ] **P4-05 Phone-as-peripheral example and two-phone suite** — deps: P4-01 … P4-03.
   **Accept:** suite green for iOS→iOS, iOS→Android, Android→iOS and Android→Android. Publish `0.4.0`.
+  **Progress 2026-10-06 (open: the four pairings need two phones next to each other; publishing `0.4.0` waits for the maintainer):** the example and the suite are built and pass against the demo's virtual test peripheral.
+  - Example, phone B: a **Peripheral** tab (`PhoneAsPeripheralScreen`) whose switch opens the GATT server, serves the test profile and advertises it (`serverAdvertisement`: TEST and Heart Rate, the profile's name), listing the centrals it saw and their requests. The server profile gains the Heart Rate service: a measurement every second while a central subscribes, so another phone's Heart Rate tab works against it. It still lacks SECURE and L2CAP_PSM (P5-01, P5-03), and DISCONNECT_AFTER and TOGGLE_SECONDARY_SERVICE (the peripheral role has no API to drop a central or change the database).
+  - Example, phone A: a **Two-phone suite** group in Checks (`src/lib/twoPhoneSuite.ts`): finds the peripheral by the TEST service, connects, and checks the static read, two long reads (each one snapshot), writes and a 300-byte long write read back, 2,000 bytes without response, the 100 Hz batched stream (10 s, or 10 minutes for P4-02's acceptance: no gaps, nothing dropped), five indications in order, the refusal of invalid CONTROL commands, and two heart-rate measurements; each check passes or fails on its own. The same checks as `e2e/macos-central`.
+  - The demo's virtual test peripheral now answers `SEND_INDICATIONS`, so the suite runs against it.
+  - `e2e/maestro/two-phone.sh <phone B> <phone A> [--long]` runs both sides with Maestro (`_two-phone-peripheral.yaml`, `_two-phone-central.yaml`).
+  - Tests: 5 example (3 suite, 2 Peripheral tab).
 
 ### 7.7 P5 — Advanced features
 
@@ -1806,3 +1812,4 @@ An error in `peripheralManagerDidStartAdvertising` (P4-03) is `ADVERTISING_FAILE
 | v0.41 | 2026-10-05 | P4-02 in progress: server notifications with flow control on both platforms (§4.4 notes: per-central outboxes on Android, one queue on iOS), `notify` rules in §5.5 (when it resolves, length limits, timeout, close), §5.8 `VirtualCentral.notifications` and the fake's notify rules; P4-01's progress no longer says `notify` waits |
 | v0.42 | 2026-10-05 | First runs on a physical iPhone (14 Pro Max, iOS 27.0.1): P1-05 and P1-12 central checks against a Mac, and the P4-01 and P4-02 server checks with the Mac as the central; results in those tasks' progress notes |
 | v0.43 | 2026-10-05 | P4-03 in progress: advertising on both platforms. §5.5 advertising rules (one at a time, preconditions, confirmation deadline, warnings, the Android field layout with AOSP's sizes), §6 rows split (Android advertises only the phone's own name), §4.3 and §4.4 notes with the sources checked, Appendix A advertising statuses, §5.8 `FakeBle.advertisement`, plugin options `android.advertise` and `ios.backgroundModes: ['peripheral']` |
+| v0.44 | 2026-10-06 | P4-05 in progress: the example's Peripheral tab (the phone as the test peripheral, Heart Rate included) and the two-phone suite (Checks, `e2e/maestro/two-phone.sh`); P4-02's acceptance points to the suite's 10-minute run |

@@ -1,0 +1,21 @@
+# P4-05, phone B: the Peripheral tab serves and advertises the test profile until the app stops.
+# Part of two-phone.sh; also runs alone: maestro --device <phone B> test e2e/maestro/_two-phone-peripheral.yaml
+appId: expo.modules.blekit.example
+name: Two-phone suite, peripheral side
+---
+- runFlow: _setup.yaml
+- tapOn:
+    id: tab-peripheral
+- tapOn:
+    id: peripheral-switch
+# Android 12+ asks for "Nearby devices" (advertise) the first time.
+- runFlow:
+    when:
+      visible: Allow|Autoriser|OK
+    commands:
+      - tapOn: Allow|Autoriser|OK
+- extendedWaitUntil:
+    visible:
+      id: peripheral-status
+      text: "Advertising as the test peripheral"
+    timeout: 30000

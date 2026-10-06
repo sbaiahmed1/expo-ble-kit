@@ -18,7 +18,9 @@ End-to-end flows for the example app's screens (plan §7, P1-15; §8.1 L4).
 | `keep-alive.yaml` | Android: a keep-alive connect starts the foreground service, which keeps running for 30 s in the background and stops with the disconnect (P3-03). Needs no peripheral |
 | `keep-alive-background-start.sh` | Android 12+: a keep-alive connect issued in the background (at a scan result 15 s after leaving the app) gets a `FOREGROUND_SERVICE_FAILED` warning, no crash (P3-03). `--deny-overlay` for debug builds, whose `SYSTEM_ALERT_WINDOW` exempts them on Android 14 |
 | `background-scan.sh` | Android, S-B4: with a background scan registered, `am kill` ends the app; the next matching advertisement starts it headless and the task logs the results (P3-04). `--apple` filters on Apple manufacturer data, for a run without a test peripheral. Unregisters at the end |
+| `two-phone.sh` | Two phones, P4-05: phone B switches on the Peripheral tab (the test peripheral, advertising), phone A runs the two-phone suite against it: reads and long reads, writes and long writes, writes without response, the 100 Hz stream without gaps, indications, invalid commands, Heart Rate. `--long` streams for 10 minutes (P4-02's acceptance) |
 | `_setup.yaml` | Shared start: launch, demo mode, the Bluetooth permission |
+| `_two-phone-peripheral.yaml`, `_two-phone-central.yaml` | Phone B's and phone A's parts of `two-phone.sh` |
 | `_background-scan-register.yaml`, `_background-scan-unregister.yaml` | Parts of `background-scan.sh` |
 | `_keep-alive-arm.yaml`, `_keep-alive-check.yaml` | Parts of `keep-alive-background-start.sh` |
 | `_soak-toggle-start.yaml`, `_soak-toggle-report.yaml` | Parts of `e2e/soak/bluetooth-toggle.sh`: start the toggle soak, then stop it and check the report |
@@ -40,5 +42,16 @@ maestro test -e DEMO=true e2e/maestro/explorer-basic.yaml e2e/maestro/heart-rate
 Parameters: `DEVICE_NAME` (default `BleKit-Test`, for a second peripheral instance), `DEMO` (default `false`). With several phones attached, pass `--device <serial>`. On Android, stop other tools that hold the phone's UI automation session (Argent's device server, for example) before running Maestro.
 
 Demo mode checks the screens and the library's TypeScript layer, but not the native Bluetooth code. The hardware runs are what the P1-15 and P2-02 to P2-08 acceptances need.
+
+## Two phones
+
+The example app on both phones, then:
+
+```bash
+e2e/maestro/two-phone.sh <phone B> <phone A>          # B is the peripheral, A runs the suite
+e2e/maestro/two-phone.sh <phone A> <phone B>          # and the other way round
+```
+
+P4-05's acceptance is every pairing: iOS → iOS, iOS → Android, Android → iOS, Android → Android. Each side is one Maestro flow on one phone (`--device`). Where Maestro can't drive a phone, do that side by hand: phone B, **Peripheral** tab, switch on; phone A, **Checks → Two-phone suite → Run**. A Mac can stand in for phone A against an iPhone: `e2e/macos-central/run.sh`.
 
 The soak flows run for up to an hour each and are not in the lists above. How to run them, and the results per phone: [docs/soak.md](../../docs/soak.md).
