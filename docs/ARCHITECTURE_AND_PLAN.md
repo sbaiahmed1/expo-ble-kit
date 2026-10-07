@@ -1,6 +1,6 @@
 # Expo BLE (`expo-ble-kit`) — Architecture & Implementation Plan
 
-> **Status:** Draft v0.45 · **Date:** 2026-10-06 · **Scope:** proposition #3, an Expo-first Bluetooth Low Energy module · **Changes:** Appendix D
+> **Status:** Draft v0.46 · **Date:** 2026-10-07 · **Scope:** proposition #3, an Expo-first Bluetooth Low Energy module · **Changes:** Appendix D
 >
 > **Package name:** `expo-ble-kit` (D0a, decided 2026-10-02) · native module `ExpoBleKit` · Android package `expo.modules.blekit`.
 >
@@ -1147,8 +1147,8 @@ Parallelism: P0-06/P0-07 can run alongside P0-03/P0-04. With two people, P4 can 
 
 ### 7.2 P0 — Foundations and spikes
 
-- [ ] **P0-01 Name and npm scope** `[GATE D0a]` — deps: none.
-  **Decided 2026-10-02: `expo-ble-kit`** (unscoped; free on npm that day). Remaining: reserve it on npm (needs the owner's npm login).
+- [x] **P0-01 Name and npm scope** `[GATE D0a]` — deps: none.
+  **Decided 2026-10-02: `expo-ble-kit`** (unscoped; free on npm that day). **Done 2026-10-07:** reserved by publishing `0.1.0` from the owner's account (sbaiahmed1).
   **Accept:** name recorded in this file's header ✅; name reserved on npm.
 - [x] **P0-02 Build vs join** `[GATE D0b]` — deps: none.
   Contact the maintainers of the two most active Expo-compatible projects (§2). Assess their code against Appendix B.
@@ -1585,7 +1585,8 @@ How each run works, the scripts (`e2e/soak/`, `e2e/maestro/`) and the results pe
 ## 9. Release and versioning
 
 - SemVer. One `0.x` minor per phase; pre-releases on the `next` dist-tag. npm 11 ignores `publishConfig.tag` (checked with `npm publish --dry-run` on 11.17), so a `prepublishOnly` check refuses a 0.x publish without `--tag next`.
-- Decided 2026-10-06 (maintainer): the first published version is `0.1.0` on `next`, with everything built through P4 instead of P1 alone. It ships after the hardware session of `docs/releasing.md`, where a second phone running the example's Peripheral tab stands in for the nRF52840 and Bumble of P1's exit criteria. The next minors follow the remaining phases.
+- Decided 2026-10-06 (maintainer): the first published version is `0.1.0` on `next`, with everything built through P4 instead of P1 alone. The maintainer chose to publish before the hardware session of `docs/releasing.md` (where a second phone running the example's Peripheral tab stands in for the nRF52840 and Bumble of P1's exit criteria); fixes it brings ship as patches. The next minors follow the remaining phases.
+- **Published 2026-10-07:** `expo-ble-kit@0.1.0` on npm (tag `next`; npm also gave the first version `latest`, which later `--tag next` releases leave in place), git tag `v0.1.0`. The repository is github.com/sbaiahmed1/expo-ble-kit, private for now, so the package's repository links only work for the owner.
 - Changesets generate the changelog.
 - Support the latest two Expo SDKs. CI builds the example app against both.
 - The README carries a compatibility table: package version ↔ Expo SDK ↔ React Native.
@@ -1815,3 +1816,4 @@ An error in `peripheralManagerDidStartAdvertising` (P4-03) is `ADVERTISING_FAILE
 | v0.43 | 2026-10-05 | P4-03 in progress: advertising on both platforms. §5.5 advertising rules (one at a time, preconditions, confirmation deadline, warnings, the Android field layout with AOSP's sizes), §6 rows split (Android advertises only the phone's own name), §4.3 and §4.4 notes with the sources checked, Appendix A advertising statuses, §5.8 `FakeBle.advertisement`, plugin options `android.advertise` and `ios.backgroundModes: ['peripheral']` |
 | v0.44 | 2026-10-06 | P4-05 in progress: the example's Peripheral tab (the phone as the test peripheral, Heart Rate included) and the two-phone suite (Checks, `e2e/maestro/two-phone.sh`); P4-02's acceptance points to the suite's 10-minute run |
 | v0.45 | 2026-10-06 | Release prep: §9 records the maintainer's decision that the first version, `0.1.0` on `next`, carries everything built through P4 and ships after a hardware session with two phones (`docs/releasing.md`); a `prepublishOnly` check keeps 0.x versions on `next` |
+| v0.46 | 2026-10-07 | `0.1.0` published on npm (`next`) before the hardware session, at the maintainer's choice; P0-01 done (name reserved); §9 records the release and the private repository |
