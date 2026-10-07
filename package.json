@@ -1,6 +1,6 @@
 {
   "name": "expo-ble-kit",
-  "version": "0.0.0",
+  "version": "0.1.0",
   "description": "Bluetooth Low Energy toolkit for Expo",
   "main": "build/index.js",
   "types": "build/index.d.ts",
