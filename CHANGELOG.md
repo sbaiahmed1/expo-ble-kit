@@ -1,5 +1,11 @@
 # expo-ble-kit
 
+## 0.1.1
+
+### Patch Changes
+
+- iOS: `pod install` failed with 0.1.0 ("undefined method '=~' for an instance of Hash"): the podspec read `repository` from `package.json` as a string, and it is an object. It now takes the object's URL.
+
 ## 0.1.0
 
 ### Minor Changes
