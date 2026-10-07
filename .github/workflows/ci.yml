@@ -41,7 +41,7 @@ jobs:
         working-directory: test-peripherals/bumble
     steps:
       - uses: actions/checkout@v7
-      - uses: astral-sh/setup-uv@v10
+      - uses: astral-sh/setup-uv@v10.2.0
       - run: uv sync --locked
       - run: uv run pytest
 
@@ -59,6 +59,8 @@ jobs:
       KTLINT_VERSION: 1.8.0
     steps:
       - uses: actions/checkout@v7
+      # The macOS runner images no longer include SwiftLint.
+      - run: brew install swiftlint
       - run: swiftlint lint --strict
       - name: ktlint
         run: |

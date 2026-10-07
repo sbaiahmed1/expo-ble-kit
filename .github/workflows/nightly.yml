@@ -23,7 +23,7 @@ jobs:
           distribution: zulu
           java-version: 17
       - uses: gradle/actions/setup-gradle@v6
-      - uses: astral-sh/setup-uv@v10
+      - uses: astral-sh/setup-uv@v10.2.0
       - run: yarn install --immutable
       - run: yarn prepare
       - run: yarn install --immutable

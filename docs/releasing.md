@@ -10,6 +10,6 @@ Before 1.0, versions go to npm's `next` tag (plan §9). npm 11 ignores a tag in 
    - `e2e/macos-central/run.sh` with the iPhone advertising (**Checks → GATT server**): the advertised fields (P4-03).
    - Record the results in the plan's progress notes and in the README's "Tested on hardware".
 2. **Version.** `yarn changeset version` bumps `package.json`, writes `CHANGELOG.md` and removes the changesets. Update the README's compatibility table. Commit as `Release 0.x.0`.
-3. **Checks.** `yarn lint`, `yarn lint:native`, `yarn typecheck`, `CI=1 yarn test`, `cd example && yarn test`, `swift test --package-path ios`, the Android unit tests, `yarn docs` and `yarn check:package`. The example builds on both platforms.
+3. **Checks.** `yarn lint`, `yarn lint:native`, `yarn typecheck`, `CI=1 yarn test`, `cd example && yarn test`, `swift test --package-path ios`, the Android unit tests, `yarn docs` and `yarn check:package`. The example builds on both platforms, after the last change to `package.json`: the podspec reads its `version`, `description` and `repository` (0.1.0 broke `pod install` because `npm pkg fix` made `repository` an object).
 4. **Publish.** `npm login` with the owner's account, then `npm publish --tag next` (it runs `prepare`, which builds `build/` and `plugin/build/`; `npm publish --dry-run --tag next` first shows the contents). Check with `npm view expo-ble-kit dist-tags`.
 5. **Tag.** `git tag v0.x.0` and push the branch and the tag.

@@ -1,6 +1,10 @@
 require 'json'
 
 package = JSON.parse(File.read(File.join(__dir__, '..', 'package.json')))
+# npm normalizes `repository` to { "type": "git", "url": "git+https://…" }; CocoaPods needs the URL.
+repository = package['repository']
+repository = repository['url'] if repository.is_a?(Hash)
+repository = repository.sub(/\Agit\+/, '')
 
 Pod::Spec.new do |s|
   s.name           = 'ExpoBleKit'
@@ -14,7 +18,7 @@ Pod::Spec.new do |s|
   s.platforms      = {
     :ios => '16.4'
   }
-  s.source         = { git: package['repository'], tag: "v#{s.version}" }
+  s.source         = { git: repository, tag: "v#{s.version}" }
   s.static_framework = true
 
   s.dependency 'ExpoModulesCore'
