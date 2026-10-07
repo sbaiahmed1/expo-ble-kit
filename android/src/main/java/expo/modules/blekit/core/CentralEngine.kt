@@ -62,6 +62,9 @@ class CentralEngine(
   /** By normalized address. Read from any thread for the synchronous state getters. */
   private val sessions = ConcurrentHashMap<String, PeripheralSession>()
 
+  /** Bond states from the broadcast (P5-01), published for the synchronous `bondState` getter. */
+  private val bondStates = ConcurrentHashMap<String, Int>()
+
   /** The log of plan §4.16; the binding sets its level and forwards it to JS. */
   val logger = BleLogger(clock = { clock.epochMs(executor.nowMs()).toDouble() }, platform = logOutput)
 
@@ -97,6 +100,7 @@ class CentralEngine(
 
   fun start() {
     adapter.setStateListener(::onAdapterState)
+    adapter.setBondStateListener(::onBondState)
     keepAlive.onStopped = { error ->
       keepAliveRunning = false
       error?.let(::warn)
@@ -106,6 +110,7 @@ class CentralEngine(
 
   fun close() {
     adapter.setStateListener(null)
+    adapter.setBondStateListener(null)
     val error = CoreError(CoreError.Code.OPERATION_CANCELLED, "The module was destroyed")
     scanController.stopAll(error)
     sessions.values.forEach { it.forceDisconnected(error) }
@@ -455,6 +460,38 @@ class CentralEngine(
 
   fun readRssi(peripheralId: String, timeoutMs: Long?, completion: (Result<Int>) -> Unit, operationId: Int? = null) =
     withSession(peripheralId, completion) { it.readRssi(timeoutMs, completion, operationId) }
+
+  /**
+   * The bond state of [peripheralId] as JS `'none' | 'bonding' | 'bonded'` (P5-01): the latest
+   * broadcast, else what Android reports (none without BLUETOOTH_CONNECT). Safe from any thread.
+   */
+  fun bondState(peripheralId: String): String {
+    val address = normalizeAddress(peripheralId) ?: return "none"
+    val state =
+      bondStates[address] ?: if (adapter.isAvailable) adapter.remoteDevice(address).bondState else BondStates.NONE
+    return when (state) {
+      BondStates.BONDED -> "bonded"
+      BondStates.BONDING -> "bonding"
+      else -> "none"
+    }
+  }
+
+  /** Bonds with a connected peripheral (P5-01): needs the connect permission. */
+  fun createBond(peripheralId: String, timeoutMs: Long?, completion: (Result<Unit>) -> Unit, operationId: Int? = null) {
+    val missing = permissionPolicy().runtimePermissions(BleCapability.CONNECT).filterNot(permissionSystem::isGranted)
+    if (missing.isNotEmpty()) {
+      return completion(
+        Result.failure(CoreError(CoreError.Code.PERMISSION_DENIED, "Bonding needs ${missing.joinToString()}")),
+      )
+    }
+    withSession(peripheralId, completion) { it.createBond(timeoutMs, completion, operationId) }
+  }
+
+  private fun onBondState(address: String, state: Int) {
+    bondStates[address] = state
+    logger.log(LogLevel.INFO, address) { "bond state $state" }
+    sessions[address]?.onBondStateChanged(state)
+  }
 
   /** The hidden cache refresh (opt-in, P2-06); resolves false where Android lacks it. */
   fun refreshGattCache(peripheralId: String, completion: (Result<Boolean>) -> Unit) =

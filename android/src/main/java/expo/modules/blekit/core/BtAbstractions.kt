@@ -179,6 +179,9 @@ interface BluetoothAdapterPort {
   /** Reports each adapter state change (one of [AdapterStates]) on the BLE thread. Null stops reporting. */
   fun setStateListener(listener: ((Int) -> Unit)?)
 
+  /** Reports each device's bond state change (one of [BondStates]) on the BLE thread (P5-01). Null stops. */
+  fun setBondStateListener(listener: ((address: String, state: Int) -> Unit)?)
+
   /** Never fails, even for unknown addresses (plan §4.12). */
   fun remoteDevice(address: String): RemoteDevicePort
 
@@ -190,8 +193,11 @@ interface RemoteDevicePort {
   val address: String
   val name: String?
 
-  /** One of [BondStates]. */
+  /** One of [BondStates]; NONE when it can't be read (no BLUETOOTH_CONNECT). */
   val bondState: Int
+
+  /** Starts bonding (`BluetoothDevice.createBond`); false when Android refused. Never confirms a pairing itself. */
+  fun createBond(): Boolean
 
   /** Starts an LE GATT connection with callbacks on the BLE thread. Null if the platform refused. */
   fun connectGatt(autoConnect: Boolean, callback: GattClientCallback): GattClientPort?

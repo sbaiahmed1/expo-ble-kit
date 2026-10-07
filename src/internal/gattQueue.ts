@@ -10,7 +10,8 @@ export type GattOperationKind =
   | 'writeDescriptor'
   | 'setNotify'
   | 'readRssi'
-  | 'requestMtu';
+  | 'requestMtu'
+  | 'bond';
 
 export type GattResult<T = unknown> = { ok: true; value: T } | { ok: false; error: BleError };
 

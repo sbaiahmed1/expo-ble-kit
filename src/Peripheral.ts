@@ -51,6 +51,9 @@ import type {
 } from './types';
 import { normalizeUUID, type UUID } from './uuid';
 
+/** createBond() waits for the user to answer Android's pairing dialog (P5-01). */
+const BOND_TIMEOUT_MS = 30_000;
+
 let nextSubscriptionId = 1;
 
 /** One subscriber; several share a characteristic's CCCD natively (plan §5.4). */
@@ -415,15 +418,30 @@ export class PeripheralImpl implements Peripheral {
     });
   }
 
-  readonly android = {
+  readonly android: Peripheral['android'] = ((peripheral: PeripheralImpl) => ({
+    get bondState() {
+      return (Platform.OS === 'android' && peripheral.native.bondState) || 'none';
+    },
+    createBond: (options?: OpOptions): Promise<void> =>
+      guard(() => {
+        const createBond = peripheral.native.createBond?.bind(peripheral.native);
+        if (Platform.OS !== 'android' || !createBond) {
+          throw new BleError(
+            BleErrorCode.NOT_SUPPORTED,
+            'createBond() is Android-only: iOS pairs when an attribute needs encryption'
+          );
+        }
+        const timeoutMs = operationTimeout(options, BOND_TIMEOUT_MS);
+        return peripheral.cancellable(options, (operationId) => createBond(timeoutMs, operationId));
+      }, peripheral.context()),
     refreshGattCache: (): Promise<boolean> =>
       guard(() => {
         if (Platform.OS !== 'android') {
           throw new BleError(BleErrorCode.NOT_SUPPORTED, 'refreshGattCache() is Android-only');
         }
-        return this.native.refreshGattCache();
-      }, this.context()),
-  };
+        return peripheral.native.refreshGattCache();
+      }, peripheral.context()),
+  }))(this);
 
   // Private
 

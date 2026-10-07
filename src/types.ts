@@ -793,8 +793,21 @@ export interface Peripheral {
    * still there were kept, the others ended. Android 11 and older don't report service changes.
    */
   addServicesChangedListener(listener: () => void): Subscription;
-  /** Android-only calls. Elsewhere they reject with `NOT_SUPPORTED`. */
+  /** Android-only. Elsewhere the calls reject with `NOT_SUPPORTED` and `bondState` is `'none'`. */
   readonly android: {
+    /**
+     * The bond (pairing) state with this device. iOS has no bonding API: it pairs by itself when an
+     * attribute that needs encryption is read or written.
+     */
+    readonly bondState: 'none' | 'bonding' | 'bonded';
+    /**
+     * Bonds with the connected device; resolves once bonded, at once if it already is. Android shows
+     * its pairing dialog when the device asks for one, and the user decides: the library never
+     * confirms a pairing. Queued with the GATT operations. Rejects with `BOND_FAILED` when the user
+     * or the device refuses, or the pairing fails; `OPERATION_TIMEOUT` after `timeoutMs` (default
+     * 30 s, since it waits for the user); `DISCONNECTED` without a connection.
+     */
+    createBond(options?: OpOptions): Promise<void>;
     /**
      * Clears Android's GATT cache for this device, then discovers the services again (and calls
      * the services-changed listeners). Uses a hidden Android API: resolves `false` when the

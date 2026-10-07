@@ -10,8 +10,9 @@ import profile from '../../../test-peripherals/profile.json';
 import { TestProfile } from './gattNames';
 import { profileValue, type ProfileValue } from './profile';
 
-// P4-01 … P4-05: the phone as the test peripheral, for the two-phone suite and the other central
-// checks: the profile's TEST service (without SECURE and L2CAP_PSM) and Heart Rate. CONTROL takes
+// P4-01 … P5-01: the phone as the test peripheral, for the two-phone suite and the other central
+// checks: the profile's TEST service (without L2CAP_PSM) and Heart Rate. SECURE needs an encrypted
+// link, so reading it from another phone pairs the two. CONTROL takes
 // SET_STREAM, RESET_COUNTERS and SEND_INDICATIONS like the Bumble peripheral; DISCONNECT_AFTER and
 // TOGGLE_SECONDARY_SERVICE need APIs the peripheral role doesn't have.
 
@@ -55,6 +56,12 @@ export const serverServices: ServiceDefinition[] = [
         })),
       },
       { uuid: TestProfile.INDICATE, properties: ['indicate'], permissions: [] },
+      {
+        uuid: TestProfile.SECURE,
+        properties: ['read'],
+        permissions: ['readEncryptionRequired'],
+        value: profileValue(spec('SECURE').value),
+      },
       { uuid: TestProfile.CONTROL, properties: ['write'], permissions: ['writeable'] },
     ],
   },

@@ -711,6 +711,40 @@ class PeripheralSession(
     }
   }
 
+  /**
+   * Bonds with the device (P5-01, Android): a queued operation, finished by the bond-state broadcast
+   * ([onBondStateChanged]). Already bonded resolves at once. It never confirms a pairing itself:
+   * Android shows its pairing dialog when the device asks for one, and the user decides.
+   */
+  fun createBond(timeoutMs: Long?, completion: (Result<Unit>) -> Unit, operationId: Int? = null) {
+    enqueueAttributeOperation(GattOperation.Kind.BOND, "bond", timeoutMs, completion, operationId, valueOf = { }) {
+      val remote = device()
+      when {
+        remote.bondState == BondStates.BONDED -> completeBond(null)
+
+        // Bonding started, or another app's bonding is under way: the broadcast finishes it.
+        remote.createBond() || remote.bondState == BondStates.BONDING -> Unit
+
+        else -> completeBond(CoreError(CoreError.Code.BOND_FAILED, "Android refused to start bonding with $address"))
+      }
+    }
+  }
+
+  /** The bond-state broadcast for this device, from the engine. */
+  fun onBondStateChanged(bondState: Int) {
+    when (bondState) {
+      BondStates.BONDED -> completeBond(null)
+
+      BondStates.NONE -> completeBond(
+        CoreError(CoreError.Code.BOND_FAILED, "Bonding with $address failed or was refused"),
+      )
+    }
+  }
+
+  private fun completeBond(error: CoreError?) {
+    queue.complete(error?.let(GattResult::Failure) ?: GattResult.Success()) { it.kind == GattOperation.Kind.BOND }
+  }
+
   /** The adapter went away (off, or the module is destroyed): drop everything with [error]. */
   fun forceDisconnected(error: CoreError) {
     if (state == SessionState.DISCONNECTED) {

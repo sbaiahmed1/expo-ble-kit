@@ -342,6 +342,24 @@ function Nearby() {
 
 `useScan` starts when the component mounts (pass `enabled: false` to wait) and stops when it unmounts. It starts again by itself when Bluetooth comes back on.
 
+## Pairing and bonding
+
+Some devices only let a bonded (paired) phone read or write their protected values. Reading or writing such a value pairs by itself on both platforms: the system asks the user, then the operation goes on.
+
+```ts
+const value = await device.read(SERVICE, PROTECTED, { timeoutMs: 30_000 }); // may pair first
+
+// Android only: bond up front
+if (device.android.bondState !== 'bonded') {
+  await device.android.createBond(); // Android's pairing dialog asks the user
+}
+```
+
+- Give operations that may pair a longer timeout (`timeoutMs`): the user needs time to answer.
+- If the user declines, the operation rejects with `INSUFFICIENT_AUTHENTICATION` or `INSUFFICIENT_ENCRYPTION`, and `createBond()` with `BOND_FAILED`.
+- `createBond()` needs a connection and waits up to 30 seconds by default. The library never accepts a pairing on the user's behalf.
+- iOS has no bonding API: `device.android.bondState` reads `'none'` and `createBond()` rejects with `NOT_SUPPORTED`. To remove a bond, the user forgets the device in the system's Bluetooth settings.
+
 ## Errors
 
 Every failure is a `BleError`. Test its `code`, not its message:

@@ -68,7 +68,10 @@ class GattQueue(private val executor: SerialExecutor, private val defaultTimeout
   var current: GattOperation? = null
     private set
 
-  /** Timeouts in a row, reset by any completion. Two in a row force a disconnect (plan §4.9). */
+  /**
+   * Timeouts in a row, reset by any completion. Two in a row force a disconnect (plan §4.9). A bond
+   * doesn't count: it waits for the user's answer to Android's pairing dialog, not for the stack.
+   */
   var consecutiveTimeouts = 0
     private set
 
@@ -167,7 +170,7 @@ class GattQueue(private val executor: SerialExecutor, private val defaultTimeout
   private fun timeOut(operation: GattOperation) {
     if (current !== operation) return
     finishCurrent()
-    consecutiveTimeouts++
+    if (operation.kind != GattOperation.Kind.BOND) consecutiveTimeouts++
     val message = "Operation ${operation.kind} timed out after ${operation.timeoutMs} ms"
     settle(operation, GattResult.Failure(CoreError(CoreError.Code.OPERATION_TIMEOUT, message)))
     onTimeout?.invoke(operation, consecutiveTimeouts)

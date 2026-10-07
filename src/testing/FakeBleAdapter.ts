@@ -94,7 +94,8 @@ export type FakeOperation =
   | 'unsubscribe'
   | 'requestMtu'
   | 'readRssi'
-  | 'startAdvertising';
+  | 'startAdvertising'
+  | 'createBond';
 
 /** Controls the fake, from `installFakeBle()`. */
 export interface FakeBle {
@@ -756,6 +757,17 @@ class FakePeripheralHandle implements NativePeripheralPort {
     );
   }
 
+  /** P5-01 (Android): a connected virtual peripheral bonds on a later tick, like a pairing the user accepts. */
+  get bondState(): 'none' | 'bonding' | 'bonded' {
+    return this.adapter.isBonded(this.id) ? 'bonded' : 'none';
+  }
+
+  createBond(timeoutMs: number, operationId: number | null): Promise<void> {
+    return this.operation('bond', 'createBond', { timeoutMs, operationId }, () => {
+      this.adapter.bond(this.id);
+    });
+  }
+
   async cancelOperation(operationId: number): Promise<void> {
     const stream = this.streams.get(operationId);
     if (stream) {
@@ -1412,6 +1424,7 @@ export class FakeBleAdapter implements NativeBleKitPort {
     this.errors = [];
     this.server?.close();
     this.advertising = null;
+    this.bonded.clear();
     this.state = this.initial.state;
     this.permissions = { ...this.initial.permissions };
   }
@@ -1516,6 +1529,17 @@ export class FakeBleAdapter implements NativeBleKitPort {
     this.server = server;
     await new Promise<void>((resolve) => this.scheduler.schedule(resolve));
     return server;
+  }
+
+  /** Peripherals bonded with `createBond` (P5-01), until `reset()`. */
+  private bonded = new Set<string>();
+
+  isBonded(id: string): boolean {
+    return this.bonded.has(id);
+  }
+
+  bond(id: string): void {
+    this.bonded.add(id);
   }
 
   /** The advertisement (P4-03): one at a time, ended when the adapter leaves `poweredOn`. */

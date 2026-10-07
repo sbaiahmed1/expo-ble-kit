@@ -47,6 +47,19 @@ class FakeBluetoothAdapter(override var isAvailable: Boolean = true, override va
     state = newState
     stateListener?.invoke(newState)
   }
+
+  var bondListener: ((String, Int) -> Unit)? = null
+    private set
+
+  override fun setBondStateListener(listener: ((address: String, state: Int) -> Unit)?) {
+    bondListener = listener
+  }
+
+  /** Changes a device's bond state and reports it, like the ACTION_BOND_STATE_CHANGED broadcast. */
+  fun simulateBond(address: String, newState: Int) {
+    (remoteDevice(address) as FakeRemoteDevice).bondState = newState
+    bondListener?.invoke(address, newState)
+  }
 }
 
 class FakeLeScanner : LeScannerPort {
@@ -76,6 +89,17 @@ class FakeRemoteDevice(
   override var name: String? = null,
   override var bondState: Int = BondStates.NONE,
 ) : RemoteDevicePort {
+  /** What `createBond()` answers, and how often it was called. */
+  var acceptsBond = true
+  var bondRequests = 0
+    private set
+
+  override fun createBond(): Boolean {
+    bondRequests++
+    if (acceptsBond && bondState == BondStates.NONE) bondState = BondStates.BONDING
+    return acceptsBond
+  }
+
   /** The GATT database the device exposes. */
   var services: List<GattServiceInfo> = emptyList()
   val values = mutableMapOf<GattCharacteristicRef, ByteArray>()

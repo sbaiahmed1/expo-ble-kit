@@ -60,6 +60,8 @@ export declare class NativePeripheral
   requestMtu(mtu: number, timeoutMs: number, operationId: number | null): Promise<number>;
   readRssi(timeoutMs: number, operationId: number | null): Promise<number>;
   refreshGattCache(): Promise<boolean>;
+  readonly bondState?: 'none' | 'bonding' | 'bonded';
+  createBond?(timeoutMs: number, operationId: number | null): Promise<void>;
   cancelOperation(operationId: number): Promise<void>;
 }
 

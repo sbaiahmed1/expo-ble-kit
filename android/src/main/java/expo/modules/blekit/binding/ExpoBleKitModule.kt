@@ -150,6 +150,8 @@ class ExpoBleKitModule : Module() {
 
       Property("name") { ref: PeripheralObject -> engine.name(ref.id) }
 
+      Property("bondState") { ref: PeripheralObject -> engine.bondState(ref.id) }
+
       // UUIDs arrive normalized and timeouts always set: the TS layer applies the defaults (rule 4).
       AsyncFunction("read") { ref: PeripheralObject, request: AttributeRequestRecord, promise: Promise ->
         attributeOperation(promise) {
@@ -289,6 +291,11 @@ class ExpoBleKitModule : Module() {
 
       AsyncFunction("readRssi") { ref: PeripheralObject, timeoutMs: Double, operationId: Int?, promise: Promise ->
         attributeOperation(promise) { engine.readRssi(ref.id, timeoutMs.toLong(), promise.settler(), operationId) }
+      }
+
+      // P5-01: queued like a GATT operation; Android's pairing dialog asks the user.
+      AsyncFunction("createBond") { ref: PeripheralObject, timeoutMs: Double, operationId: Int?, promise: Promise ->
+        attributeOperation(promise) { engine.createBond(ref.id, timeoutMs.toLong(), promise.settler(), operationId) }
       }
 
       // Hidden API, opt-in by calling it (plan §4.4, P2-06): false where Android lacks it.

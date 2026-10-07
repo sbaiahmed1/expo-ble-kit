@@ -124,6 +124,10 @@ export interface NativePeripheralPort {
   requestMtu(mtu: number, timeoutMs: number, operationId: number | null): Promise<number>;
   /** Android only (hidden API, P2-06): clears the GATT cache and discovers again; false without it. */
   refreshGattCache(): Promise<boolean>;
+  /** Android only (P5-01): the bond state, a published snapshot. Absent on iOS. */
+  readonly bondState?: 'none' | 'bonding' | 'bonded';
+  /** Android only (P5-01): bonds with the connected device, queued; resolves once bonded. */
+  createBond?(timeoutMs: number, operationId: number | null): Promise<void>;
   /** The link's RSSI in dBm. */
   readRssi(timeoutMs: number, operationId: number | null): Promise<number>;
   /**

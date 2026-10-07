@@ -65,6 +65,26 @@ class AndroidBluetoothAdapterPort(private val context: Context, private val hand
     stateReceiver = receiver
   }
 
+  private var bondReceiver: BroadcastReceiver? = null
+
+  override fun setBondStateListener(listener: ((address: String, state: Int) -> Unit)?) {
+    bondReceiver?.let(context::unregisterReceiver)
+    bondReceiver = null
+    if (listener == null || adapter == null) {
+      return
+    }
+    val receiver =
+      object : BroadcastReceiver() {
+        override fun onReceive(context: Context, intent: Intent) {
+          val device = intent.bluetoothDevice() ?: return
+          listener(device.address, intent.getIntExtra(BluetoothDevice.EXTRA_BOND_STATE, BondStates.NONE))
+        }
+      }
+    // Protected system broadcast from the Bluetooth process, like ACTION_STATE_CHANGED above.
+    context.registerReceiver(receiver, IntentFilter(BluetoothDevice.ACTION_BOND_STATE_CHANGED), null, handler)
+    bondReceiver = receiver
+  }
+
   override fun remoteDevice(address: String): RemoteDevicePort {
     val adapter = checkNotNull(adapter) { "No Bluetooth adapter" }
     return AndroidRemoteDevice(context, adapter.getRemoteDevice(address), handler)
@@ -138,7 +158,17 @@ class AndroidRemoteDevice(
     get() = device.name
 
   override val bondState: Int
-    get() = device.bondState
+    get() = try {
+      device.bondState
+    } catch (_: SecurityException) {
+      BondStates.NONE
+    }
+
+  override fun createBond(): Boolean = try {
+    device.createBond()
+  } catch (_: SecurityException) {
+    false
+  }
 
   override fun connectGatt(autoConnect: Boolean, callback: GattClientCallback): GattClientPort? {
     val client = AndroidGattClient(address, callback)
@@ -409,3 +439,11 @@ internal fun ScanSettingsSpec.toPlatform(): ScanSettings = ScanSettings
   .setPhy(phy)
   .setReportDelay(reportDelayMs)
   .build()
+
+/** `BluetoothDevice.EXTRA_DEVICE`, with the typed getter from API 33. */
+private fun Intent.bluetoothDevice(): BluetoothDevice? = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+  getParcelableExtra(BluetoothDevice.EXTRA_DEVICE, BluetoothDevice::class.java)
+} else {
+  @Suppress("DEPRECATION")
+  getParcelableExtra(BluetoothDevice.EXTRA_DEVICE)
+}
