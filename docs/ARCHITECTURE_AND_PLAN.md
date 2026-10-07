@@ -1,6 +1,6 @@
 # Expo BLE (`expo-ble-kit`) — Architecture & Implementation Plan
 
-> **Status:** Draft v0.46 · **Date:** 2026-10-07 · **Scope:** proposition #3, an Expo-first Bluetooth Low Energy module · **Changes:** Appendix D
+> **Status:** Draft v0.47 · **Date:** 2026-10-07 · **Scope:** proposition #3, an Expo-first Bluetooth Low Energy module · **Changes:** Appendix D
 >
 > **Package name:** `expo-ble-kit` (D0a, decided 2026-10-02) · native module `ExpoBleKit` · Android package `expo.modules.blekit`.
 >
@@ -1587,6 +1587,7 @@ How each run works, the scripts (`e2e/soak/`, `e2e/maestro/`) and the results pe
 - SemVer. One `0.x` minor per phase; pre-releases on the `next` dist-tag. npm 11 ignores `publishConfig.tag` (checked with `npm publish --dry-run` on 11.17), so a `prepublishOnly` check refuses a 0.x publish without `--tag next`.
 - Decided 2026-10-06 (maintainer): the first published version is `0.1.0` on `next`, with everything built through P4 instead of P1 alone. The maintainer chose to publish before the hardware session of `docs/releasing.md` (where a second phone running the example's Peripheral tab stands in for the nRF52840 and Bumble of P1's exit criteria); fixes it brings ship as patches. The next minors follow the remaining phases.
 - **Published 2026-10-07:** `expo-ble-kit@0.1.0` on npm (tag `next`; npm also gave the first version `latest`, which later `--tag next` releases leave in place), git tag `v0.1.0`. The repository is github.com/sbaiahmed1/expo-ble-kit, private for now, so the package's repository links only work for the owner.
+- **0.1.1, 2026-10-07:** 0.1.0 broke `pod install` (the podspec read `repository` as a string after `npm pkg fix` made it an object); 0.1.1 fixes it, npm's `latest` and `next` point to it, and 0.1.0 is deprecated. The release checklist now builds the example after the last `package.json` change. An untagged `0.0.0-stage` version, created by npm during the first publish's two-factor step, stays in the version list.
 - Changesets generate the changelog.
 - Support the latest two Expo SDKs. CI builds the example app against both.
 - The README carries a compatibility table: package version ↔ Expo SDK ↔ React Native.
@@ -1817,3 +1818,4 @@ An error in `peripheralManagerDidStartAdvertising` (P4-03) is `ADVERTISING_FAILE
 | v0.44 | 2026-10-06 | P4-05 in progress: the example's Peripheral tab (the phone as the test peripheral, Heart Rate included) and the two-phone suite (Checks, `e2e/maestro/two-phone.sh`); P4-02's acceptance points to the suite's 10-minute run |
 | v0.45 | 2026-10-06 | Release prep: §9 records the maintainer's decision that the first version, `0.1.0` on `next`, carries everything built through P4 and ships after a hardware session with two phones (`docs/releasing.md`); a `prepublishOnly` check keeps 0.x versions on `next` |
 | v0.46 | 2026-10-07 | `0.1.0` published on npm (`next`) before the hardware session, at the maintainer's choice; P0-01 done (name reserved); §9 records the release and the private repository |
+| v0.47 | 2026-10-07 | `0.1.1` fixes `pod install` (broken in 0.1.0), now `latest` and `next`; 0.1.0 deprecated |
