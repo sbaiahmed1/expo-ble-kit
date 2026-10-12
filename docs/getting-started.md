@@ -129,6 +129,15 @@ await device.writeStream(MY_SERVICE, FIRMWARE_CHARACTERISTIC, image, {
 
 Chunks go without response by default; `withResponse: true` waits for the peripheral to acknowledge each one (some firmware-update protocols need it), and `chunkSize` makes them smaller. `timeoutMs` applies to each chunk. Other operations issued during a stream wait until it ends.
 
+On Android, a faster link helps too:
+
+```ts
+await device.android.requestConnectionPriority('high'); // shorter connection interval, more battery
+const phy = await device.android.setPreferredPhy(['le2m'], ['le2m']); // { tx: 'le2m', rx: 'le2m' } if both sides can
+```
+
+`setPreferredPhy` resolves the PHYs the link actually uses: both sides need Bluetooth 5 for `le2m`. `leCoded` (with `'s2'` or `'s8'`) trades speed for range. iOS chooses by itself, so these reject with `NOT_SUPPORTED` there.
+
 Several devices can be connected at once: each `Peripheral` has its own operation queue and connection, so a slow or lost device doesn't affect the others. Android handles about 7 connections at once (see [troubleshooting](troubleshooting.md#android-some-of-several-devices-fail-to-connect)).
 
 ## Notifications

@@ -809,6 +809,28 @@ export interface Peripheral {
      */
     createBond(options?: OpOptions): Promise<void>;
     /**
+     * Asks Android for a connection interval: `high` for throughput and latency, `lowPower` to save
+     * battery, `balanced` (the default). Resolves once the stack took the request; Android reports
+     * no change, and the peripheral may refuse it.
+     */
+    requestConnectionPriority(priority: 'balanced' | 'high' | 'lowPower'): Promise<void>;
+    /**
+     * Asks for the PHYs the link should use in each direction, in preference order: `le2m` for
+     * about twice the throughput, `leCoded` for range (with the coding, `s2` or `s8`). Resolves the
+     * PHYs in effect, which may stay the same if the phone or the peripheral can't do better.
+     * Rejects with `NOT_SUPPORTED` when the controller or the peripheral can't change the PHY.
+     */
+    setPreferredPhy(
+      tx: Phy[],
+      rx: Phy[],
+      codedOption?: 's2' | 's8'
+    ): Promise<{
+      /** The PHY from the phone to the peripheral. */
+      tx: Phy;
+      /** The PHY from the peripheral to the phone. */
+      rx: Phy;
+    }>;
+    /**
      * Clears Android's GATT cache for this device, then discovers the services again (and calls
      * the services-changed listeners). Uses a hidden Android API: resolves `false` when the
      * platform doesn't offer it, and may stop working on new Android versions.

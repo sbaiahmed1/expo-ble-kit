@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { StyleSheet, Text, View } from 'react-native';
+import { Platform, StyleSheet, Switch, Text, View } from 'react-native';
 
 import { BleError, BleManager, type Peripheral } from 'expo-ble-kit';
 
@@ -22,12 +22,14 @@ const LABELS: Record<TransferName, string> = {
 
 /**
  * P2-08 Throughput: the transfers of docs/benchmarks.md against the test peripheral. The native
- * reference apps print the same lines; compare release builds on the same phone.
+ * reference apps print the same lines; compare release builds on the same phone. On Android, the
+ * switch asks for the 2M PHY and a high connection priority first (P5-02), for the difference.
  */
 export function ThroughputScreen() {
   const [status, setStatus] = useState('Runs against the test peripheral (BleKit-Test).');
   const [results, setResults] = useState<TransferResult[]>([]);
   const [running, setRunning] = useState(false);
+  const [fastLink, setFastLink] = useState(false);
 
   const run = async () => {
     setRunning(true);
@@ -42,9 +44,15 @@ export function ThroughputScreen() {
       }
       device = BleManager.getPeripheral(found.id);
       await device.connect();
-      setStatus(`Connected, MTU ${device.mtu}. Measuring…`);
+      let link = `MTU ${device.mtu}`;
+      if (fastLink) {
+        await device.android.requestConnectionPriority('high');
+        const phy = await device.android.setPreferredPhy(['le2m'], ['le2m']);
+        link += `, PHY ${phy.tx}/${phy.rx}, high priority`;
+      }
+      setStatus(`Connected, ${link}. Measuring…`);
       await runAll(device, (result) => setResults((all) => [...all, result]));
-      setStatus(`Throughput done, MTU ${device.mtu}`);
+      setStatus(`Throughput done, ${link}`);
     } catch (error) {
       const bleError = BleError.fromNative(error);
       setStatus(`${bleError.code}: ${bleError.message}`);
@@ -61,6 +69,12 @@ export function ThroughputScreen() {
       <Text testID="throughput-status" style={text.muted}>
         {status}
       </Text>
+      {Platform.OS === 'android' && (
+        <View style={styles.option}>
+          <Text style={text.muted}>2M PHY and high priority</Text>
+          <Switch testID="throughput-fast-link" value={fastLink} onValueChange={setFastLink} />
+        </View>
+      )}
       <ActionButton
         kind="primary"
         title={running ? 'Measuring…' : 'Run the benchmarks'}
@@ -86,5 +100,6 @@ export function ThroughputScreen() {
 
 const styles = StyleSheet.create({
   screen: { gap: 12 },
+  option: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
   speed: { fontSize: 32, fontWeight: '700', color: colors.accent, fontVariant: ['tabular-nums'] },
 });

@@ -11,7 +11,9 @@ export type GattOperationKind =
   | 'setNotify'
   | 'readRssi'
   | 'requestMtu'
-  | 'bond';
+  | 'bond'
+  | 'connectionPriority'
+  | 'phy';
 
 export type GattResult<T = unknown> = { ok: true; value: T } | { ok: false; error: BleError };
 

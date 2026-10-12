@@ -34,7 +34,7 @@ cd example
 npx expo run:android --variant release
 ```
 
-On iOS, `npx expo run:ios --configuration Release --device`. Open the **Throughput** tab and tap **Run the benchmarks**. The results stay on screen (the text can be selected and copied).
+On iOS, `npx expo run:ios --configuration Release --device`. Open the **Throughput** tab and tap **Run the benchmarks**. The results stay on screen (the text can be selected and copied). On Android, run it twice: with **2M PHY and high priority** off, then on (P5-02); the status line shows the PHY the link got.
 
 **Android reference** (`benchmarks/android-reference`, Kotlin and `android.bluetooth` only):
 

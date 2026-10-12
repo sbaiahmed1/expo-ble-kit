@@ -493,6 +493,50 @@ class CentralEngine(
     sessions[address]?.onBondStateChanged(state)
   }
 
+  /** P5-02: `balanced`, `high` or `lowPower`; completes once the stack took the request. */
+  fun requestConnectionPriority(
+    peripheralId: String,
+    priority: String,
+    timeoutMs: Long?,
+    completion: (Result<Unit>) -> Unit,
+    operationId: Int? = null,
+  ) {
+    val value = when (priority) {
+      "balanced" -> ConnectionPriorities.BALANCED
+      "high" -> ConnectionPriorities.HIGH
+      "lowPower" -> ConnectionPriorities.LOW_POWER
+      else -> return completion(Result.failure(invalid("connection priority $priority")))
+    }
+    withSession(peripheralId, completion) { it.requestConnectionPriority(value, timeoutMs, completion, operationId) }
+  }
+
+  /** P5-02: preferred PHYs by JS name; resolves `{ tx, rx }`, the PHYs in effect. */
+  fun setPreferredPhy(
+    peripheralId: String,
+    tx: List<String>,
+    rx: List<String>,
+    codedOption: String?,
+    timeoutMs: Long?,
+    completion: (Result<Map<String, String>>) -> Unit,
+    operationId: Int? = null,
+  ) {
+    val txMask = PhyNames.mask(tx) ?: return completion(Result.failure(invalid("tx PHYs $tx")))
+    val rxMask = PhyNames.mask(rx) ?: return completion(Result.failure(invalid("rx PHYs $rx")))
+    val options = when (codedOption) {
+      null -> PhyOptions.NO_PREFERRED
+      "s2" -> PhyOptions.S2
+      "s8" -> PhyOptions.S8
+      else -> return completion(Result.failure(invalid("coded option $codedOption")))
+    }
+    withSession(peripheralId, completion) { session ->
+      session.setPreferredPhy(txMask, rxMask, options, timeoutMs, { result ->
+        completion(result.map { (txPhy, rxPhy) -> mapOf("tx" to PhyNames.name(txPhy), "rx" to PhyNames.name(rxPhy)) })
+      }, operationId)
+    }
+  }
+
+  private fun invalid(what: String) = CoreError(CoreError.Code.INVALID_ARGUMENT, "Invalid $what")
+
   /** The hidden cache refresh (opt-in, P2-06); resolves false where Android lacks it. */
   fun refreshGattCache(peripheralId: String, completion: (Result<Boolean>) -> Unit) =
     withSession(peripheralId, completion) { it.refreshGattCache(completion) }

@@ -249,6 +249,16 @@ class AndroidGattClient(override val address: String, private val callback: Gatt
 
   override fun readRemoteRssi(): Boolean = gatt?.readRemoteRssi() ?: false
 
+  override fun requestConnectionPriority(priority: Int): Boolean = gatt?.requestConnectionPriority(priority) ?: false
+
+  override fun setPreferredPhy(txPhy: Int, rxPhy: Int, options: Int) {
+    gatt?.setPreferredPhy(txPhy, rxPhy, options)
+  }
+
+  override fun readPhy() {
+    gatt?.readPhy()
+  }
+
   override fun disconnect() {
     gatt?.disconnect()
   }
@@ -364,6 +374,14 @@ class AndroidGattClient(override val address: String, private val callback: Gatt
 
       override fun onReadRemoteRssi(gatt: BluetoothGatt, rssi: Int, status: Int) {
         callback.onReadRemoteRssi(rssi, status)
+      }
+
+      override fun onPhyUpdate(gatt: BluetoothGatt, txPhy: Int, rxPhy: Int, status: Int) {
+        callback.onPhyUpdate(txPhy, rxPhy, status)
+      }
+
+      override fun onPhyRead(gatt: BluetoothGatt, txPhy: Int, rxPhy: Int, status: Int) {
+        callback.onPhyRead(txPhy, rxPhy, status)
       }
 
       override fun onServiceChanged(gatt: BluetoothGatt) {

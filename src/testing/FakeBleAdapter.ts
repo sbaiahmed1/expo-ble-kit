@@ -36,6 +36,7 @@ import type {
   ConnectionState,
   ForegroundServiceNotification,
   LogLevel,
+  Phy,
   ScanResult,
   Service,
 } from '../types';
@@ -95,7 +96,9 @@ export type FakeOperation =
   | 'requestMtu'
   | 'readRssi'
   | 'startAdvertising'
-  | 'createBond';
+  | 'createBond'
+  | 'requestConnectionPriority'
+  | 'setPreferredPhy';
 
 /** Controls the fake, from `installFakeBle()`. */
 export interface FakeBle {
@@ -760,6 +763,33 @@ class FakePeripheralHandle implements NativePeripheralPort {
   /** P5-01 (Android): a connected virtual peripheral bonds on a later tick, like a pairing the user accepts. */
   get bondState(): 'none' | 'bonding' | 'bonded' {
     return this.adapter.isBonded(this.id) ? 'bonded' : 'none';
+  }
+
+  /** P5-02 (Android): the fake takes any priority, and the first PHY asked for in each direction. */
+  requestConnectionPriority(
+    _priority: string,
+    timeoutMs: number,
+    operationId: number | null
+  ): Promise<void> {
+    return this.operation(
+      'connectionPriority',
+      'requestConnectionPriority',
+      { timeoutMs, operationId },
+      () => {}
+    );
+  }
+
+  setPreferredPhy(
+    tx: Phy[],
+    rx: Phy[],
+    _codedOption: 's2' | 's8' | null,
+    timeoutMs: number,
+    operationId: number | null
+  ): Promise<{ tx: Phy; rx: Phy }> {
+    return this.operation('phy', 'setPreferredPhy', { timeoutMs, operationId }, () => ({
+      tx: tx[0],
+      rx: rx[0],
+    }));
   }
 
   createBond(timeoutMs: number, operationId: number | null): Promise<void> {

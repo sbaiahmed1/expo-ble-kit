@@ -22,6 +22,7 @@ import type {
   BleState,
   ConnectionState,
   LogLevel,
+  Phy,
   Service,
 } from './types';
 
@@ -62,6 +63,18 @@ export declare class NativePeripheral
   refreshGattCache(): Promise<boolean>;
   readonly bondState?: 'none' | 'bonding' | 'bonded';
   createBond?(timeoutMs: number, operationId: number | null): Promise<void>;
+  requestConnectionPriority?(
+    priority: string,
+    timeoutMs: number,
+    operationId: number | null
+  ): Promise<void>;
+  setPreferredPhy?(
+    tx: Phy[],
+    rx: Phy[],
+    codedOption: 's2' | 's8' | null,
+    timeoutMs: number,
+    operationId: number | null
+  ): Promise<{ tx: Phy; rx: Phy }>;
   cancelOperation(operationId: number): Promise<void>;
 }
 

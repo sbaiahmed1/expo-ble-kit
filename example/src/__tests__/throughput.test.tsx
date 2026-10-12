@@ -1,4 +1,5 @@
 import { render, screen } from '@testing-library/react-native';
+import { Platform } from 'react-native';
 import { BleManager, type Peripheral } from 'expo-ble-kit';
 
 import { startDemo } from '../demo/testPeripheral';
@@ -75,5 +76,20 @@ describe('throughput', () => {
     await render(<ThroughputScreen />);
     expect(screen.getByTestId('throughput-run')).toBeTruthy();
     expect(screen.getByTestId('throughput-status').props.children).toMatch(/BleKit-Test/);
+    expect(screen.queryByTestId('throughput-fast-link')).toBeNull(); // iOS can't choose
+  });
+
+  it('on Android, the link can ask for 2M PHY and a high priority (P5-02)', async () => {
+    Platform.OS = 'android';
+    try {
+      await render(<ThroughputScreen />);
+      expect(screen.getByTestId('throughput-fast-link')).toBeTruthy();
+      expect(await settle(peripheral.android.setPreferredPhy(['le2m'], ['le2m']))).toEqual({
+        tx: 'le2m',
+        rx: 'le2m',
+      });
+    } finally {
+      Platform.OS = 'ios';
+    }
   });
 });

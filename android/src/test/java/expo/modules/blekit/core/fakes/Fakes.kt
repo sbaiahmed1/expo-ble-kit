@@ -142,6 +142,12 @@ class FakeGattClient(
 
     object ReadRssi : Call
 
+    data class ConnectionPriority(val priority: Int) : Call
+
+    data class SetPreferredPhy(val tx: Int, val rx: Int, val options: Int) : Call
+
+    object ReadPhy : Call
+
     object Disconnect : Call
 
     object Close : Call
@@ -207,6 +213,26 @@ class FakeGattClient(
     calls.add(Call.ReadRssi)
     if (respondsAutomatically) callback.onReadRemoteRssi(device.rssi, GATT_SUCCESS)
     return true
+  }
+
+  /** What `requestConnectionPriority` answers. */
+  var acceptsPriority = true
+
+  override fun requestConnectionPriority(priority: Int): Boolean {
+    calls.add(Call.ConnectionPriority(priority))
+    return acceptsPriority
+  }
+
+  /** The link's PHYs, as [expo.modules.blekit.core.Phys] values; `readPhy` reports them. */
+  var phy = 1 to 1
+
+  override fun setPreferredPhy(txPhy: Int, rxPhy: Int, options: Int) {
+    calls.add(Call.SetPreferredPhy(txPhy, rxPhy, options))
+  }
+
+  override fun readPhy() {
+    calls.add(Call.ReadPhy)
+    if (respondsAutomatically) callback.onPhyRead(phy.first, phy.second, GATT_SUCCESS)
   }
 
   override fun disconnect() {

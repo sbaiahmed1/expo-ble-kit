@@ -43,6 +43,7 @@ import type {
   NotificationBatch,
   OpOptions,
   Peripheral,
+  Phy,
   Service,
   StreamOptions,
   SubscribeOptions,
@@ -53,6 +54,8 @@ import { normalizeUUID, type UUID } from './uuid';
 
 /** createBond() waits for the user to answer Android's pairing dialog (P5-01). */
 const BOND_TIMEOUT_MS = 30_000;
+const PRIORITIES = ['balanced', 'high', 'lowPower'];
+const PHYS: Phy[] = ['le1m', 'le2m', 'leCoded'];
 
 let nextSubscriptionId = 1;
 
@@ -433,6 +436,60 @@ export class PeripheralImpl implements Peripheral {
         }
         const timeoutMs = operationTimeout(options, BOND_TIMEOUT_MS);
         return peripheral.cancellable(options, (operationId) => createBond(timeoutMs, operationId));
+      }, peripheral.context()),
+    requestConnectionPriority: (priority: 'balanced' | 'high' | 'lowPower'): Promise<void> =>
+      guard(() => {
+        const request = peripheral.native.requestConnectionPriority?.bind(peripheral.native);
+        if (Platform.OS !== 'android' || !request) {
+          throw new BleError(
+            BleErrorCode.NOT_SUPPORTED,
+            'requestConnectionPriority() is Android-only'
+          );
+        }
+        if (!PRIORITIES.includes(priority)) {
+          throw new BleError(
+            BleErrorCode.INVALID_ARGUMENT,
+            `Invalid connection priority: expected one of ${PRIORITIES.join(', ')}`
+          );
+        }
+        return request(priority, operationTimeout(undefined), null);
+      }, peripheral.context()),
+    setPreferredPhy: (
+      tx: Phy[],
+      rx: Phy[],
+      codedOption?: 's2' | 's8'
+    ): Promise<{ tx: Phy; rx: Phy }> =>
+      guard(() => {
+        const request = peripheral.native.setPreferredPhy?.bind(peripheral.native);
+        if (Platform.OS !== 'android' || !request) {
+          throw new BleError(BleErrorCode.NOT_SUPPORTED, 'setPreferredPhy() is Android-only');
+        }
+        const phys = (option: string, value: unknown): Phy[] => {
+          if (
+            !Array.isArray(value) ||
+            value.length === 0 ||
+            value.some((phy) => !PHYS.includes(phy))
+          ) {
+            throw new BleError(
+              BleErrorCode.INVALID_ARGUMENT,
+              `Invalid ${option} PHYs: expected a non-empty array of ${PHYS.join(', ')}`
+            );
+          }
+          return [...new Set(value as Phy[])];
+        };
+        if (codedOption !== undefined && codedOption !== 's2' && codedOption !== 's8') {
+          throw new BleError(
+            BleErrorCode.INVALID_ARGUMENT,
+            "Invalid coded option: expected 's2' or 's8'"
+          );
+        }
+        return request(
+          phys('tx', tx),
+          phys('rx', rx),
+          codedOption ?? null,
+          operationTimeout(undefined),
+          null
+        );
       }, peripheral.context()),
     refreshGattCache: (): Promise<boolean> =>
       guard(() => {

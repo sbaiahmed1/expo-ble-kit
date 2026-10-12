@@ -14,6 +14,7 @@ import type {
   Diagnostics,
   ForegroundServiceNotification,
   LogLevel,
+  Phy,
   Service,
   Subscription,
 } from '../types';
@@ -128,6 +129,20 @@ export interface NativePeripheralPort {
   readonly bondState?: 'none' | 'bonding' | 'bonded';
   /** Android only (P5-01): bonds with the connected device, queued; resolves once bonded. */
   createBond?(timeoutMs: number, operationId: number | null): Promise<void>;
+  /** Android only (P5-02): `balanced`, `high` or `lowPower`; resolves once the stack took it. */
+  requestConnectionPriority?(
+    priority: string,
+    timeoutMs: number,
+    operationId: number | null
+  ): Promise<void>;
+  /** Android only (P5-02): resolves the PHYs in effect. */
+  setPreferredPhy?(
+    tx: Phy[],
+    rx: Phy[],
+    codedOption: 's2' | 's8' | null,
+    timeoutMs: number,
+    operationId: number | null
+  ): Promise<{ tx: Phy; rx: Phy }>;
   /** The link's RSSI in dBm. */
   readRssi(timeoutMs: number, operationId: number | null): Promise<number>;
   /**

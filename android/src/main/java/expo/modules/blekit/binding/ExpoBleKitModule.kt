@@ -293,6 +293,33 @@ class ExpoBleKitModule : Module() {
         attributeOperation(promise) { engine.readRssi(ref.id, timeoutMs.toLong(), promise.settler(), operationId) }
       }
 
+      // P5-02: connection priority and PHY, queued like GATT operations.
+      AsyncFunction("requestConnectionPriority") {
+          ref: PeripheralObject,
+          priority: String,
+          timeoutMs: Double,
+          operationId: Int?,
+          promise: Promise,
+        ->
+        attributeOperation(promise) {
+          engine.requestConnectionPriority(ref.id, priority, timeoutMs.toLong(), promise.settler(), operationId)
+        }
+      }
+
+      AsyncFunction("setPreferredPhy") {
+          ref: PeripheralObject,
+          tx: List<String>,
+          rx: List<String>,
+          codedOption: String?,
+          timeoutMs: Double,
+          operationId: Int?,
+          promise: Promise,
+        ->
+        attributeOperation(promise) {
+          engine.setPreferredPhy(ref.id, tx, rx, codedOption, timeoutMs.toLong(), promise.settler(), operationId)
+        }
+      }
+
       // P5-01: queued like a GATT operation; Android's pairing dialog asks the user.
       AsyncFunction("createBond") { ref: PeripheralObject, timeoutMs: Double, operationId: Int?, promise: Promise ->
         attributeOperation(promise) { engine.createBond(ref.id, timeoutMs.toLong(), promise.settler(), operationId) }

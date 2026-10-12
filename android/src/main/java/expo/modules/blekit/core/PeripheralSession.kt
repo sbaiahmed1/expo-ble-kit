@@ -745,6 +745,57 @@ class PeripheralSession(
     queue.complete(error?.let(GattResult::Failure) ?: GattResult.Success()) { it.kind == GattOperation.Kind.BOND }
   }
 
+  /**
+   * Asks for a connection priority, one of [ConnectionPriorities] (P5-02). Android has no public
+   * callback for the change, so the operation completes once the stack took the request.
+   */
+  fun requestConnectionPriority(
+    priority: Int,
+    timeoutMs: Long?,
+    completion: (Result<Unit>) -> Unit,
+    operationId: Int? = null,
+  ) {
+    val kind = GattOperation.Kind.CONNECTION_PRIORITY
+    enqueueAttributeOperation(kind, "priority", timeoutMs, completion, operationId, valueOf = { }) {
+      if (gatt?.requestConnectionPriority(priority) == true) {
+        queue.complete(GattResult.Success()) { it.kind == kind }
+      } else {
+        refused("connection priority request")
+      }
+    }
+  }
+
+  /**
+   * Asks for PHYs ([PhyMasks] per direction, a [PhyOptions] coding) and resolves the PHYs in effect,
+   * as [Phys] values (P5-02). The stack may not report a PHY that didn't change (§4.4), so without
+   * `onPhyUpdate` within [PHY_UPDATE_WAIT_MS] the session reads the PHYs instead.
+   */
+  fun setPreferredPhy(
+    txMask: Int,
+    rxMask: Int,
+    options: Int,
+    timeoutMs: Long?,
+    completion: (Result<Pair<Int, Int>>) -> Unit,
+    operationId: Int? = null,
+  ) {
+    val kind = GattOperation.Kind.PHY
+    enqueueAttributeOperation(kind, "phy", timeoutMs, completion, operationId, valueOf = { phyPair(it.number) }) {
+      val operation = queue.current
+      gatt?.setPreferredPhy(txMask, rxMask, options)
+      executor.executeDelayed(PHY_UPDATE_WAIT_MS) {
+        if (operation != null && queue.current === operation) gatt?.readPhy()
+      }
+    }
+  }
+
+  private fun completePhy(txPhy: Int, rxPhy: Int, status: Int) {
+    val result = AndroidErrorMapping.operationError(status, "PHY update")?.let(GattResult::Failure)
+      ?: GattResult.Success(number = (txPhy shl 8) or rxPhy)
+    queue.complete(result) { it.kind == GattOperation.Kind.PHY }
+  }
+
+  private fun phyPair(number: Int?): Pair<Int, Int> = (number ?: 0).let { (it shr 8) to (it and 0xff) }
+
   /** The adapter went away (off, or the module is destroyed): drop everything with [error]. */
   fun forceDisconnected(error: CoreError) {
     if (state == SessionState.DISCONNECTED) {
@@ -821,6 +872,10 @@ class PeripheralSession(
         it.kind == GattOperation.Kind.REQUEST_MTU
       }
     }
+
+    override fun onPhyUpdate(txPhy: Int, rxPhy: Int, status: Int) = completePhy(txPhy, rxPhy, status)
+
+    override fun onPhyRead(txPhy: Int, rxPhy: Int, status: Int) = completePhy(txPhy, rxPhy, status)
 
     override fun onReadRemoteRssi(rssi: Int, status: Int) {
       if (attemptGeneration != generation) return
@@ -1346,6 +1401,9 @@ class PeripheralSession(
   }
 
   companion object {
+    /** How long setPreferredPhy waits for onPhyUpdate before reading the PHYs (P5-02). */
+    const val PHY_UPDATE_WAIT_MS = 2_000L
+
     /** `BluetoothGatt.GATT_ERROR` (0x85), Android's catch-all connect failure. */
     const val GATT_ERROR = 133
     const val MAX_CONNECT_ATTEMPTS = 3

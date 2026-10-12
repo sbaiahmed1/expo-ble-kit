@@ -24,6 +24,55 @@ object ConnectionStates {
   const val DISCONNECTING = 3
 }
 
+/** `BluetoothGatt.CONNECTION_PRIORITY_*` (P5-02). */
+object ConnectionPriorities {
+  const val BALANCED = 0
+  const val HIGH = 1
+  const val LOW_POWER = 2
+}
+
+/** `BluetoothDevice.PHY_LE_*_MASK`: what `setPreferredPhy` takes. */
+object PhyMasks {
+  const val LE_1M = 1
+  const val LE_2M = 2
+  const val LE_CODED = 4
+}
+
+/** `BluetoothDevice.PHY_LE_*`: what the PHY callbacks report. */
+object Phys {
+  const val LE_1M = 1
+  const val LE_2M = 2
+  const val LE_CODED = 3
+}
+
+/** `BluetoothDevice.PHY_OPTION_*`: the coding of the coded PHY. */
+object PhyOptions {
+  const val NO_PREFERRED = 0
+  const val S2 = 1
+  const val S8 = 2
+}
+
+/** JS `Phy` names (plan §5.4) to the constants above, and back. */
+object PhyNames {
+  /** The mask of `le1m`, `le2m` and `leCoded`; null for an empty list or an unknown name. */
+  fun mask(names: List<String>): Int? = names.takeIf { it.isNotEmpty() }?.fold(0) { mask, name ->
+    mask or (
+      when (name) {
+        "le1m" -> PhyMasks.LE_1M
+        "le2m" -> PhyMasks.LE_2M
+        "leCoded" -> PhyMasks.LE_CODED
+        else -> return null
+      }
+      )
+  }
+
+  fun name(phy: Int): String = when (phy) {
+    Phys.LE_2M -> "le2m"
+    Phys.LE_CODED -> "leCoded"
+    else -> "le1m"
+  }
+}
+
 /** Same values as `BluetoothDevice.BOND_*`. */
 object BondStates {
   const val NONE = 10
@@ -228,6 +277,18 @@ interface GattClientPort {
 
   fun readRemoteRssi(): Boolean
 
+  /** One of [ConnectionPriorities] (P5-02). There is no public callback: true means the stack took it. */
+  fun requestConnectionPriority(priority: Int): Boolean
+
+  /**
+   * [PhyMasks] for each direction and a [PhyOptions] value (P5-02). Android returns nothing: the
+   * stack drops the request without a link, and may not report a PHY that didn't change (§4.4).
+   */
+  fun setPreferredPhy(txPhy: Int, rxPhy: Int, options: Int)
+
+  /** Reports the link's PHYs through [GattClientCallback.onPhyRead]. */
+  fun readPhy()
+
   fun disconnect()
 
   /** Releases the platform GATT client. Must be called exactly once per connection (rule 3). */
@@ -259,6 +320,11 @@ interface GattClientCallback {
   fun onMtuChanged(mtu: Int, status: Int) {}
 
   fun onReadRemoteRssi(rssi: Int, status: Int) {}
+
+  /** [Phys] values, after `setPreferredPhy` or a change the peer started. */
+  fun onPhyUpdate(txPhy: Int, rxPhy: Int, status: Int) {}
+
+  fun onPhyRead(txPhy: Int, rxPhy: Int, status: Int) {}
 
   /** API 31+: the peripheral's GATT database changed. */
   fun onServiceChanged() {}
