@@ -1515,7 +1515,7 @@ Parallelism: P0-06/P0-07 can run alongside P0-03/P0-04. With two people, P4 can 
 - [ ] **P3-06 Background example and scenario suite** — deps: P3-02 … P3-05.
   The Background example screen hosts scenarios S-B1 … S-B6.
   **Accept:** S-B1 … S-B6 recorded per device in `docs/qa/background.md`. Publish `0.3.0`.
-  **Progress 2026-10-12 (open: S-B3, S-B4 against the test peripheral and on Android 10–11, S-B5, S-B2 in a release build):** the example's Background tab (`BackgroundScreen.tsx`) shows the scenarios of its platform, each with its steps, the expected result and its controls (restoration on iOS; keep-alive, background scan and companion device on Android), which moved there from Checks; the Maestro flows that use them open the new tab. Recorded so far: S-B1, S-B2 and S-B6 on the iPhone 14 Pro Max (`docs/qa/background.md`).
+  **Progress 2026-10-12 (open: S-B3, S-B4 against the test peripheral and on Android 10–11, S-B5):** the example's Background tab (`BackgroundScreen.tsx`) shows the scenarios of its platform, each with its steps, the expected result and its controls (restoration on iOS; keep-alive, background scan and companion device on Android), which moved there from Checks; the Maestro flows that use them open the new tab. Recorded so far: S-B1, S-B2 (debug and release builds) and S-B6 on the iPhone 14 Pro Max (`docs/qa/background.md`).
 
 ### 7.6 P4 — Peripheral role
 

@@ -11,9 +11,10 @@ The example app in a debug build (Expo SDK 57, scene support on), with `ios.back
 | S-B1: app in the background while a 1 Hz stream continues | Pass. Two minutes in the background (Settings opened over the app): native code received the stream throughout, and the JS listener had 151 values and 0 gaps when the app came back. | Deep link `…://restoration/arm`, then `xcrun devicectl` launching Settings and the app again |
 | S-B2: app terminated by the system, then the peripheral notifies | Pass. iOS relaunched the app about 5 s after the SIGKILL; the engine restored the connection with Heart Rate still notifying; a scene connected in the background and JS started; the background task received `connecting`, `connected`, `restored` and every notification in order (70 in a minute, no gap). | `e2e/ios-restoration/run.sh` |
 | S-B2, peripheral role (P4-04) | Pass. While the app was stopped, iOS kept advertising and answered static reads; a dynamic read relaunched the app, which served the restored GATT server again: `e2e/macos-central` passed 11 of 11. | `e2e/ios-restoration/server.sh` |
+| S-B2 in a release build (2026-10-12) | Pass. JS loads from the app instead of Metro: about 10 s after the SIGKILL iOS relaunched the app in the background, the journal shows the connection restored with Heart Rate still notifying, a scene connected in the background, JS started, and notifications kept arriving in the background. Without Metro the task's own count isn't visible; the debug run above checked it. | `e2e/ios-restoration/run.sh` with the Release build installed over the network |
 | S-B6: the user force-quits the app | Pass. The connection ended at once (the peripheral saw the unsubscribe), iOS didn't relaunch the app, and the next manual launch restored nothing. | Argent: the app switcher, the app's card swiped away |
 
-Still to run on iOS: S-B2 in a release build, where JS loads from the app instead of Metro.
+Every iOS scenario has run on this phone.
 
 ## Android
 
