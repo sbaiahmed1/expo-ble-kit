@@ -1,6 +1,6 @@
 # Expo BLE (`expo-ble-kit`) — Architecture & Implementation Plan
 
-> **Status:** Draft v0.57 · **Date:** 2026-10-12 · **Scope:** proposition #3, an Expo-first Bluetooth Low Energy module · **Changes:** Appendix D
+> **Status:** Draft v0.58 · **Date:** 2026-10-12 · **Scope:** proposition #3, an Expo-first Bluetooth Low Energy module · **Changes:** Appendix D
 >
 > **Package name:** `expo-ble-kit` (D0a, decided 2026-10-02) · native module `ExpoBleKit` · Android package `expo.modules.blekit`.
 >
@@ -269,7 +269,7 @@ GATT cache (P2-06):
 - `src/internal/native.ts` resolves the native module lazily, on first use, with `requireOptionalNativeModule`. It also exposes an internal setter that `installFakeBle` uses. So importing `expo-ble-kit` in Jest, where no native module exists, doesn't throw; a call without a native module or a fake rejects with `NOT_SUPPORTED`, saying the app needs a rebuild. The package has no default export: the public API (§5) is `BleManager`, the hooks and the utilities, built on this port (P1-12).
 - The port (`src/internal/port.ts`) covers what the native bindings implement; P1-08 and P1-09 extend it. `FakeBleAdapter` runs its operations through a TypeScript twin of the native `GattQueue`, and one set of contract cases, `test-contracts/gatt-queue.json`, runs against all three queues (Jest, XCTest, JUnit), so the fake orders, times out, cancels and fails operations exactly like the native cores.
 - `package.json` declares an `exports` map (`.`, `./testing`, `./app.plugin.js`, `./package.json`) so that `expo-ble-kit/testing` resolves in Metro, Jest and TypeScript.
-- Web: until D3 is decided, the web build exports the same API with `state === 'unsupported'`, and every call rejects with `NOT_SUPPORTED`.
+- Web (D3, P6-02): `src/web/` implements the port over Web Bluetooth in TypeScript, for the central subset of §6. A scan opens the browser's chooser (with `services`, `namePrefix` and `manufacturerData` as its filters, `web.optionalServices` for other services), GATT operations go through the TypeScript `GattQueue`, and what browsers can't do rejects with `NOT_SUPPORTED`. Without `navigator.bluetooth` the state is `unsupported` and calls reject with `BLUETOOTH_UNSUPPORTED`.
 - The TS layer owns UUID normalization, option defaults, the `BleError` class, hooks (built on `useSyncExternalStore`) and `AbortSignal` wiring. Input validation failures reject with `INVALID_ARGUMENT`.
 
 ### 4.7 Threading model
@@ -627,6 +627,8 @@ export interface ScanOptions {
     reportDelayMs?: number;       // hardware batching
   };
   ios?: { solicitedServices?: UUID[] };
+  /** P6-02: on the web a scan is the browser's chooser; it grants access to `services` plus these. */
+  web?: { optionalServices?: UUID[] };
 }
 
 export interface ScanResult {
@@ -1176,16 +1178,16 @@ hrm.notify(GattServices.HeartRate, GattCharacteristics.HeartRateMeasurement, Uin
 
 ## 6. Platform capability matrix
 
-| Capability | iOS | Android | Web (optional, P6) |
+| Capability | iOS | Android | Web (P6-02, Chromium browsers) |
 |---|---|---|---|
-| Scan with service filters | ✅ | ✅ | Picker only (`requestDevice`) |
+| Scan with service filters | ✅ | ✅ | The browser's chooser (`requestDevice`): the pick is the one result, without RSSI or advertisement; a tap must come just before |
 | Scan in background | ✅ service filter required, no duplicates | ✅ via foreground service or PendingIntent | ❌ |
 | Keep a connection while backgrounded (`keepAliveInBackground`) | ❌ `NOT_SUPPORTED` until P3-01 (the `bluetooth-central` background mode) | ✅ foreground service `connectedDevice` (P3-03); must start while the app is in the foreground | ❌ |
 | Raw advertisement bytes | ❌ (parsed fields only) | ✅ | ❌ |
 | Connect / GATT client | ✅ | ✅ | ✅ Chromium browsers |
 | MTU negotiation | ❌ automatic | ✅ up to 517 | ❌ |
 | `getSystemConnectedPeripherals(services)` | ✅ filtered by services | Every LE device connected at the OS level: services can't be read without connecting, so they don't filter | ❌ |
-| Write-without-response flow control | ✅ | ✅ (busy and congestion statuses, §4.9) | Partial |
+| Write-without-response flow control | ✅ | ✅ (busy and congestion statuses, §4.9) | Partial: one write at a time, 20 bytes (the browser hides the MTU) |
 | Service change notifications (`servicesChanged`) | ✅ | ✅ API 31+; before, `android.refreshGattCache()` (hidden API) | ❌ |
 | Several connections at once | ✅ (no documented limit) | ✅ 7 LE links by default (AOSP `GATT_MAX_PHY_CHANNEL`; OEMs and controllers may allow fewer). Android 8–9 make direct connections one at a time | ✅ |
 | Connection priority / PHY | ❌ | ✅ | ❌ |
@@ -1624,8 +1626,13 @@ Parallelism: P0-06/P0-07 can run alongside P0-03/P0-04. With two people, P4 can 
   - Gaps, in `docs/guides/migration-from-plx.md`: `enable`/`disable` reject, state restoration reports null (P3), the default connect timeout and Android MTU request, `Unauthorized` before Android permissions, attributes addressed by UUID, connect and cancel on an already connected or disconnected device resolve, solicited and overflow UUIDs null.
   - The acceptance: a heart-rate app written against ble-plx runs under Jest with `react-native-ble-plx` mapped to the layer (`plxCompat.test.ts`, 14 tests), and the example's **ble-plx compatibility** check (`example/src/lib/plxSample.ts`, ble-plx code with its import changed) ran on the iPhone 14 Pro Max against `e2e/macos-peripheral`: scan, connect, discovery of 4 services, three reads in base64 (the Mac's manufacturer, model and the echo server's PSM).
   - `yarn check:package` now allows only the package's own paths (build, sources, native code, plugin), with 400 files as a backstop; the build reached 339 files with L2CAP and this layer.
-- [ ] **P6-02 Web Bluetooth (central subset)** `[GATE D3]` — deps: P1-12.
+- [x] **P6-02 Web Bluetooth (central subset)** `[GATE D3]` — deps: P1-12.
   **Accept:** the basic Explorer flow works in desktop Chrome.
+  **Done 2026-10-12:** D3 decided (web in this version). `src/web/`: `WebBluetoothAdapter` (the port: state from `getAvailability`, the chooser as the scan, `getKnownPeripherals` from picked and remembered devices) and `WebPeripheral` (connect with timeout and `autoDiscover`, discovery of the allowed primary services, reads, writes, `writeStream`, descriptors, notifications and batching through the TypeScript `GattQueue`), `chooser.ts` (scan filters as chooser filters, keeping their meaning), `errors.ts` (DOMExceptions and Chrome's ATT messages as §6 codes). `ScanOptions.web.optionalServices`.
+  - Rejected with NOT_SUPPORTED: `requestMtu`, `readRssi`, reconnection policies, `keepAliveInBackground`, `getSystemConnectedPeripherals`, the peripheral role, L2CAP, background tasks. `rssi` is 127 in the picked result.
+  - Example: the web build (`react-dom`, `react-native-web`, `@expo/metro-runtime`); the Explorer starts idle on the web, scans with the test profile's and common services as `optionalServices`, and hides RSSI.
+  - Tests: 9 Jest (`webBluetooth.test.ts`, a scripted `navigator.bluetooth`).
+  - In Chrome 154 on macOS, 2026-10-12, with the iPhone 14 Pro Max serving the test profile: `e2e/web-chrome/run.mjs` (the chooser answered through DevTools `DeviceAccess`) opened the chooser from a tap, connected with discovery (Heart Rate, TEST, and iOS's Battery and Device Information; the secondary service isn't exposed), read STATIC_READ (20 bytes) and LONG_READ (512 bytes), wrote ECHO_WRITE and read it back, received three heart rate notifications and disconnected. Chrome listed the iPhone as "iPhone", not by its advertised name; a classic-only device of the same name failed to connect with `CONNECTION_FAILED` ("Unsupported device"). Chrome started from a terminal is stopped by macOS when it touches Bluetooth (the terminal's app has no usage string), so the script launches it with `open`.
 - [ ] **P6-03 Co-located agent skill and recipes** — deps: P2-09.
   Recipes: heart rate, streaming/OTA-style transfer, background reconnect. ⚠️ VERIFY Expo's convention by inspecting how `expo-sqlite` ships its skill and how `npx @expo/agent-cli skills:sync` discovers skills.
   **Accept:** the skill is installed in the example app via skills sync; an agent can implement the heart-rate recipe from the skill alone.
@@ -1756,7 +1763,7 @@ How each run works, the scripts (`e2e/soak/`, `e2e/maestro/`) and the results pe
 | D0b | ~~Build a new library or join an existing effort~~ **Decided 2026-10-02: build** (ADR-012) | Done |
 | D1 | ~~Binding API: Expo Modules 2.0 with min SDK 58, or 1.0 DSL with SDK 57+~~ **Decided 2026-10-02: 1.0 DSL, minimum SDK 57** (ADR-002) | Done |
 | D2 | ~~License and ownership~~ **Decided 2026-10-02: MIT, personal ownership, no CLA** (ADR-009) | Done |
-| D3 | Web Bluetooth support in 1.0 or later | Before P6 |
+| D3 | ~~Web Bluetooth support in 1.0 or later~~ **Decided 2026-10-12: in this version, the central subset** (the maintainer asked to finish every planned task before the release) | Done |
 | Q1 | Persist the background event buffer to disk? Size cap and privacy implications | P3 |
 | Q2 | Native batching on by default for high-rate characteristics? | After P2-04 data |
 | Q3 | Default Android MTU request after connect: 517, 247, or none. Measured 2026-10-02 (P0-06, Android 15 / API 35 emulator): `requestMtu(247)` sent an ATT Exchange MTU request with `client_rx_mtu = 517`, so the value is ignored on API 35. ⚠️ VERIFY on API 34 and below 34 before deciding; if it holds from 34 up, the option only matters below API 34 | Validate on the matrix in P2 (data from P1-09) |
@@ -1963,3 +1970,4 @@ An error in `peripheralManagerDidStartAdvertising` (P4-03) is `ADVERTISING_FAILE
 | v0.55 | 2026-10-12 | P0-05 and P3-01 done, P3-02 in progress: the iOS background spike (findings in `docs/spikes/P0-05-ios-background.md`, ADR-008 accepted), central state restoration, background tasks on iOS; §4.3, §4.14, §5.6, §5.7 (`Diagnostics.ios`) and §10 updated |
 | v0.56 | 2026-10-12 | P3-02 done (S-B1 and S-B2 on the iPhone), P4-04 done: the GATT server and advertisement survive a system termination; §4.3 `Restoration` covers the peripheral manager |
 | v0.57 | 2026-10-12 | P5-05 implemented (S-B5 open): CompanionDeviceManager API levels verified in the platform jars and sources (§4.4 `Companion`, §4.13), `associateCompanionDevice` documented in §5.2, `devicePresence` on Android, the fake's `associateCompanionDevice` op (§5.8) |
+| v0.58 | 2026-10-12 | D3 decided and P6-02 done: Web Bluetooth's central subset in `src/web/` (§4.6, §6), `ScanOptions.web.optionalServices` (§5.3), checked in Chrome 154 |

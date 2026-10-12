@@ -1,5 +1,6 @@
 import type { GattServerObjectEvents } from '../ExpoBleKit.types';
 import { BleError, BleErrorCode } from '../errors';
+import { Emitter } from '../internal/emitter';
 import {
   AttError,
   codeForAttError,
@@ -11,7 +12,6 @@ import type { NativeGattServerPort } from '../internal/port';
 import type { Scheduler } from '../internal/scheduler';
 import type { Subscription } from '../types';
 import { normalizeUUID, type UUID } from '../uuid';
-import { Emitter } from './Emitter';
 
 /** JS must answer before this, like the native cores (plan §5.5). */
 const RESPONSE_DEADLINE_MS = 25_000;
@@ -42,14 +42,14 @@ export interface VirtualCentral {
   /** Drops the link: the server forgets the central's subscriptions and cached reads. */
   disconnect(): void;
   /** What the server sent this central (P4-02), oldest first. */
-  readonly notifications: ReadonlyArray<{
+  readonly notifications: readonly {
     /** The characteristic it was sent for. */
     characteristic: UUID;
     /** The value, as sent. */
     value: Uint8Array;
     /** True for an indication (the central subscribed with `mode: 'indicate'`). */
     indication: boolean;
-  }>;
+  }[];
 }
 
 /**

@@ -1,9 +1,9 @@
 import type { L2CAPChannelObjectEvents, L2CAPServerObjectEvents } from '../ExpoBleKit.types';
 import { BleError, BleErrorCode } from '../errors';
+import { Emitter } from '../internal/emitter';
 import type { NativeL2CAPChannelPort, NativeL2CAPServerPort } from '../internal/port';
 import type { Scheduler } from '../internal/scheduler';
 import type { Subscription } from '../types';
-import { Emitter } from './Emitter';
 
 /** The other end of an L2CAP channel in the fake (P5-03): a virtual peripheral's or a central's. */
 export interface VirtualL2CAPChannel {

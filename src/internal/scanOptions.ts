@@ -18,6 +18,7 @@ export interface NativeScanOptions {
     reportDelayMs: number;
   };
   ios: { solicitedServices: UUID[] };
+  web: { optionalServices: UUID[] };
 }
 
 const SCAN_MODES = ['opportunistic', 'lowPower', 'balanced', 'lowLatency'];
@@ -111,5 +112,6 @@ export function toNativeScanOptions(options: ScanOptions = {}): NativeScanOption
       reportDelayMs: milliseconds('android.reportDelayMs', android.reportDelayMs),
     },
     ios: { solicitedServices: uuids('ios.solicitedServices', options.ios?.solicitedServices) },
+    web: { optionalServices: uuids('web.optionalServices', options.web?.optionalServices) },
   };
 }

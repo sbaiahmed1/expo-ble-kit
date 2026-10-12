@@ -4,7 +4,6 @@ import type {
   PeripheralObjectEvents,
 } from '../ExpoBleKit.types';
 import { BleError, BleErrorCode } from '../errors';
-import { Emitter } from './Emitter';
 import { FakeGattServer, type VirtualCentral } from './FakeGattServer';
 import { FakeL2CAPLink, FakeL2CAPServer, type VirtualL2CAPChannel } from './FakeL2CAP';
 import type { NativeAccessoryPickerItem } from '../internal/accessoryPicker';
@@ -17,6 +16,7 @@ import type {
 import type { NativeBackgroundTaskOptions } from '../internal/backgroundTask';
 import type { NativeConnectOptions } from '../internal/connectOptions';
 import { DEFAULT_DISCOVERY_TIMEOUT_MS, reconnectDelay } from '../internal/connectOptions';
+import { Emitter } from '../internal/emitter';
 import {
   GattQueue,
   type GattOperation,

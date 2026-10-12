@@ -18,6 +18,7 @@ describe('toNativeScanOptions', () => {
         reportDelayMs: 0,
       },
       ios: { solicitedServices: [] },
+      web: { optionalServices: [] },
     });
   });
 

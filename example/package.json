@@ -3,18 +3,23 @@
   "version": "1.0.0",
   "main": "index.ts",
   "dependencies": {
+    "@expo/metro-runtime": "~57.0.16",
     "expo": "~57.0.27",
     "expo-build-properties": "~57.0.22",
     "expo-keep-awake": "~57.0.2",
     "expo-task-manager": "~57.0.21",
     "react": "19.2.3",
+    "react-dom": "19.2.3",
     "react-native": "0.86.3",
-    "react-native-safe-area-context": "~5.7.0"
+    "react-native-safe-area-context": "~5.7.0",
+    "react-native-web": "^0.21.2"
   },
   "devDependencies": {
     "@testing-library/react-native": "^14.0.1",
     "@types/jest": "^29.2.1",
     "@types/react": "~19.2.2",
+    "@types/react-dom": "^19",
+    "@types/react-native-web": "^0",
     "jest": "^29.7.0",
     "jest-expo": "~57.0.5",
     "test-renderer": "~1.2.0",

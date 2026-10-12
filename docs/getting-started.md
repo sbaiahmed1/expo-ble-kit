@@ -541,8 +541,28 @@ hrm.notify(GattServices.HeartRate, GattCharacteristics.HeartRateMeasurement, Uin
 
 The fake answers on later timer ticks, like a radio; Jest fake timers work (`await jest.advanceTimersByTimeAsync(10)`). `ble.injectError({ op: 'read' }, 'INSUFFICIENT_AUTHENTICATION')` makes the next read fail.
 
-## Not in this version yet
+## On the web
 
-Web Bluetooth comes in a later version: on the web, calls reject with `NOT_SUPPORTED` rather than doing nothing.
+In Chrome and Edge (desktop and Android, over HTTPS or `localhost`), the central role works over Web Bluetooth. Browsers don't scan: a scan opens the browser's device chooser, and the device the person picks is its one result. The rest is the same API:
+
+```ts
+// In a button's onPress: the browser opens its chooser only right after a tap or click.
+const picked = await BleManager.scanFor({
+  services: [GattServices.HeartRate],
+  web: { optionalServices: [GattServices.Battery] }, // other services the page will use
+  timeoutMs: 60_000,
+});
+if (picked) {
+  const monitor = BleManager.getPeripheral(picked.id);
+  await monitor.connect();
+  await monitor.subscribe(GattServices.HeartRate, GattCharacteristics.HeartRateMeasurement, onValue);
+}
+```
+
+- The page can only use the services named in the scan: `services` and `web.optionalServices`. Without filters the chooser lists every device, and the page needs `optionalServices` to use any service.
+- The picked result has the device's id and name, and `rssi` 127 (not available); the chooser reports no advertisement. Closing the chooser ends the scan with `OPERATION_CANCELLED`; opening it without a recent tap ends it with `PERMISSION_DENIED`. `useScan` works when `enabled` turns on in response to a tap.
+- Reads, writes (with and without response, `writeStream`), descriptors and notifications work as on phones, one operation at a time. Writes without response are cut to 20 bytes: the browser keeps the MTU to itself, so `mtu` stays 23. A characteristic that both notifies and indicates is subscribed for notifications.
+- Not in browsers, rejecting with `NOT_SUPPORTED`: `requestMtu`, `readRssi`, reconnection policies, the GATT server, advertising, L2CAP, background tasks, `getSystemConnectedPeripherals`. Only primary services are visible.
+- `BleManager.state` is `unsupported` without Web Bluetooth (Firefox, Safari), and follows the browser's Bluetooth availability otherwise. The ids are the browser's, different from the phone ones; `getKnownPeripherals` knows devices picked in this page, and those the browser remembers where it can list them.
 
 Problems? See [troubleshooting](troubleshooting.md).

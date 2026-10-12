@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { StyleSheet, Text, View } from 'react-native';
+import { Platform, StyleSheet, Text, View } from 'react-native';
 
 import { BleError, usePeripheral } from 'expo-ble-kit';
 
@@ -65,7 +65,8 @@ export function DeviceDetail(props: { id: string; onBack: () => void }) {
               onPress={() => attempt(() => peripheral.disconnect())}
             />
           )}
-          {connected && (
+          {/* Browsers can't read a connection's RSSI. */}
+          {connected && Platform.OS !== 'web' && (
             <ActionButton
               title="Read RSSI"
               testID="read-rssi"

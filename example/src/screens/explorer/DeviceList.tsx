@@ -1,18 +1,29 @@
 import { useState } from 'react';
-import { Pressable, StyleSheet, Text, View } from 'react-native';
+import { Platform, Pressable, StyleSheet, Text, View } from 'react-native';
 
 import { useScan } from 'expo-ble-kit';
 
+import profile from '../../../../test-peripherals/profile.json';
+
 import { ActionButton, Card, Chip, colors, text } from '../../ui';
+
+/** On the web a scan is the browser's device chooser, which opens only right after a tap. */
+const WEB = Platform.OS === 'web';
+/**
+ * The browser only lets the page use services named in the scan: the test peripheral's, and
+ * common standard ones (Device Information, Heart Rate, Battery).
+ */
+const WEB_SERVICES = [...profile.services.map((service) => service.uuid), '180A', '180D', '180F'];
 
 /** Everything nearby, with live signal strength. Tap a device to open it. */
 export function DeviceList(props: { onSelect: (id: string) => void }) {
-  const [scanning, setScanning] = useState(true);
+  const [scanning, setScanning] = useState(!WEB);
   const [namedOnly, setNamedOnly] = useState(true);
   const { results, isScanning, error, clear } = useScan({
     allowDuplicates: true,
     maxResults: 50,
     enabled: scanning,
+    web: { optionalServices: WEB_SERVICES },
   });
   const visible = namedOnly ? results.filter((result) => result.name) : results;
 
@@ -48,7 +59,11 @@ export function DeviceList(props: { onSelect: (id: string) => void }) {
       {visible.length === 0 && (
         <Card>
           <Text style={text.body}>
-            {isScanning ? 'Looking for devices…' : 'Start a scan to see devices.'}
+            {WEB
+              ? 'Scan opens the browser’s device chooser: pick the device there.'
+              : isScanning
+                ? 'Looking for devices…'
+                : 'Start a scan to see devices.'}
           </Text>
           {namedOnly && results.length > 0 && (
             <Text style={text.muted}>{results.length} unnamed devices hidden.</Text>
@@ -73,7 +88,10 @@ export function DeviceList(props: { onSelect: (id: string) => void }) {
               </Text>
             )}
           </View>
-          <Chip label={`${result.rssi} dBm`} tone={result.rssi > -70 ? 'accent' : 'plain'} />
+          {/* 127: no RSSI, as from the browser's chooser. */}
+          {result.rssi !== 127 && (
+            <Chip label={`${result.rssi} dBm`} tone={result.rssi > -70 ? 'accent' : 'plain'} />
+          )}
         </Pressable>
       ))}
     </View>

@@ -131,6 +131,17 @@ export interface ScanOptions {
     /** Also report devices that solicit these services. */
     solicitedServices?: UUID[];
   };
+  /**
+   * Web-only settings. On the web a scan opens the browser's device chooser, which needs a tap or
+   * click just before; the picked device is the scan's one result.
+   */
+  web?: {
+    /**
+     * Services the app uses besides those in `services`. The browser only gives access to the
+     * services named in the scan.
+     */
+    optionalServices?: UUID[];
+  };
 }
 
 /** One advertisement, as a scan reports it. */

@@ -1,113 +1,13 @@
-import { registerWebModule, NativeModule } from 'expo';
-
-import type { ExpoBleKitModuleEvents } from './ExpoBleKit.types';
-import type { NativePeripheral } from './ExpoBleKitModule';
-import { BleError, BleErrorCode } from './errors';
 import type { NativeBleKitPort } from './internal/port';
-import type { BlePermissions, BleState, Diagnostics } from './types';
+import { timerScheduler } from './internal/scheduler';
+import { WebBluetoothAdapter } from './web/WebBluetoothAdapter';
+import { webBluetooth } from './web/bluetooth';
 
-class WebPeripheral {
-  readonly name = null;
-  readonly state = 'disconnected';
-  readonly services = [];
-  readonly mtu = 23;
+// Plan §4.6, P6-02: on the web the port is Web Bluetooth's central subset, in TypeScript.
 
-  constructor(readonly id: string) {}
-
-  async connect(): Promise<void> {
-    throw notSupported();
-  }
-
-  async disconnect(): Promise<void> {}
-
-  async discover(): Promise<never> {
-    throw notSupported();
-  }
-
-  async read(): Promise<never> {
-    throw notSupported();
-  }
-
-  async write(): Promise<never> {
-    throw notSupported();
-  }
-
-  async readDescriptor(): Promise<never> {
-    throw notSupported();
-  }
-
-  async writeDescriptor(): Promise<never> {
-    throw notSupported();
-  }
-
-  async subscribe(): Promise<never> {
-    throw notSupported();
-  }
-
-  async unsubscribe(): Promise<void> {}
-
-  async requestMtu(): Promise<never> {
-    throw notSupported();
-  }
-
-  async readRssi(): Promise<never> {
-    throw notSupported();
-  }
-
-  async openL2CAPChannel(): Promise<never> {
-    throw notSupported();
-  }
-
-  async cancelOperation(): Promise<void> {}
-
-  addListener() {
-    return { remove() {} };
-  }
-}
-
-// Plan §4.6: until D3 is decided, the web build reports `unsupported` and every call rejects.
-class ExpoBleKitModule extends NativeModule<ExpoBleKitModuleEvents> {
-  getState(): BleState {
-    return 'unsupported';
-  }
-
-  async getPermissionsAsync(): Promise<BlePermissions> {
-    throw notSupported();
-  }
-
-  async requestPermissionsAsync(): Promise<BlePermissions> {
-    throw notSupported();
-  }
-
-  async startScan(): Promise<void> {
-    throw notSupported();
-  }
-
-  async stopScan(): Promise<void> {}
-
-  getPeripheral(id: string): NativePeripheral {
-    return new WebPeripheral(id) as unknown as NativePeripheral;
-  }
-
-  async getKnownPeripherals(): Promise<string[]> {
-    throw notSupported();
-  }
-
-  async getSystemConnectedPeripherals(): Promise<string[]> {
-    throw notSupported();
-  }
-
-  async getDiagnosticsAsync(): Promise<Pick<Diagnostics, 'state' | 'sessions'>> {
-    return { state: 'unsupported', sessions: [] };
-  }
-}
-
-function notSupported(): BleError {
-  return new BleError(BleErrorCode.NOT_SUPPORTED, 'Bluetooth LE is not supported on web.');
-}
-
-const webModule = registerWebModule(ExpoBleKitModule, 'ExpoBleKitModule');
+let adapter: WebBluetoothAdapter | null = null;
 
 export function loadNativeModule(): NativeBleKitPort {
-  return webModule as unknown as NativeBleKitPort;
+  adapter ??= new WebBluetoothAdapter(webBluetooth(), timerScheduler);
+  return adapter;
 }
