@@ -13,6 +13,10 @@
       "types": "./build/testing/index.d.ts",
       "default": "./build/testing/index.js"
     },
+    "./compat/plx": {
+      "types": "./build/compat/plx/index.d.ts",
+      "default": "./build/compat/plx/index.js"
+    },
     "./app.plugin.js": "./app.plugin.js",
     "./package.json": "./package.json"
   },
@@ -20,6 +24,9 @@
     "*": {
       "testing": [
         "build/testing/index.d.ts"
+      ],
+      "compat/plx": [
+        "build/compat/plx/index.d.ts"
       ]
     }
   },

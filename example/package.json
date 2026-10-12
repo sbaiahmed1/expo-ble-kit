@@ -41,6 +41,7 @@
     "moduleNameMapper": {
       "^expo-ble-kit$": "<rootDir>/../src/index.ts",
       "^expo-ble-kit/testing$": "<rootDir>/../src/testing/index.ts",
+      "^expo-ble-kit/compat/plx$": "<rootDir>/../src/compat/plx/index.ts",
       "^(react|react-native|expo|expo-modules-core)(/.*)?$": "<rootDir>/node_modules/$1$2"
     },
     "setupFilesAfterEnv": [

@@ -3,7 +3,8 @@
   "name": "expo-ble-kit",
   "entryPoints": [
     "src/index.ts",
-    "src/testing/index.ts"
+    "src/testing/index.ts",
+    "src/compat/plx/index.ts"
   ],
   "out": "docs/api",
   "tsconfig": "tsconfig.json",
@@ -15,6 +16,7 @@
     "docs/getting-started.md",
     "docs/guides/permissions.md",
     "docs/guides/bare-setup.md",
+    "docs/guides/migration-from-plx.md",
     "docs/troubleshooting.md"
   ],
   "excludePrivate": true,

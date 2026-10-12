@@ -17,13 +17,30 @@ const FORBIDDEN = [
   /^(docs|example|e2e|test-peripherals|test-contracts|internal|benchmarks)\//,
   /(^|\/)__tests__\//,
 ];
-const MAX_FILES = 300;
+// Every packed file must be one of these: the build, its sources, the native code and the plugin.
+// A file anywhere else fails the check, so nothing new reaches the package unnoticed.
+const ALLOWED = [
+  /^build\//,
+  /^src\//,
+  /^plugin\/(build|src)\//,
+  /^ios\/(Core|Binding)\//,
+  /^ios\/ExpoBleKit\.podspec$/,
+  /^android\/src\/main\//,
+  /^android\/(build\.gradle|consumer-rules\.pro)$/,
+  /^(app\.plugin\.js|expo-module\.config\.json|package\.json|README\.md|LICENSE|CHANGELOG\.md)$/,
+];
+// A backstop for a whole folder leaking in under an allowed path.
+const MAX_FILES = 400;
 
 const output = execFileSync('npm', ['pack', '--dry-run', '--json', '--ignore-scripts'], {
   encoding: 'utf8',
 });
 const files = JSON.parse(output)[0].files.map((file) => file.path);
-const leaked = files.filter((path) => FORBIDDEN.some((pattern) => pattern.test(path)));
+const leaked = files.filter(
+  (path) =>
+    FORBIDDEN.some((pattern) => pattern.test(path)) ||
+    !ALLOWED.some((pattern) => pattern.test(path))
+);
 
 /** Every file path named in a field of package.json, without the leading "./". */
 function entryFiles(value) {

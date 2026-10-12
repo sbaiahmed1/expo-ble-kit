@@ -28,6 +28,7 @@ import { abortStreamToSink, sendToSink, streamToSink, type SinkReport } from '..
 import { BackgroundScanChecks } from './BackgroundScanChecks';
 import { BondingChecks } from './BondingChecks';
 import { L2capChecks } from './L2capChecks';
+import { PlxChecks } from './PlxChecks';
 import { checkStyles as styles, Group } from './checksUi';
 import { KeepAliveChecks } from './KeepAliveChecks';
 import { ServerChecks } from './ServerChecks';
@@ -436,6 +437,7 @@ export function DevChecksScreen() {
       <TwoPhoneChecks />
       <BondingChecks />
       <L2capChecks />
+      <PlxChecks />
       <Group name="Scanning">
         <Button testID="scan-all" title="Scan all" onPress={() => startSession('all', {})} />
         <Button

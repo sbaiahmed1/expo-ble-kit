@@ -1,6 +1,6 @@
 # Expo BLE (`expo-ble-kit`) — Architecture & Implementation Plan
 
-> **Status:** Draft v0.50 · **Date:** 2026-10-12 · **Scope:** proposition #3, an Expo-first Bluetooth Low Energy module · **Changes:** Appendix D
+> **Status:** Draft v0.51 · **Date:** 2026-10-12 · **Scope:** proposition #3, an Expo-first Bluetooth Low Energy module · **Changes:** Appendix D
 >
 > **Package name:** `expo-ble-kit` (D0a, decided 2026-10-02) · native module `ExpoBleKit` · Android package `expo.modules.blekit`.
 >
@@ -154,7 +154,7 @@ expo-ble-kit/
 │   ├── ARCHITECTURE_AND_PLAN.md      # this file
 │   ├── spikes/                       # P0 spike reports (one file per spike)
 │   └── guides/                       # getting-started, permissions, bare-setup, background, migration-from-plx
-├── package.json                      # `exports` map: `.`, `./testing`, `./app.plugin.js`, `./package.json` (§4.6)
+├── package.json                      # `exports` map: `.`, `./testing`, `./compat/plx`, `./app.plugin.js`, `./package.json` (§4.6)
 ├── app.plugin.js                     # re-exports plugin/build
 ├── expo-module.config.json · tsconfig.json
 ├── src/
@@ -165,7 +165,7 @@ expo-ble-kit/
 │   ├── internal/port.ts              # NativeBleKitPort interface (real module + fake implement it)
 │   ├── internal/native.ts            # requireNativeModule('ExpoBleKit')
 │   ├── testing/                      # public entry `expo-ble-kit/testing`: FakeBleAdapter, VirtualPeripheral
-│   └── compat/plx/                   # P6: ble-plx compatibility layer
+│   └── compat/plx/                   # P6-01: ble-plx 3.5.1's API, public entry `expo-ble-kit/compat/plx`
 ├── plugin/src/                       # config plugin: index.ts, ios.ts, android.ts, schema.ts
 ├── ios/
 │   ├── Core/                         # CentralEngine, ScanController, PeripheralSession, GattQueue,
@@ -191,7 +191,8 @@ expo-ble-kit/
 │   ├── bumble/                       # Python virtual peripheral for the Android emulator (netsim)
 │   └── zephyr/                       # nRF52840 firmware implementing the same profile
 ├── e2e/maestro/                      # E2E flows for the example app
-├── e2e/macos-central/                # a Mac as the central for the example's GATT server (P4-01, P4-02)
+├── e2e/macos-central/                # a Mac as the central for the example's GATT server (P4-01, P4-02, P5-03)
+├── e2e/macos-peripheral/             # a Mac as an L2CAP echo peripheral (P5-03)
 ├── benchmarks/                       # native reference apps (Kotlin, Swift) for docs/benchmarks.md (P2-08)
 └── skills/                           # co-located agent skill (P6) ⚠️ VERIFY Expo convention
 ```
@@ -1564,9 +1565,15 @@ Parallelism: P0-06/P0-07 can run alongside P0-03/P0-04. With two people, P4 can 
 
 ### 7.8 P6 — Ecosystem and 1.0
 
-- [ ] **P6-01 `plx-compat` layer** — deps: P1-12.
+- [x] **P6-01 `plx-compat` layer** — deps: P1-12.
   A subset of the ble-plx API (manager, device, monitor/read/write with base64) plus a migration guide.
   **Accept:** a sample ble-plx app runs after changing imports only; remaining gaps are listed in the guide.
+  **Done 2026-10-12:** `expo-ble-kit/compat/plx` offers react-native-ble-plx 3.5.1's whole API, checked against its published `index.d.ts` and sources, over expo-ble-kit's public API only (base64 lives only there, rule 6).
+  - Same surface: `BleManager` (a shared instance until `destroy()`), `Device`, `Service`, `Characteristic`, `Descriptor`, `BleError` with ble-plx's numeric codes, native code fields and default messages (and `errorCodesToMessagesMapping`), the enums (as objects with types of the same name), `fullUUID`. `plxApi.test.ts` pins every exported name, method and enum value.
+  - Same behaviour where apps rely on it, read from ble-plx's sources: a removed monitor reports `OperationCancelled` to its listener (its Android `doOnCancel`), a disconnect `DeviceDisconnected`, `destroy()` rejects calls in flight with `BluetoothManagerDestroyed`; a transaction id cancels, and a new call with the same id replaces the earlier one; one scan at a time; connect without discovery; iOS asks for permission when the manager is created.
+  - Gaps, in `docs/guides/migration-from-plx.md`: `enable`/`disable` reject, state restoration reports null (P3), the default connect timeout and Android MTU request, `Unauthorized` before Android permissions, attributes addressed by UUID, connect and cancel on an already connected or disconnected device resolve, solicited and overflow UUIDs null.
+  - The acceptance: a heart-rate app written against ble-plx runs under Jest with `react-native-ble-plx` mapped to the layer (`plxCompat.test.ts`, 14 tests), and the example's **ble-plx compatibility** check (`example/src/lib/plxSample.ts`, ble-plx code with its import changed) ran on the iPhone 14 Pro Max against `e2e/macos-peripheral`: scan, connect, discovery of 4 services, three reads in base64 (the Mac's manufacturer, model and the echo server's PSM).
+  - `yarn check:package` now allows only the package's own paths (build, sources, native code, plugin), with 400 files as a backstop; the build reached 339 files with L2CAP and this layer.
 - [ ] **P6-02 Web Bluetooth (central subset)** `[GATE D3]` — deps: P1-12.
   **Accept:** the basic Explorer flow works in desktop Chrome.
 - [ ] **P6-03 Co-located agent skill and recipes** — deps: P2-09.
@@ -1898,3 +1905,4 @@ An error in `peripheralManagerDidStartAdvertising` (P4-03) is `ADVERTISING_FAILE
 | v0.48 | 2026-10-07 | P5-01 in progress: Android bonding (`bondState`, `createBond` as a queued operation finished by the bond broadcast, bond timeouts outside the stuck-stack count in §4.9), the §4.4 `BondManager` notes, iOS implicit pairing in §4.3, the fake's bonding in §5.8 |
 | v0.49 | 2026-10-12 | P5-02 in progress: Android connection priority and PHY. §4.4 notes from the android14-release sources (no public priority callback; `onPhyUpdate` not guaranteed, so the session reads the PHYs after 2 s), §5 comments, the fake's rules in §5.8 |
 | v0.50 | 2026-10-12 | P5-03 in progress: L2CAP. The server side added to §5 (`publishL2CAPChannel`, `L2CAPServer`), `L2CAPChannel` gains `peerId`, `isOpen` and `addCloseListener`; L2CAP rules in §5.5 from Apple's and Android's reference docs; §4.3–§4.5 notes; the fake's L2CAP in §5.8 |
+| v0.51 | 2026-10-12 | P6-01 done: `expo-ble-kit/compat/plx` (ble-plx 3.5.1's API), the migration guide, §4.2 exports and layout |
