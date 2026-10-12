@@ -1646,6 +1646,7 @@ Parallelism: P0-06/P0-07 can run alongside P0-03/P0-04. With two people, P4 can 
 - [ ] **P6-04 (optional) EAS Observe integration** — deps: P2-07.
   Report BLE errors and connection metrics through `Observe.registerIntegration` ⚠️ VERIFY API.
   **Accept:** errors visible in an Observe dashboard for the example app.
+  **Deferred 2026-10-12:** not in 2.0. The task is optional, and its acceptance needs an EAS project with an Observe dashboard for the example app; `BleManager.setLogHandler` and `getDiagnostics()` already let an app send errors to any service.
 - [ ] **P6-05 1.0 release** — deps: everything above except optional tasks.
   Docs site, compatibility table, release-candidate soak.
   **Accept:** §1.4 success criteria met. Publish `1.0.0`.
