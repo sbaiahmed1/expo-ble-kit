@@ -16,6 +16,7 @@ final class FakePeripheral: PeripheralLike {
     case writeDescriptor(CBUUID, Data)
     case setNotify(Bool, CBUUID)
     case readRSSI
+    case openL2CAPChannel(CBL2CAPPSM)
   }
 
   let identifier: UUID
@@ -47,6 +48,15 @@ final class FakePeripheral: PeripheralLike {
 
   func maximumWriteValueLength(for type: CBCharacteristicWriteType) -> Int {
     maximumWriteLength[type] ?? 20
+  }
+
+  func openL2CAPChannel(_ psm: CBL2CAPPSM) {
+    calls.append(.openL2CAPChannel(psm))
+  }
+
+  /// Answers the oldest `openL2CAPChannel`: with a channel, or with an error.
+  func completeL2CAPOpen(_ channel: FakeL2CAPChannel?, error: Error? = nil) {
+    delegate?.peripheral(self, didOpen: channel, error: error)
   }
 
   // MARK: PeripheralLike

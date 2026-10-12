@@ -58,6 +58,7 @@ extension Central {
       try await checkStream(rateHz: 1000, frameSize: min(limit, profile.maxFrameSize), seconds: 5)
       try await checkIndications()
       try await checkInvalidCommands()
+      try await checkL2CAPEcho()
     } catch {
       check(false, "stopped: \(error)")
     }

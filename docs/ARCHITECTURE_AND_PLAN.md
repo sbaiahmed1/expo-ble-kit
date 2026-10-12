@@ -1,6 +1,6 @@
 # Expo BLE (`expo-ble-kit`) — Architecture & Implementation Plan
 
-> **Status:** Draft v0.49 · **Date:** 2026-10-12 · **Scope:** proposition #3, an Expo-first Bluetooth Low Energy module · **Changes:** Appendix D
+> **Status:** Draft v0.50 · **Date:** 2026-10-12 · **Scope:** proposition #3, an Expo-first Bluetooth Low Energy module · **Changes:** Appendix D
 >
 > **Package name:** `expo-ble-kit` (D0a, decided 2026-10-02) · native module `ExpoBleKit` · Android package `expo.modules.blekit`.
 >
@@ -205,6 +205,7 @@ expo-ble-kit/
 | `PeripheralSession` | Wraps `CBPeripheral` and its delegate. Connection state machine (§4.8), `GattQueue`, discovery cache, subscription registry, write-without-response flow control (`canSendWriteWithoutResponse`, `peripheralIsReady(toSendWriteWithoutResponse:)`), `maximumWriteValueLength(for:)` |
 | `GattQueue` | Generic serial operation queue (§4.9) |
 | `Advertiser`, `GattServer` | One `CBPeripheralManager` on queue `expo.blekit.peripheral`. Service publication, read/write requests, `updateValue` with `peripheralManagerIsReady(toUpdateSubscribers:)` flow control. P4-02: `ServerNotifier` keeps one queue for the whole manager (iOS has one transmit queue for all centrals); a `false` from `updateValue` holds the queue until `peripheralManagerIsReady`, at most 10 s per value; the length limit is the central's `maximumUpdateValueLength`. P4-03: the advertiser shares the manager and gets its own delegate (`advertisingDelegate`), so the server keeps `delegate`; one advertisement, confirmed by `peripheralManagerDidStartAdvertising` within 10 s; Bluetooth off ends it. P4-01: the manager is created with the first server or advertisement (`ShowPowerAlert` off, after the authorization check, so it never prompts); iOS answers static values and keeps subscriptions itself; a write request array is one long write, answered through its first request (Apple's `didReceiveWrite` docs). iOS tells a peripheral nothing about central disconnects, so cached long-read values just expire |
+| `L2CAPChannel`, `L2CAPPublisher` | P5-03: a channel wraps `CBL2CAPChannel`'s streams, scheduled on the queue its manager reports on (`CFReadStreamSetDispatchQueue`): the engine's queue for channels the app opens, the peripheral queue for published ones. Reading waits for `receive()`; writes follow `hasSpaceAvailable`, with the 10 s stall rule. A session opens one channel at a time (`didOpen` with an error doesn't name its request); a request that timed out stays first until CoreBluetooth answers, and its channel is closed on arrival. The publisher publishes one PSM at a time for the same reason, within 10 s, and routes `peripheralManager(_:didOpen:)` by PSM |
 | `Restoration` | `willRestoreState` for both managers. Rehydrates sessions and re-arms subscriptions natively. Buffers events until the binding attaches |
 | `AccessorySetup` (iOS 18+) | `ASAccessorySession` lifecycle, picker presentation, mapping authorized accessories to peripherals. Opt-in only (see §10) |
 | `CBAbstractions` | Protocols over CoreBluetooth types (`CentralManaging`, `PeripheralLike`, `PeripheralManaging`) so XCTest can inject fakes |
@@ -233,6 +234,7 @@ iOS platform rules:
 | `BondManager` | `createBond()`, `ACTION_BOND_STATE_CHANGED` receiver, bond state per device. Never auto-confirms pairing. P5-01: no separate class: the engine registers the receiver (`setBondStateListener`, protected system broadcast like `ACTION_STATE_CHANGED`), publishes each device's state for the synchronous `bondState`, and passes it to the session, where `createBond` is a queued `BOND` operation finished by `BONDED` (success) or `NONE` (`BOND_FAILED`). Already bonded resolves without calling `createBond`; a refused `createBond()` is `BOND_FAILED` unless bonding is already under way. The failure reason (`EXTRA_REASON`) is a hidden extra, so it isn't read (Appendix B rule 11) |
 | `Advertiser` | `BluetoothLeAdvertiser` and `AdvertisingSet` (extended advertising when `isLeExtendedAdvertisingSupported`). P4-03: `startAdvertisingSet` (API 26) with its callbacks on `blekit-server`'s handler, legacy or extended, interval and TX power from the options (`AdvertisingSetParameters.INTERVAL_*`, `TX_POWER_*`); the core lays the fields out (§5.5 rules) and maps the start statuses (Appendix A.1). Checked in the android14-release sources: legacy connectable advertising must be scannable, an extended set can't be connectable and scannable, the duration is in 10 ms units (at most 65,535), an expired duration arrives as `onAdvertisingEnabled(false)` (not `onAdvertisingSetStopped`, which only answers `stopAdvertisingSet`), and a stop before the set is registered frees it once registration ends. The adapter name (`BluetoothAdapter.getName()`, needs `BLUETOOTH_CONNECT`) gives the name's length; unreadable, the scan response is kept for the name. Bluetooth off ends the advertisement |
 | `GattServer` | `BluetoothGattServer`, request handling, `notifyCharacteristicChanged` gated by `onNotificationSent`. P4-02: one notification in flight per central (its own outbox), the next sent after `onNotificationSent`; Android has no per-central transmit queue to fill, so the stack's busy status (`ERROR_GATT_WRITE_REQUEST_BUSY`; before API 33 any `false`) is retried after 10 ms, as for client writes (§4.9); one 10 s deadline per value covers retries and the callback; the MTU per central comes from `onMtuChanged`. `openGattServer` takes no Handler and the stub calls the callback on Binder threads (checked in the API 34 sources), so `AndroidGattServerOpener` posts every callback to `blekit-server`. Services are added one at a time (`addService` docs: wait for `onServiceAdded`). Static values and descriptors are answered by the core (Android asks the app for every read); notifiable characteristics get a CCCD the core tracks per central |
+| `L2capChannel`, `L2capServer` | P5-03: `BluetoothSocket`s block, so connect, accept, read and write each run on a thread of their own (`BlockingRunner`), never on `blekit-gatt`; state and callbacks stay there. Reading starts with `receive()`; one writer thread per channel while writes are pending, in pieces of `getMaxTransmitPacketSize()` (AOSP's `BluetoothSocket.write` logs a warning and splits larger writes). A timeout, a cancel or the 10 s write stall closes the socket, which aborts the blocked call (`BluetoothSocket.connect` docs). A server's channels close with it: closing `BluetoothServerSocket` leaves accepted sockets open (its docs) |
 | `ConnectionService` | Foreground service of type `connectedDevice` (Android 14+ also needs `FOREGROUND_SERVICE_CONNECTED_DEVICE`). Runs while at least one session has `keepAliveInBackground`. Android 12+ refuses foreground-service starts from the background (`ForegroundServiceStartNotAllowedException`; exemptions include CompanionDeviceManager apps holding `REQUEST_COMPANION_START_FOREGROUND_SERVICES_FROM_BACKGROUND` or `REQUEST_COMPANION_RUN_IN_BACKGROUND`, verified in [Restrictions on starting a foreground service from the background](https://developer.android.com/develop/background-work/services/fgs/restrictions-bg-start)), so the service starts when a `keepAliveInBackground` connect is issued while the app is in the foreground. It then stays up through link loss and reconnects until the last such session ends, and never needs a restart from the background. If a start is refused, emit a `warning` (`FOREGROUND_SERVICE_FAILED`) and continue without keep-alive. Implementation (P3-03): `AndroidKeepAlive` starts it with `startService` (refused at once from the background) and the service calls `startForeground(id, notification, FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE)` in `onStartCommand`. Unlike `startForegroundService`, a refused promotion can't crash the app with `ForegroundServiceDidNotStartInTimeException` ([troubleshooting](https://developer.android.com/develop/background-work/services/fgs/troubleshooting)). Android 14+ throws `SecurityException` there unless a Bluetooth runtime permission is granted ([service types](https://developer.android.com/develop/background-work/services/fgs/service-types)); connecting already needs `BLUETOOTH_CONNECT`. `START_NOT_STICKY`: after the process dies there's no connection to keep. Observed on Android 14 (A52): Android allows a background start for 10 s after the adapter's `ACTION_STATE_CHANGED` broadcast (`code:BLUETOOTH_BROADCAST` in ActivityManager's log), so reconnecting with keep-alive when Bluetooth comes back on works. Without `POST_NOTIFICATIONS` (Android 13+) the service still runs and its notice only shows in the Task Manager ([notification permission](https://developer.android.com/develop/ui/views/notifications/notification-permission)) |
 | `BackgroundScans` | `startScan(filters, settings, PendingIntent)` (API 26+) → TaskManager → the JS task. Works even when the process is dead. The PendingIntent comes from TaskManager (`TaskManagerUtilsInterface.createTaskIntent`: a mutable broadcast to expo-task-manager's own `TaskBroadcastReceiver`, which restores the task and calls the consumer's `didReceiveBroadcast`, the path expo-location takes for geofencing), so the library declares no receiver (P3-04 replaced the planned `ScanResultReceiver`). Low power, first match where the controller filters, else 10 s batches. `AndroidBackgroundScanner` (core) starts, stops and reads the scan; `BackgroundScanTaskConsumer` (binding) is the TaskManager glue |
 | `Companion` | `CompanionDeviceManager` association (system picker) and device presence observation ⚠️ VERIFY API levels (31 / 33 / 36 differ) |
@@ -250,7 +252,8 @@ GATT cache (P2-06):
 - SharedObjects:
   - `PeripheralObject`, with events `connectionStateChange`, `notification` / `notificationBatch`, `mtuChange`, `servicesChanged`.
   - `GattServerObject`, with events `readRequest`, `writeRequest`, `subscriptionChange`.
-  - `L2CAPChannelObject`, with events `data`, `close`.
+  - `L2CAPChannelObject`, with events `data`, `close` (P5-03: `close` once, also after `close()`; `isOpen` is a published snapshot, since a channel can close before JS subscribed).
+  - `L2CAPServerObject`, with event `channel { channelId }`: JS takes the announced channel with `takeChannel(channelId)`, which returns its object (null once it closed).
 - Identity: the binding keeps an `id → weak SharedObject` map, so one native peripheral always maps to the same JS object. `getPeripheral(id)` is the only way to get one (the JS constructor throws; Expo's Android `Class` requires a constructor, and a missing one crashes the app at start). Ids are normalized first: upper-case addresses on Android, upper-case UUIDs on iOS. The object holds no BLE state; `state` reads the core's published snapshot.
 - Errors: core errors become coded exceptions carrying `code` (§4.11) plus `nativeDomain`, `nativeCode`, `gattStatus`.
 - Cancellation (P1-12): operations an `AbortSignal` may cancel carry a JS-assigned `operationId` (in the attribute request record, or as the last argument of `discover`, `requestMtu` and `readRssi`), and `cancelOperation(operationId)` on the peripheral object cancels it in the session's queue. Calls run in order, so a cancel never overtakes its operation.
@@ -519,7 +522,7 @@ Bare apps follow `docs/guides/bare-setup.md`, which lists exactly the entries th
 
 This section is the contract. Changing it requires updating `src/types.ts`, docs and tests in the same PR (Appendix B, rule 8).
 
-Members owned by later tasks are added to the exported types when those tasks land; until then they are absent, not stubs: the members of `Peripheral.android` other than `refreshGattCache` (P5-01, P5-02), `openL2CAPChannel` (P5-03), the peripheral role (P4), background tasks (P3), and `BleManager.ios` / `BleManager.android` (P5-04, P5-05). `src/__tests__/publicApi.test.ts` compares every §5 interface with `src/types.ts` and the testing entry, member by member, with this list as the only exception, and checks the exported values.
+Members owned by later tasks are added to the exported types when those tasks land; until then they are absent, not stubs: the members of `Peripheral.android` other than `refreshGattCache` (P5-01, P5-02), the peripheral role (P4), background tasks (P3), and `BleManager.ios` / `BleManager.android` (P5-04, P5-05). `src/__tests__/publicApi.test.ts` compares every §5 interface with `src/types.ts` and the testing entry, member by member, with this list as the only exception, and checks the exported values.
 
 ### 5.1 Common types
 
@@ -576,6 +579,8 @@ export interface BleManagerApi {
   // Peripheral role (P4)
   openGattServer(services: ServiceDefinition[]): Promise<GattServer>;
   startAdvertising(data: AdvertisingData, options?: AdvertisingOptions): Promise<Advertisement>;
+  /** P5-03: an L2CAP channel server with a PSM the system assigns (§5.5 L2CAP rules). */
+  publishL2CAPChannel(options?: { secure?: boolean }): Promise<L2CAPServer>;
 
   // Background (P3)
   registerBackgroundTask(taskName: string, options: BackgroundTaskOptions): Promise<void>;
@@ -759,17 +764,27 @@ export interface Peripheral {
     refreshGattCache(): Promise<boolean>;
   };
 
-  /** P5. iOS: channel security is set by the publishing side. */
+  /**
+   * P5-03: needs a ready connection; timeoutMs defaults to 30 s (an encrypted channel may wait for
+   * pairing). iOS: channel security is set by the publishing side. Android 10+ (API 29).
+   */
   openL2CAPChannel(psm: number, options?: OpOptions & {
     android?: { secure?: boolean }; // default true: createL2capChannel; false: createInsecureL2capChannel
   }): Promise<L2CAPChannel>;
 }
 
+/** P5-03: a byte stream over an L2CAP connection-oriented channel (§5.5 L2CAP rules). */
 export interface L2CAPChannel {
   readonly psm: number;
+  /** The peripheral's id on a channel this app opened, the central's on a published one. */
+  readonly peerId: string;
+  readonly isOpen: boolean;
   /** Resolves when the OS accepted the bytes (backpressure). */
   write(data: Uint8Array): Promise<void>;
+  /** Reading starts with the first listener; until then the peer is held back by flow control. */
   addDataListener(listener: (data: Uint8Array) => void): Subscription;
+  /** Once, when the channel closes; no error when either side closed it. */
+  addCloseListener(listener: (error?: BleError) => void): Subscription;
   close(): Promise<void>;
 }
 ```
@@ -930,6 +945,16 @@ export interface AdvertisingOptions {
 }
 /** stop() is idempotent; the advertisement also ends when Bluetooth goes off or timeoutMs elapses. */
 export interface Advertisement { stop(): Promise<void> }
+
+/** P5-03 (`BleManager.publishL2CAPChannel`). */
+export interface L2CAPServer {
+  /** Assigned by the system; centrals learn it from the app (a characteristic, like the test profile's L2CAP_PSM). */
+  readonly psm: number;
+  /** Each channel a central opens. A channel that arrives without a listener is closed. */
+  addChannelListener(listener: (channel: L2CAPChannel) => void): Subscription;
+  /** Stops accepting and closes the server's channels; Bluetooth off closes it too. */
+  close(): Promise<void>;
+}
 ```
 
 Advertising rules (decided in P4-03):
@@ -939,6 +964,17 @@ Advertising rules (decided in P4-03):
 - `startAdvertising` resolves once the platform confirms (iOS `peripheralManagerDidStartAdvertising`, Android `onAdvertisingSetStarted`), at most 10 s (`OPERATION_TIMEOUT`).
 - What a platform can't advertise as asked is a `NOT_SUPPORTED` warning, and the rest is advertised. iOS advertises only the local name and service UUIDs (Apple's [`startAdvertising(_:)`](https://developer.apple.com/documentation/corebluetooth/cbperipheralmanager/startadvertising(_:)): 28 bytes in the advertisement, 10 more for the name in the scan response, service UUIDs that don't fit go to the overflow area that only iOS devices scanning for them see; in the background no name and every UUID in the overflow area). Android's `AdvertiseData` has no custom name, only the adapter's (`setIncludeDeviceName`).
 - Android places the fields itself instead of letting `startAdvertisingSet` throw: service UUIDs, then manufacturer data, service data and the TX power level go in the advertising data while they fit, the rest in the scan response after the name; a field that fits nowhere rejects with `ADVERTISING_FAILED` naming it. Sizes as AOSP counts them (`BluetoothLeAdvertiser.totalBytes`, android14-release): 2 bytes per field, UUIDs of one length grouped in one field, flags (3 bytes) when connectable, 31 bytes each for legacy data and scan response. A name too long for the scan response is dropped with a warning. Extended advertising puts everything in the advertising data, up to `getLeMaximumAdvertisingDataLength()`, and isn't scannable (an extended set can't be connectable and scannable).
+
+L2CAP rules (decided in P5-03):
+
+- Platform calls: iOS [`openL2CAPChannel(_:)`](https://developer.apple.com/documentation/corebluetooth/cbperipheral/openl2capchannel(_:)) and [`publishL2CAPChannel(withEncryption:)`](https://developer.apple.com/documentation/corebluetooth/cbperipheralmanager/publishl2capchannel(withencryption:)); Android [`createL2capChannel` / `createInsecureL2capChannel`](https://developer.android.com/reference/android/bluetooth/BluetoothDevice#createL2capChannel(int)) and [`listenUsingL2capChannel` / `listenUsingInsecureL2capChannel`](https://developer.android.com/reference/android/bluetooth/BluetoothAdapter#listenUsingL2capChannel()), API 29+ (`NOT_SUPPORTED` below), LE only, `BLUETOOTH_CONNECT` on Android 12+.
+- PSM: an integer 1–255 (the LE PSM range; the systems assign dynamic ones from 0x80), else `INVALID_ARGUMENT`. A published channel isn't discoverable (Apple: the app handles PSM discovery), so the app tells centrals its PSM, as the test profile's `L2CAP_PSM` characteristic does.
+- Opening needs a ready connection (`DISCONNECTED`) and the connect permission (`PERMISSION_DENIED`); it times out after 30 s by default (`OPERATION_TIMEOUT`), is cancellable with a signal, and fails with `L2CAP_FAILED` when refused. It isn't a GATT operation, so it doesn't wait in the queue. iOS opens one channel per peripheral at a time (`didOpen` with an error doesn't say which request failed). Android's `connect()` blocks its own thread; a timeout or a cancel closes the socket, which aborts it (`BluetoothSocket.connect` docs).
+- Security: a client's `android.secure` (default true) asks for an authenticated, encrypted link; iOS clients can't choose. A server's `secure` (default true) is iOS's `withEncryption` (an encrypted link) and Android's `listenUsingL2capChannel` (authenticated and encrypted); false accepts unencrypted links. Between devices that aren't paired, a secure channel starts pairing.
+- Data is a byte stream: chunk boundaries aren't kept. Nothing is read before the first data listener, so until then L2CAP's credit-based flow control holds the peer back; data that arrives after the last listener left is dropped.
+- `write` resolves once the OS took every byte, and writes keep their order. The core hands the bytes over in pieces: Android writes `getMaxTransmitPacketSize()` bytes per socket call (larger writes log a warning and are split anyway), iOS what the output stream takes. A write the OS takes nothing of for 10 s rejects with `OPERATION_TIMEOUT` and closes the channel (the stream's position is unknown). An empty write resolves at once; after the channel closed, writes reject with `L2CAP_FAILED`.
+- The close listener runs once: without an error when either side closed the channel (Android reports a peer's close and a failed read alike), with `DISCONNECTED` when the client's connection ends (disconnect, link loss, reconnecting: client channels belong to the connection), `OPERATION_TIMEOUT` after a stalled write, `L2CAP_FAILED` after a failed write or an iOS stream error, and the adapter's error when Bluetooth goes off. Pending writes reject with that error (`L2CAP_FAILED` when there is none).
+- Servers: several at a time. `publishL2CAPChannel` needs Bluetooth on and the connect permission (Android) or the authorization (iOS); iOS resolves on `didPublishL2CAPChannel`, within 10 s. `close()` stops accepting and closes the server's channels: iOS's `unpublishL2CAPChannel` closes them itself, Android's server socket doesn't, so the core does. Bluetooth off closes servers and their channels. A channel that arrives while the server has no channel listener is closed, with a warning in the log. A server channel's `peerId` is the central's id as the GATT server reports it (iOS `CBCentral.identifier`, Android the address).
 
 ### 5.6 Background and onboarding
 
@@ -1024,13 +1060,28 @@ export interface VirtualPeripheralConfig {
 export interface FakeBle {
   addPeripheral(config: VirtualPeripheralConfig): VirtualPeripheral;
   setState(state: BleState): void;
-  /** Make the next matching op fail with this code. Ops: requestPermissions, startScan, connect, discover, read, write, readDescriptor, writeDescriptor, subscribe, unsubscribe, requestMtu, readRssi, startAdvertising, createBond, requestConnectionPriority, setPreferredPhy. */
+  /** Make the next matching op fail with this code. Ops: requestPermissions, startScan, connect, discover, read, write, readDescriptor, writeDescriptor, subscribe, unsubscribe, requestMtu, readRssi, startAdvertising, createBond, requestConnectionPriority, setPreferredPhy, openL2CAPChannel, publishL2CAPChannel. */
   injectError(match: { op: string; peripheralId?: string; characteristic?: UUID }, code: BleErrorCode): void;
   reset(): void;
   /** P4-01: a central connected to the open GATT server, to test the server's handlers. mtu default 23. */
   connectCentral(options?: { id?: string; mtu?: number }): VirtualCentral;
   /** P4-03: the running advertisement, validated with defaults applied, or null. No platform limits applied. */
   readonly advertisement: { data: AdvertisingData; options: AdvertisingOptions } | null;
+  /** P5-03: a central opens a channel to the app's L2CAP server with this PSM. */
+  openL2CAPChannel(psm: number, options?: { centralId?: string }): Promise<VirtualL2CAPChannel>;
+}
+
+/** P5-03: the other end of an L2CAP channel. */
+export interface VirtualL2CAPChannel {
+  readonly psm: number;
+  readonly isOpen: boolean;
+  /** What the app wrote, one entry per write, oldest first. */
+  readonly received: ReadonlyArray<Uint8Array>;
+  /** Sends bytes to the app. */
+  write(data: Uint8Array): void;
+  /** Called with each write of the app; replaces the previous handler. */
+  onData(handler: ((data: Uint8Array) => void) | null): void;
+  close(): void;
 }
 
 /** Reads and writes like a real central: long reads as Read + Read Blobs of MTU − 1, long writes as prepared writes. */
@@ -1057,11 +1108,13 @@ export interface VirtualPeripheral {
   disconnect(reason?: 'peer' | 'linkLoss'): void;
   /** Replaces the GATT database and tells a connected client (Service Changed), P2-06. */
   setServices(services: VirtualPeripheralConfig['services']): void;
+  /** P5-03: an L2CAP server at `psm`; without `onChannel` its channels echo what they receive. */
+  publishL2CAPChannel(psm: number, onChannel?: (channel: VirtualL2CAPChannel) => void): void;
   readonly writes: ReadonlyArray<{ characteristic: UUID; value: Uint8Array; withResponse: boolean }>;
 }
 ```
 
-Fake rules (P1-13): Bluetooth is on and every permission granted unless `installFakeBle` says otherwise; a peripheral advertises from `addPeripheral` until `advertise(false)`; a connect to a peripheral that isn't advertising waits (times out, or completes when it advertises), like a real absent device; writes store the value, so a later read returns it; writes without response take at most MTU − 3 bytes (20 at the default MTU); the MTU is negotiated like on Android, during the connect and in `requestMtu()`, as the smaller of the request and the peripheral's `mtu` (23 unless its config says more), and a failed setup exchange (`injectError` op `requestMtu`) is a `warning`; results and operation answers arrive on later timer ticks, so tests advance timers (Jest fake timers work). `notify()` reaches a connected client only while it has the CCCD enabled, as on a real peripheral, and a disconnect resets the CCCDs; `mode: 'indicate'` follows Android (allowed on a characteristic that also notifies). A peripheral's `name` is known once a scan delivered it or a connection reached `connected`. `getKnownPeripherals` drops ids without a virtual peripheral (like iOS); `getSystemConnectedPeripherals` lists the connected ones that have one of the services. Cancelled operations behave like the native queues: a queued one never runs, a running one finishes at the radio after its caller was answered. `writeStream` chunks like the native cores (each chunk a queued write, recorded in `writes`, queuing the next one first) and emits the same progress events. Batched subscriptions batch like the native cores (same interval, overflow and end-of-link rules, `BUFFER_OVERFLOW` warning). `setServices()` replaces a peripheral's database and, when connected, follows the service-change rules (§5.4); `android.refreshGattCache()` discovers again and resolves `true`. The fake logs like the native cores (§4.16). The fake GATT server (P4-01) follows the native cores: one server at a time behind the connect preconditions, closed when the adapter leaves `poweredOn`; static values answered without the handler; the 25 s deadline with its warning; the shared long-read contract; prepared writes delivered as one value per characteristic at execute; subscriptions through the CCCD, ended by `VirtualCentral.disconnect()`; ATT errors reach the virtual central as the matching BleErrorCode (else `GATT_ERROR`). `android.createBond()` (P5-01, with `Platform.OS` android) bonds a connected virtual peripheral on a later tick, through the queue; `bondState` then reads `bonded` until `reset()`, and `injectError` op `createBond` makes it fail. The fake doesn't encrypt: attributes that need encryption read and write without pairing. `android.requestConnectionPriority()` and `android.setPreferredPhy()` (P5-02) are queued on a connected peripheral; the fake takes any priority and gives the first PHY asked for in each direction. `startAdvertising` (P4-03) checks the same preconditions (the `advertise` permission), runs one advertisement at a time, ends it when the adapter leaves `poweredOn`, and records it in `FakeBle.advertisement`; it applies no platform's limits and emits no platform warnings. `GattServer.notify` (P4-02) follows the Android core: one value in flight per central, each delivered on a later tick and recorded in `VirtualCentral.notifications`; the MTU − 3 check uses the `mtu` given to `connectCentral` (23 by default); a central that disconnects drops out, and closing the server fails what is still queued with `DISCONNECTED`.
+Fake rules (P1-13): Bluetooth is on and every permission granted unless `installFakeBle` says otherwise; a peripheral advertises from `addPeripheral` until `advertise(false)`; a connect to a peripheral that isn't advertising waits (times out, or completes when it advertises), like a real absent device; writes store the value, so a later read returns it; writes without response take at most MTU − 3 bytes (20 at the default MTU); the MTU is negotiated like on Android, during the connect and in `requestMtu()`, as the smaller of the request and the peripheral's `mtu` (23 unless its config says more), and a failed setup exchange (`injectError` op `requestMtu`) is a `warning`; results and operation answers arrive on later timer ticks, so tests advance timers (Jest fake timers work). `notify()` reaches a connected client only while it has the CCCD enabled, as on a real peripheral, and a disconnect resets the CCCDs; `mode: 'indicate'` follows Android (allowed on a characteristic that also notifies). A peripheral's `name` is known once a scan delivered it or a connection reached `connected`. `getKnownPeripherals` drops ids without a virtual peripheral (like iOS); `getSystemConnectedPeripherals` lists the connected ones that have one of the services. Cancelled operations behave like the native queues: a queued one never runs, a running one finishes at the radio after its caller was answered. `writeStream` chunks like the native cores (each chunk a queued write, recorded in `writes`, queuing the next one first) and emits the same progress events. Batched subscriptions batch like the native cores (same interval, overflow and end-of-link rules, `BUFFER_OVERFLOW` warning). `setServices()` replaces a peripheral's database and, when connected, follows the service-change rules (§5.4); `android.refreshGattCache()` discovers again and resolves `true`. The fake logs like the native cores (§4.16). The fake GATT server (P4-01) follows the native cores: one server at a time behind the connect preconditions, closed when the adapter leaves `poweredOn`; static values answered without the handler; the 25 s deadline with its warning; the shared long-read contract; prepared writes delivered as one value per characteristic at execute; subscriptions through the CCCD, ended by `VirtualCentral.disconnect()`; ATT errors reach the virtual central as the matching BleErrorCode (else `GATT_ERROR`). `android.createBond()` (P5-01, with `Platform.OS` android) bonds a connected virtual peripheral on a later tick, through the queue; `bondState` then reads `bonded` until `reset()`, and `injectError` op `createBond` makes it fail. The fake doesn't encrypt: attributes that need encryption read and write without pairing. `android.requestConnectionPriority()` and `android.setPreferredPhy()` (P5-02) are queued on a connected peripheral; the fake takes any priority and gives the first PHY asked for in each direction. `startAdvertising` (P4-03) checks the same preconditions (the `advertise` permission), runs one advertisement at a time, ends it when the adapter leaves `poweredOn`, and records it in `FakeBle.advertisement`; it applies no platform's limits and emits no platform warnings. `GattServer.notify` (P4-02) follows the Android core: one value in flight per central, each delivered on a later tick and recorded in `VirtualCentral.notifications`; the MTU − 3 check uses the `mtu` given to `connectCentral` (23 by default); a central that disconnects drops out, and closing the server fails what is still queued with `DISCONNECTED`. L2CAP (P5-03) follows the rules of §5.5 without encryption or flow-control stalls: a channel to a virtual peripheral's PSM opens on a later tick (`L2CAP_FAILED` for a PSM it didn't publish, `injectError` op `openL2CAPChannel`), the app's servers get PSMs from 0x80 up, bytes reach the other end on later ticks, the app's side reads only once it has a data listener, and disconnects, Bluetooth off and `reset()` close channels as on a device.
 
 ### 5.9 Usage examples
 
@@ -1461,12 +1514,13 @@ Parallelism: P0-06/P0-07 can run alongside P0-03/P0-04. With two people, P4 can 
   - Plugin: `android.advertise` (`BLUETOOTH_ADVERTISE`), `ios.backgroundModes: ['peripheral']` (`bluetooth-peripheral`, added next to the app's modes; `'central'` still rejected); `ios.restoreIdentifier` and `ios.accessorySetupKit` still rejected as not yet available. Snapshot tests for both, and the bare-setup guide sections the sync test checks. The example sets both.
   - Example: the GATT server group advertises the TEST service under the test peripheral's name (`serverAdvertisement`), so `e2e/macos-central` finds the phone through it and logs the advertisement's fields.
   - Tests: 10 Android (layout, advertiser, constants against android.jar), 4 Swift, 18 Jest, 3 plugin, 1 example.
+  - On the iPhone 14 Pro Max (iOS 27), 2026-10-12, seen by `e2e/macos-central`: name `BleKit-T` (the scan response's 10 bytes cut `BleKit-Test`, as §5.5 expects), the TEST service UUID, connectable. Android's fields wait for the A52.
 - [ ] **P4-04 iOS peripheral restoration** — deps: P3-01, P4-01.
   **Accept:** services and advertising survive the system-relaunch scenario.
 - [ ] **P4-05 Phone-as-peripheral example and two-phone suite** — deps: P4-01 … P4-03.
   **Accept:** suite green for iOS→iOS, iOS→Android, Android→iOS and Android→Android. Publish `0.4.0`.
   **Progress 2026-10-06 (open: the four pairings need two phones next to each other; publishing `0.4.0` waits for the maintainer):** the example and the suite are built and pass against the demo's virtual test peripheral.
-  - Example, phone B: a **Peripheral** tab (`PhoneAsPeripheralScreen`) whose switch opens the GATT server, serves the test profile and advertises it (`serverAdvertisement`: TEST and Heart Rate, the profile's name), listing the centrals it saw and their requests. The server profile gains the Heart Rate service: a measurement every second while a central subscribes, so another phone's Heart Rate tab works against it. It still lacks SECURE and L2CAP_PSM (P5-01, P5-03), and DISCONNECT_AFTER and TOGGLE_SECONDARY_SERVICE (the peripheral role has no API to drop a central or change the database).
+  - Example, phone B: a **Peripheral** tab (`PhoneAsPeripheralScreen`) whose switch opens the GATT server, serves the test profile and advertises it (`serverAdvertisement`: TEST and Heart Rate, the profile's name), listing the centrals it saw and their requests. The server profile gains the Heart Rate service: a measurement every second while a central subscribes, so another phone's Heart Rate tab works against it. SECURE and L2CAP_PSM came later (P5-01, P5-03); it still lacks DISCONNECT_AFTER and TOGGLE_SECONDARY_SERVICE (the peripheral role has no API to drop a central or change the database).
   - Example, phone A: a **Two-phone suite** group in Checks (`src/lib/twoPhoneSuite.ts`): finds the peripheral by the TEST service, connects, and checks the static read, two long reads (each one snapshot), writes and a 300-byte long write read back, 2,000 bytes without response, the 100 Hz batched stream (10 s, or 10 minutes for P4-02's acceptance: no gaps, nothing dropped), five indications in order, the refusal of invalid CONTROL commands, and two heart-rate measurements; each check passes or fails on its own. The same checks as `e2e/macos-central`.
   - The demo's virtual test peripheral now answers `SEND_INDICATIONS`, so the suite runs against it.
   - `e2e/maestro/two-phone.sh <phone B> <phone A> [--long]` runs both sides with Maestro (`_two-phone-peripheral.yaml`, `_two-phone-central.yaml`).
@@ -1493,6 +1547,14 @@ Parallelism: P0-06/P0-07 can run alongside P0-03/P0-04. With two people, P4 can 
 - [ ] **P5-03 L2CAP channels** — deps: P1-05, P4-01.
   Client channels and server publishing.
   **Accept:** 1 MB echo over L2CAP in both directions on both platforms.
+  **Progress 2026-10-12 (open: the device checks):** channels and servers work in unit tests on both platforms and in the fake (rules in §5.5, notes in §4.3–§4.5, API in §5).
+  - The API lacked the server side: `BleManager.publishL2CAPChannel({ secure })` and `L2CAPServer` were added, and `L2CAPChannel` gained `peerId`, `isOpen` and `addCloseListener`. Platform calls checked in Apple's and Android's reference docs (links in §5.5).
+  - Android: `RemoteDevicePort.createL2capChannel` and `BluetoothAdapterPort.listenUsingL2capChannel` (API 29+), `L2capChannel` and `L2capServer` over blocking sockets on their own threads; the session closes its channels with the connection; the engine checks API 29 and the connect permission. Binding: `L2capChannelObject`, `L2capServerObject`.
+  - iOS: `openL2CAPChannel` on `PeripheralLike`, `publishL2CAPChannel` on `PeripheralManaging`, `L2CAPChannel` over the channel's streams, `L2CAPPublisher` and `L2CAPServer`. Binding: `L2CAPChannelObject`, `L2CAPServerObject`.
+  - JS: `openL2CAPChannel` (PSM 1–255, 30 s default timeout, cancellable), `publishL2CAPChannel`, `L2CAPChannelImpl` and `L2CAPServerImpl`. Testing: virtual peripherals publish echo or custom servers, `FakeBle.openL2CAPChannel` opens a channel to the app's server.
+  - Example: the Peripheral tab runs the profile's echo server and serves its PSM in L2CAP_PSM; Checks gains an **L2CAP** group (1 MB each way, both rates); the two-phone suite ends with the same echo; the demo's virtual test peripheral echoes at 0x81. `e2e/macos-central` echoes 1 MB with an iPhone or Android server.
+  - Tests: 11 Android (`L2capTest`), 9 Swift (`L2CAPTests`), 12 Jest, 2 example.
+  - On the iPhone 14 Pro Max (iOS 27), 2026-10-12, with this Mac: as the server (Peripheral tab, PSM 0xC0 assigned), `e2e/macos-central` echoed 1 MB each way, every byte back in order (73 s, 14 KB/s each way); as the client (Checks → L2CAP), the iPhone echoed 1 MB each way with `e2e/macos-peripheral` (71 s, 14 KB/s each way). The rate is this Mac's link: its GATT stream from the same iPhone reaches 20.8 KiB/s one way. Open: Android (the A52) in both roles, and phone-to-phone rates.
 - [ ] **P5-04 AccessorySetupKit (iOS 18+)** — deps: P1-12.
   Plugin keys, picker, mapping to `Peripheral`.
   **Accept:** a separate example configuration with ASK enabled; the effect on generic scanning documented ⚠️ VERIFY (see §10).
@@ -1835,3 +1897,4 @@ An error in `peripheralManagerDidStartAdvertising` (P4-03) is `ADVERTISING_FAILE
 | v0.47 | 2026-10-07 | `0.1.1` fixes `pod install` (broken in 0.1.0), now `latest` and `next`; 0.1.0 deprecated |
 | v0.48 | 2026-10-07 | P5-01 in progress: Android bonding (`bondState`, `createBond` as a queued operation finished by the bond broadcast, bond timeouts outside the stuck-stack count in §4.9), the §4.4 `BondManager` notes, iOS implicit pairing in §4.3, the fake's bonding in §5.8 |
 | v0.49 | 2026-10-12 | P5-02 in progress: Android connection priority and PHY. §4.4 notes from the android14-release sources (no public priority callback; `onPhyUpdate` not guaranteed, so the session reads the PHYs after 2 s), §5 comments, the fake's rules in §5.8 |
+| v0.50 | 2026-10-12 | P5-03 in progress: L2CAP. The server side added to §5 (`publishL2CAPChannel`, `L2CAPServer`), `L2CAPChannel` gains `peerId`, `isOpen` and `addCloseListener`; L2CAP rules in §5.5 from Apple's and Android's reference docs; §4.3–§4.5 notes; the fake's L2CAP in §5.8 |

@@ -173,6 +173,7 @@ extension PeripheralSession {
     if let operation = cancellable[operationId] {
       queue.cancel(operation)
     }
+    cancelL2CAPOpen(operationId)
   }
 
   /// Lets JS cancel `operation` by `operationId`. Answered operations are dropped from the map here.

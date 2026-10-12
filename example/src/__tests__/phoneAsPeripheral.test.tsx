@@ -5,7 +5,8 @@ import { TestProfile } from '../lib/gattNames';
 import { PhoneAsPeripheralScreen } from '../screens/PhoneAsPeripheralScreen';
 
 // P4-05: the Peripheral tab against the fake: one switch opens the server and advertises; a
-// virtual central reads the TEST service and gets heart-rate measurements.
+// virtual central reads the TEST service and gets heart-rate measurements. P5-03: it reads the L2CAP
+// echo server's PSM, and the server echoes.
 
 const settle = (ms = 100) => act(() => jest.advanceTimersByTimeAsync(ms));
 
@@ -26,7 +27,9 @@ describe('Peripheral tab', () => {
     await render(<PhoneAsPeripheralScreen />);
     await fireEvent(screen.getByTestId('peripheral-switch'), 'valueChange', true);
     await settle();
-    expect(screen.getByText('Advertising as the test peripheral')).toBeTruthy();
+    expect(
+      screen.getByText('Advertising as the test peripheral, L2CAP echo on PSM 0x80')
+    ).toBeTruthy();
     expect(demo.ble.advertisement?.data.serviceUUIDs).toEqual([
       TestProfile.TEST,
       TestProfile.HEART_RATE,
@@ -44,11 +47,24 @@ describe('Peripheral tab', () => {
     expect(bpm[1]).toBe(bpm[0] + 1);
     expect(screen.getByText('Centrals: EE:FF')).toBeTruthy();
 
+    const psm = phone.read(TestProfile.L2CAP_PSM);
+    await settle();
+    expect([...(await psm)]).toEqual([0x80, 0]);
+    const opening = demo.ble.openL2CAPChannel(0x80, { centralId: 'AA:BB:CC:DD:EE:FF' });
+    await settle();
+    const channel = await opening;
+    const echoed: number[] = [];
+    channel.onData((data) => echoed.push(...data));
+    channel.write(Uint8Array.of(1, 2, 3));
+    await settle();
+    expect(echoed).toEqual([1, 2, 3]);
+
     await fireEvent(screen.getByTestId('peripheral-switch'), 'valueChange', false);
     await settle();
     expect(screen.getByText('Off')).toBeTruthy();
     expect(demo.ble.advertisement).toBeNull();
     expect(() => demo.ble.connectCentral()).toThrow();
+    expect(channel.isOpen).toBe(false);
   });
 
   it("switches back off when it can't start", async () => {

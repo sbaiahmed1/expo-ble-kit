@@ -29,6 +29,8 @@ public class ExpoBleKitModule: Module {
   var peripheralManager: CBPeripheralManagerAdapter?
   var openServer: GattServerObject?
   var advertiser: Advertiser?
+  /// L2CAP servers on the same manager (P5-03).
+  var l2capPublisher: L2CAPPublisher?
 
   lazy var engine: CentralEngine = {
     let engine = CentralEngine(queue: DispatchQueue(label: "expo.blekit.central"))
@@ -94,6 +96,14 @@ public class ExpoBleKitModule: Module {
     return engine
   }()
 
+  /// Plan §4.16: the native log level.
+  func setLogLevel(_ level: String) throws {
+    guard let logLevel = LogLevel(rawValue: level) else {
+      throw BleKitException(CoreError(.invalidArgument, "Invalid log level: \(level)"))
+    }
+    engine.logger.level = logLevel
+  }
+
   /// Plan §4.16: JS gets `log` events only while it has a log handler.
   func setLogForwarding(_ enabled: Bool) {
     engine.logger.forward = enabled ? { [weak self] entry in
@@ -109,12 +119,7 @@ public class ExpoBleKitModule: Module {
 
     Events("stateChange", "scanResults", "scanError", "warning", "log")
 
-    Function("setLogLevel") { (level: String) in
-      guard let logLevel = LogLevel(rawValue: level) else {
-        throw BleKitException(CoreError(.invalidArgument, "Invalid log level: \(level)"))
-      }
-      self.engine.logger.level = logLevel
-    }
+    Function("setLogLevel") { (level: String) in try self.setLogLevel(level) }
 
     Function("setLogForwarding") { (enabled: Bool) in self.setLogForwarding(enabled) }
 
@@ -158,6 +163,11 @@ public class ExpoBleKitModule: Module {
     gattServerClass()
     AsyncFunction("startAdvertising", startAdvertising)
     AsyncFunction("stopAdvertising", stopAdvertising)
+
+    // P5-03: L2CAP servers and channels.
+    AsyncFunction("publishL2CAPChannel", publishL2CAPChannel)
+    l2capServerClass()
+    l2capChannelClass()
 
     // Ids only: JS turns them into peripherals with getPeripheral().
     AsyncFunction("getKnownPeripherals") { (ids: [String], promise: Promise) in
@@ -235,6 +245,11 @@ public class ExpoBleKitModule: Module {
 
       AsyncFunction("cancelOperation") { (ref: PeripheralObject, operationId: Int) in
         self.cancelOperation(ref.id, operationId)
+      }
+
+      // P5-03: `secure` is Android's; on iOS the publishing side decides.
+      AsyncFunction("openL2CAPChannel") { (ref: Handle, psm: Int, _: Bool, wait: Double, id: Int?, promise: Promise) in
+        self.openL2CAPChannel(ref, psm, wait, id, promise)
       }
 
       // `services` nil discovers everything; the TS layer always passes a timeout (rule 4).

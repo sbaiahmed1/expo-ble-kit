@@ -236,6 +236,12 @@ interface BluetoothAdapterPort {
 
   /** Addresses of the LE devices connected at the OS level, by any app. Needs BLUETOOTH_CONNECT (API 31+). */
   fun connectedGattDevices(): List<String>
+
+  /**
+   * An L2CAP channel server with a PSM the system assigns (P5-03, API 29+): `listenUsingL2capChannel`
+   * when [secure], else `listenUsingInsecureL2capChannel`. Throws [java.io.IOException] when it can't.
+   */
+  fun listenUsingL2capChannel(secure: Boolean): L2capServerSocketPort
 }
 
 interface RemoteDevicePort {
@@ -250,6 +256,12 @@ interface RemoteDevicePort {
 
   /** Starts an LE GATT connection with callbacks on the BLE thread. Null if the platform refused. */
   fun connectGatt(autoConnect: Boolean, callback: GattClientCallback): GattClientPort?
+
+  /**
+   * A socket for an L2CAP channel to [psm] (P5-03, API 29+), not connected yet: `createL2capChannel`
+   * when [secure], else `createInsecureL2capChannel`. Throws [java.io.IOException] when it can't.
+   */
+  fun createL2capChannel(psm: Int, secure: Boolean): L2capSocketPort
 }
 
 /** A GATT client connection. Mirrors `BluetoothGatt`; boolean results mean "submitted". */

@@ -1,6 +1,7 @@
 package expo.modules.blekit.core
 
 import android.annotation.SuppressLint
+import android.annotation.TargetApi
 import android.bluetooth.BluetoothAdapter
 import android.bluetooth.BluetoothDevice
 import android.bluetooth.BluetoothGatt
@@ -10,6 +11,8 @@ import android.bluetooth.BluetoothGattDescriptor
 import android.bluetooth.BluetoothGattService
 import android.bluetooth.BluetoothManager
 import android.bluetooth.BluetoothProfile
+import android.bluetooth.BluetoothServerSocket
+import android.bluetooth.BluetoothSocket
 import android.bluetooth.le.ScanCallback
 import android.bluetooth.le.ScanFilter
 import android.bluetooth.le.ScanResult
@@ -22,6 +25,7 @@ import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Handler
 import android.os.ParcelUuid
+import java.io.IOException
 
 // Real Android implementations of the BtAbstractions interfaces. The engine checks runtime
 // permissions before calling into these (P1-03), hence the MissingPermission suppressions.
@@ -94,6 +98,14 @@ class AndroidBluetoothAdapterPort(private val context: Context, private val hand
     ?.getConnectedDevices(BluetoothProfile.GATT)
     .orEmpty()
     .map { it.address }
+
+  override fun listenUsingL2capChannel(secure: Boolean): L2capServerSocketPort {
+    val adapter = adapter ?: throw IOException("No Bluetooth adapter")
+    if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) throw IOException("L2CAP channels need Android 10")
+    val socket =
+      permitted { if (secure) adapter.listenUsingL2capChannel() else adapter.listenUsingInsecureL2capChannel() }
+    return AndroidL2capServerSocket(socket)
+  }
 }
 
 @SuppressLint("MissingPermission")
@@ -185,6 +197,50 @@ class AndroidRemoteDevice(
     client.attach(gatt)
     return client
   }
+
+  override fun createL2capChannel(psm: Int, secure: Boolean): L2capSocketPort {
+    if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) throw IOException("L2CAP channels need Android 10")
+    return AndroidL2capSocket(
+      permitted { if (secure) device.createL2capChannel(psm) else device.createInsecureL2capChannel(psm) },
+    )
+  }
+}
+
+/** An L2CAP channel's `BluetoothSocket` (P5-03). Its streams block; [close] aborts them. */
+@SuppressLint("MissingPermission")
+class AndroidL2capSocket(private val socket: BluetoothSocket) : L2capSocketPort {
+  override val remoteAddress: String = socket.remoteDevice.address
+
+  override val maxTransmitPacketSize: Int
+    get() = socket.maxTransmitPacketSize
+
+  override val maxReceivePacketSize: Int
+    get() = socket.maxReceivePacketSize
+
+  override fun connect() = permitted { socket.connect() }
+
+  override fun read(buffer: ByteArray): Int = socket.inputStream.read(buffer)
+
+  override fun write(buffer: ByteArray, offset: Int, length: Int) = socket.outputStream.write(buffer, offset, length)
+
+  override fun close() = socket.close()
+}
+
+/** Only created on API 29+, by [AndroidBluetoothAdapterPort.listenUsingL2capChannel]. */
+@TargetApi(Build.VERSION_CODES.Q)
+class AndroidL2capServerSocket(private val socket: BluetoothServerSocket) : L2capServerSocketPort {
+  override val psm: Int = socket.psm
+
+  override fun accept(): L2capSocketPort = AndroidL2capSocket(socket.accept())
+
+  override fun close() = socket.close()
+}
+
+/** A missing BLUETOOTH_CONNECT is checked by the engine first; a revoke meanwhile fails the call. */
+private fun <T> permitted(block: () -> T): T = try {
+  block()
+} catch (error: SecurityException) {
+  throw IOException("Bluetooth permission missing: ${error.message}", error)
 }
 
 @SuppressLint("MissingPermission")

@@ -28,6 +28,8 @@ class CentralEngine(
   logOutput: (LogLevel, String) -> Unit = { _, _ -> },
   /** The foreground service of `keepAliveInBackground` ([AndroidKeepAlive] in the app). */
   private val keepAlive: KeepAlivePort = NoKeepAlive,
+  /** Where L2CAP sockets block (P5-03); tests run it by hand. */
+  private val runner: BlockingRunner = ThreadRunner,
 ) {
   /** Engine events, delivered on the BLE thread. */
   interface Listener : ScanController.Events {
@@ -70,6 +72,9 @@ class CentralEngine(
 
   /** Advertised names from scans, then the device name once connected (plan §4.7). */
   private val names = PeripheralNames()
+
+  /** Published L2CAP servers (P5-03); Bluetooth off closes them. */
+  private val l2capServers = linkedSetOf<L2capServer>()
 
   /** Sessions connected with `keepAliveInBackground`, until they end (plan §4.14). */
   private val keepAliveSessions = mutableSetOf<String>()
@@ -114,6 +119,7 @@ class CentralEngine(
     val error = CoreError(CoreError.Code.OPERATION_CANCELLED, "The module was destroyed")
     scanController.stopAll(error)
     sessions.values.forEach { it.forceDisconnected(error) }
+    l2capServers.toList().forEach { it.close(error) }
     keepAliveSessions.clear()
     updateKeepAlive()
   }
@@ -279,6 +285,7 @@ class CentralEngine(
         if (state == SessionState.DISCONNECTED && keepAliveSessions.remove(address)) updateKeepAlive()
       }.also { session ->
         session.logger = logger
+        session.runner = runner
         session.clock = { clock.epochMs(executor.nowMs()).toDouble() }
         session.onNotification = { ref, value, timestamp ->
           logger.log(LogLevel.VERBOSE, address) { "notification from ${ref.uuid}: ${value.size} bytes" }
@@ -537,6 +544,59 @@ class CentralEngine(
 
   private fun invalid(what: String) = CoreError(CoreError.Code.INVALID_ARGUMENT, "Invalid $what")
 
+  /**
+   * Opens an L2CAP channel to [psm] on a ready connection (P5-03): API 29+ and the connect
+   * permission.
+   */
+  fun openL2capChannel(
+    peripheralId: String,
+    psm: Int,
+    secure: Boolean,
+    timeoutMs: Long?,
+    completion: (Result<L2capChannel>) -> Unit,
+    operationId: Int? = null,
+  ) {
+    l2capError("Opening an L2CAP channel")?.let { return completion(Result.failure(it)) }
+    if (psm !in L2CAP_PSMS) return completion(Result.failure(invalid("PSM $psm")))
+    withSession(peripheralId, completion) { it.openL2capChannel(psm, secure, timeoutMs, completion, operationId) }
+  }
+
+  /**
+   * Publishes an L2CAP channel server (P5-03): API 29+, the connect permission, Bluetooth on.
+   * Throws when it can't; accepting starts at once.
+   */
+  fun publishL2capChannel(secure: Boolean): L2capServer {
+    l2capError("An L2CAP server")?.let { throw it }
+    adapterError(adapter.state)?.let { throw it }
+    val socket = try {
+      adapter.listenUsingL2capChannel(secure)
+    } catch (error: java.io.IOException) {
+      throw CoreError(CoreError.Code.L2CAP_FAILED, "Publishing an L2CAP channel failed: ${error.message}")
+    }
+    val server = L2capServer(socket, executor, runner)
+    server.onEnded = { l2capServers -= it }
+    server.onWarning = ::warn
+    l2capServers += server
+    logger.log(LogLevel.INFO) { "L2CAP server ${server.psm} published${if (secure) "" else " (insecure)"}" }
+    return server
+  }
+
+  /** Why L2CAP can't be used now: before API 29, or without the connect permission. */
+  private fun l2capError(what: String): CoreError? {
+    if (permissionSystem.sdkInt < L2CAP_MIN_SDK) {
+      return CoreError(CoreError.Code.NOT_SUPPORTED, "L2CAP channels need Android 10 (API 29)")
+    }
+    val missing = permissionPolicy().runtimePermissions(BleCapability.CONNECT).filterNot(permissionSystem::isGranted)
+    return if (missing.isEmpty()) {
+      null
+    } else {
+      CoreError(
+        CoreError.Code.PERMISSION_DENIED,
+        "$what needs ${missing.joinToString()}. Call requestPermissionsAsync() first.",
+      )
+    }
+  }
+
   /** The hidden cache refresh (opt-in, P2-06); resolves false where Android lacks it. */
   fun refreshGattCache(peripheralId: String, completion: (Result<Boolean>) -> Unit) =
     withSession(peripheralId, completion) { it.refreshGattCache(completion) }
@@ -584,6 +644,7 @@ class CentralEngine(
     adapterError(adapterState)?.let { error ->
       scanController.stopAll(error)
       sessions.values.forEach { it.forceDisconnected(error) }
+      l2capServers.toList().forEach { it.close(error) }
     }
     publish(computeState(adapterState))
   }
@@ -611,6 +672,12 @@ class CentralEngine(
 }
 
 private val ADDRESS = Regex("^([0-9A-F]{2}:){5}[0-9A-F]{2}$")
+
+/** L2CAP channels (`createL2capChannel`, `listenUsingL2capChannel`) came with Android 10. */
+private const val L2CAP_MIN_SDK = 29
+
+/** The LE PSM range (Core spec Vol 3 Part A 4.22). */
+private val L2CAP_PSMS = 1..255
 
 /** Android ids are device addresses, which `getRemoteDevice` wants in upper case. */
 fun normalizeAddress(id: String): String? = id.uppercase().takeIf(ADDRESS::matches)

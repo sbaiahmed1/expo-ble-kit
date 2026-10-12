@@ -14,6 +14,7 @@ extension PeripheralSession {
   /// A ready connection was lost unexpectedly and a policy is set. `system`: iOS 17 auto-reconnect
   /// connects again by itself, so no attempts of ours run until it fails.
   func startReconnecting(_ error: CoreError, system: Bool) {
+    closeL2CAP(CoreError(.disconnected, "Disconnected"))
     resetLink()
     reconnectAttempt = 1
     systemReconnecting = system

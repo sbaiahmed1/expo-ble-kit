@@ -13,9 +13,9 @@ import { TestProfile } from '../lib/gattNames';
 // Demo mode: the test peripheral (test-peripherals/profile.json) as a virtual device in the fake
 // adapter, so the screens, their tests and the Maestro flows run without hardware. The driver
 // plays the peripheral's side: heart-rate notifications, ECHO_WRITE → ECHO_READ, SINK_NO_RSP →
-// SINK_COUNTER, STREAM frames, and CONTROL SET_STREAM, DISCONNECT_AFTER, TOGGLE_SECONDARY_SERVICE,
-// RESET_COUNTERS and SEND_INDICATIONS. A virtual peripheral can't refuse a write, so invalid CONTROL
-// commands are accepted. Real hardware runs the Bumble peripheral or the nRF52840 instead.
+// SINK_COUNTER, STREAM frames, CONTROL SET_STREAM, DISCONNECT_AFTER, TOGGLE_SECONDARY_SERVICE,
+// RESET_COUNTERS and SEND_INDICATIONS, and the L2CAP echo server at L2CAP_PSM. A virtual peripheral
+// can't refuse a write, so invalid CONTROL commands are accepted. Real hardware runs the Bumble peripheral or the nRF52840 instead.
 
 /** The test services: those always present, and SECONDARY while toggled on (CONTROL 0x03). */
 function testServices(withSecondary: boolean): VirtualPeripheralConfig['services'] {
@@ -86,6 +86,12 @@ export function driveTestPeripheral(device: VirtualPeripheral): () => void {
     device.setValue(TEST, TestProfile.SINK_COUNTER, value);
   };
   setSinkCounter(0);
+  // The echo server (profile.json l2cap.echo): channels send back what they receive.
+  const psm = profile.l2cap.echo.psm;
+  const setPsm = () =>
+    device.setValue(TEST, TestProfile.L2CAP_PSM, Uint8Array.of(psm & 0xff, psm >> 8));
+  device.publishL2CAPChannel(psm);
+  setPsm();
   const timers: ReturnType<typeof setTimeout>[] = [];
   const heartRate = setInterval(() => {
     if (device.isNotifying(HEART_RATE, MEASUREMENT)) {
@@ -110,6 +116,7 @@ export function driveTestPeripheral(device: VirtualPeripheral): () => void {
         secondary = !secondary;
         device.setServices(testServices(secondary));
         setSinkCounter(sinkCount);
+        setPsm();
       } else if (characteristic === TestProfile.CONTROL && value[0] === 0x04) {
         setSinkCounter(0);
         streamSequence = 0;

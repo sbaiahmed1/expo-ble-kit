@@ -27,6 +27,7 @@ import { describeMultipleDevices, runMultipleDevices } from '../lib/multipleDevi
 import { abortStreamToSink, sendToSink, streamToSink, type SinkReport } from '../lib/sink';
 import { BackgroundScanChecks } from './BackgroundScanChecks';
 import { BondingChecks } from './BondingChecks';
+import { L2capChecks } from './L2capChecks';
 import { checkStyles as styles, Group } from './checksUi';
 import { KeepAliveChecks } from './KeepAliveChecks';
 import { ServerChecks } from './ServerChecks';
@@ -434,6 +435,7 @@ export function DevChecksScreen() {
       <ServerChecks />
       <TwoPhoneChecks />
       <BondingChecks />
+      <L2capChecks />
       <Group name="Scanning">
         <Button testID="scan-all" title="Scan all" onPress={() => startSession('all', {})} />
         <Button

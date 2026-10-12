@@ -92,3 +92,21 @@ export type GattServerObjectEvents = {
   writeRequest: (event: ServerRequestEvent) => void;
   subscriptionChange: (event: SubscriptionChangeEvent) => void;
 };
+
+/** Bytes that arrived on an L2CAP channel (P5-03), once JS started reading. */
+export type L2CAPDataEvent = { data: Uint8Array };
+
+/** The channel closed (P5-03); `code` and `message` are set unless either side closed it. */
+export type L2CAPCloseEvent = { code?: BleErrorCode | null; message?: string | null };
+
+export type L2CAPChannelObjectEvents = {
+  data: (event: L2CAPDataEvent) => void;
+  close: (event: L2CAPCloseEvent) => void;
+};
+
+/** A central opened a channel; `takeChannel(channelId)` returns it (P5-03). */
+export type L2CAPChannelEvent = { channelId: number };
+
+export type L2CAPServerObjectEvents = {
+  channel: (event: L2CAPChannelEvent) => void;
+};

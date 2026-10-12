@@ -35,6 +35,8 @@ export type {
   Diagnostics,
   ForegroundServiceNotification,
   GattServer,
+  L2CAPChannel,
+  L2CAPServer,
   LogEntry,
   LogLevel,
   NotificationBatch,

@@ -55,6 +55,8 @@ protocol PeripheralLike: AnyObject {
   func setNotifyValue(_ enabled: Bool, for characteristic: CharacteristicLike)
   func readRSSI()
   func maximumWriteValueLength(for type: CBCharacteristicWriteType) -> Int
+  /// P5-03: answered by `peripheral(_:didOpen:error:)`.
+  func openL2CAPChannel(_ psm: CBL2CAPPSM)
 }
 
 /// Callbacks from a `PeripheralLike`. Values are passed explicitly (instead of read back from the
@@ -90,6 +92,8 @@ protocol PeripheralLikeDelegate: AnyObject {
   func peripheralIsReadyToSendWriteWithoutResponse(_ peripheral: PeripheralLike)
   func peripheral(_ peripheral: PeripheralLike, didModifyServices invalidatedServices: [ServiceLike])
   func peripheralDidUpdateName(_ peripheral: PeripheralLike)
+  /// P5-03: the answer to `openL2CAPChannel`; nil and an error when it failed.
+  func peripheral(_ peripheral: PeripheralLike, didOpen channel: L2CAPChannelLike?, error: Error?)
 }
 
 extension PeripheralLikeDelegate {
@@ -123,6 +127,36 @@ extension PeripheralLikeDelegate {
   func peripheralIsReadyToSendWriteWithoutResponse(_ peripheral: PeripheralLike) {}
   func peripheral(_ peripheral: PeripheralLike, didModifyServices invalidatedServices: [ServiceLike]) {}
   func peripheralDidUpdateName(_ peripheral: PeripheralLike) {}
+  func peripheral(_ peripheral: PeripheralLike, didOpen channel: L2CAPChannelLike?, error: Error?) {}
+}
+
+// MARK: - L2CAP channels (P5-03)
+
+/// An open L2CAP channel and its two byte streams. Mirrors `CBL2CAPChannel` with its
+/// `inputStream` and `outputStream`, whose events arrive on the queue of the manager it came from.
+protocol L2CAPChannelLike: AnyObject {
+  var psm: CBL2CAPPSM { get }
+  /// The other device: the peripheral, or the central on a published channel.
+  var peerIdentifier: UUID { get }
+  var events: L2CAPChannelEvents? { get set }
+  /// Opens both streams; from then on their events come through `events`.
+  func open()
+  var hasBytesAvailable: Bool { get }
+  /// At most `maxLength` bytes; nil when the stream failed.
+  func read(maxLength: Int) -> Data?
+  var hasSpaceAvailable: Bool { get }
+  /// The number of bytes the stream took (maybe 0), or -1 when it failed.
+  func write(_ data: Data) -> Int
+  /// Closes both streams, which closes the channel.
+  func close()
+}
+
+/// The stream events of an `L2CAPChannelLike`.
+protocol L2CAPChannelEvents: AnyObject {
+  func channelHasBytesAvailable(_ channel: L2CAPChannelLike)
+  func channelHasSpaceAvailable(_ channel: L2CAPChannelLike)
+  /// A stream ended (`error` nil: the other side closed it) or failed.
+  func channelEnded(_ channel: L2CAPChannelLike, error: Error?)
 }
 
 // MARK: - Central manager

@@ -138,6 +138,25 @@ const phy = await device.android.setPreferredPhy(['le2m'], ['le2m']); // { tx: '
 
 `setPreferredPhy` resolves the PHYs the link actually uses: both sides need Bluetooth 5 for `le2m`. `leCoded` (with `'s2'` or `'s8'`) trades speed for range. iOS chooses by itself, so these reject with `NOT_SUPPORTED` there.
 
+### L2CAP channels
+
+For bulk data, an L2CAP connection-oriented channel is a byte stream next to GATT, without its per-packet overhead. The peripheral's app or firmware tells you its PSM, often in a characteristic:
+
+```ts
+const channel = await device.openL2CAPChannel(psm); // needs a connection; closes with it
+channel.addDataListener((bytes) => received.push(bytes)); // reading starts with the first listener
+channel.addCloseListener((error) => console.log('closed', error?.code)); // no error: a side closed it
+for (const piece of pieces) await channel.write(piece); // resolves once the system took the bytes
+await channel.close();
+```
+
+- Chunk boundaries aren't kept: one `write` may arrive in several pieces, several in one.
+- Until the first data listener, nothing is read and flow control holds the other side back, so no data is lost while you set up.
+- A write the system takes nothing of for 10 seconds (the other side stopped reading) rejects with `OPERATION_TIMEOUT` and closes the channel.
+- Android asks for an authenticated, encrypted link by default, which may start pairing: `{ android: { secure: false } }` accepts an unencrypted one. On iOS the publishing side decides. Android needs version 10 (API 29); before, `NOT_SUPPORTED`.
+
+The phone can also be the side that publishes the channel; see [L2CAP servers](#l2cap-servers).
+
 Several devices can be connected at once: each `Peripheral` has its own operation queue and connection, so a slow or lost device doesn't affect the others. Android handles about 7 connections at once (see [troubleshooting](troubleshooting.md#android-some-of-several-devices-fail-to-connect)).
 
 ## Notifications
@@ -327,6 +346,21 @@ const advertisement = await BleManager.startAdvertising({
   - Android can't advertise a name of your choice: with `localName` it advertises the phone's Bluetooth name. It advertises `manufacturerData`, `serviceData` and `includeTxPower` too, and takes the `android` options (interval, transmit power, extended advertising, a timeout).
 - Legacy advertisements are small (31 bytes, plus 31 in the scan response): a 128-bit service UUID takes 18. `startAdvertising` rejects with `ADVERTISING_FAILED`, naming the field, when the data doesn't fit.
 - In Jest, `installFakeBle().advertisement` shows what is being advertised.
+
+### L2CAP servers
+
+`publishL2CAPChannel` accepts channels from centrals. The system assigns the PSM; tell centrals, for example in a characteristic of your GATT server:
+
+```ts
+const l2cap = await BleManager.publishL2CAPChannel({ secure: false }); // default true: encrypted link
+l2cap.addChannelListener((channel) => {
+  channel.addDataListener((bytes) => channel.write(bytes)); // an echo server
+});
+// serve l2cap.psm, e.g. from onReadRequest
+await l2cap.close(); // stops accepting and closes its channels
+```
+
+A channel's `peerId` is the central's id, as the GATT server's requests carry it. Several servers can run at once; turning Bluetooth off closes them.
 
 ## With React hooks
 

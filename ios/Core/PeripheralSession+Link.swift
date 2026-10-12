@@ -6,6 +6,21 @@ import Foundation
 extension PeripheralSession {
   typealias IntCompletion = (Result<Int, CoreError>) -> Void
 
+  /// A failed connect is CONNECTION_FAILED whatever CoreBluetooth called it; the native code is kept.
+  static func connectionError(_ error: Error?) -> CoreError {
+    guard let error else {
+      return CoreError(.connectionFailed, "The connection failed")
+    }
+    let mapped = CoreBluetoothErrorMapping.coreError(from: error)
+    return CoreError(
+      .connectionFailed,
+      mapped.message,
+      retryable: true,
+      nativeDomain: mapped.nativeDomain,
+      nativeCode: mapped.nativeCode
+    )
+  }
+
   static let defaultMtu = 23
   static let maxMtu = 517
 

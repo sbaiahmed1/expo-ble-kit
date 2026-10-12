@@ -30,7 +30,8 @@ cd example && npx expo run:ios            # or run:android
 cd test-peripherals/bumble && uv run pytest              # test peripheral tests (no hardware)
 cd test-peripherals/bumble && uv run blekit-peripheral   # advertise on a running Android emulator
 e2e/android-netsim/run.sh    # L3: peripheral + instrumented tests on a running emulator (needs ANDROID_HOME and example/android)
-e2e/macos-central/run.sh     # this Mac as the central for the example's GATT server on a phone (P4-01, P4-02)
+e2e/macos-central/run.sh     # this Mac as the central for the example's GATT server on a phone (P4-01, P4-02, P5-03)
+e2e/macos-peripheral/run.sh  # this Mac as an L2CAP echo peripheral for the example's L2CAP check (P5-03)
 maestro test e2e/maestro/explorer-basic.yaml            # example flows; add -e DEMO=true to use the app's virtual test peripheral
 ```
 

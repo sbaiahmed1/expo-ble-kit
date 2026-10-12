@@ -1,6 +1,6 @@
 # A Mac as the central
 
-Checks the example app's GATT server (P4-01, P4-02) from a real central: this Mac's Bluetooth. Use it while no phone can find the server through advertising (before P4-03), or when no second phone is at hand.
+Checks the example app's GATT server (P4-01, P4-02) and L2CAP echo server (P5-03) from a real central: this Mac's Bluetooth. Use it while no phone can find the server through advertising (before P4-03), or when no second phone is at hand.
 
 ```bash
 e2e/macos-central/run.sh        # 10 s stream at 100 Hz; e2e/macos-central/run.sh 60 for a minute
@@ -8,7 +8,7 @@ e2e/macos-central/run.sh        # 10 s stream at 100 Hz; e2e/macos-central/run.s
 
 Before running it:
 
-1. Run the example app on the phone, in front, and open the server: **Checks → GATT server → Open the test GATT server**.
+1. Run the example app on the phone, in front, and open the server: turn on **Peripheral → Act as the test peripheral**, which also runs the L2CAP echo server (Android 10+ or iOS). **Checks → GATT server → Open the test GATT server** works too, without L2CAP.
 2. Keep the phone near the Mac and unlocked.
 3. The first run asks to allow Bluetooth for **BleKitCentral** (after a source change, the rebuilt app may ask again). Click Allow. It waits up to 3 minutes.
 
@@ -37,5 +37,6 @@ UUIDs, values and CONTROL opcodes come from [`test-peripherals/profile.json`](..
 | `STREAM`, 1000 Hz × the largest frame | the same, paced by the server's flow control. Prints frames/s and KiB/s |
 | `INDICATE` | `SEND_INDICATIONS(5)` delivers 0…4 in order |
 | invalid CONTROL commands | refused: the profile's 0x80 / 0x81, or 0x06 / 0x0D from the example (its API has no application errors) |
+| L2CAP echo | opens a channel to the PSM in `L2CAP_PSM` and sends 1 MB while the echo comes back: every byte returns, in order. Prints both rates. Skipped when the server has no echo server |
 
 macOS and Xcode's command line tools only. The app is built ad hoc into `build/` (gitignored) and isn't part of the npm package.

@@ -133,6 +133,10 @@ final class PeripheralSession: PeripheralLikeDelegate {
   /// The batched subscribers' batchers, by subscription id (P2-04).
   var batchers: [Int: NotificationBatcher] = [:]
   var nextDiscoveryId = 0
+  /// L2CAP opens in request order: iOS answers them one at a time (P5-03).
+  var l2capOpens: [L2CAPOpen] = []
+  /// Open L2CAP channels: they end with the connection.
+  var l2capChannels: [L2CAPChannel] = []
 
   static let disconnectTimeout: TimeInterval = 5
   /// Discovery is one queued operation, and slower than the 10 s default (plan §4.9).
@@ -213,6 +217,7 @@ final class PeripheralSession: PeripheralLikeDelegate {
     case .ready:
       disconnectWaiters.append(completion)
       setState(.disconnecting, nil)
+      closeL2CAP(CoreError(.disconnected, "Disconnected"))
       central.cancelPeripheralConnection(peripheral)
       // Rule 4: if CoreBluetooth never confirms, report disconnected anyway.
       disconnectTimeout = scheduler.schedule(after: Self.disconnectTimeout) { [weak self] in
@@ -310,21 +315,6 @@ final class PeripheralSession: PeripheralLikeDelegate {
     waiters.forEach { $0(nil) }
   }
 
-  /// A failed connect is CONNECTION_FAILED whatever CoreBluetooth called it; the native code is kept.
-  static func connectionError(_ error: Error?) -> CoreError {
-    guard let error else {
-      return CoreError(.connectionFailed, "The connection failed")
-    }
-    let mapped = CoreBluetoothErrorMapping.coreError(from: error)
-    return CoreError(
-      .connectionFailed,
-      mapped.message,
-      retryable: true,
-      nativeDomain: mapped.nativeDomain,
-      nativeCode: mapped.nativeCode
-    )
-  }
-
   /// Ends a connect attempt. `error` goes to the state listener; `connectError` to connect() callers.
   /// A failed reconnection attempt waits for the next one instead.
   func failConnect(_ error: CoreError?, connectError: CoreError? = nil) {
@@ -358,6 +348,7 @@ final class PeripheralSession: PeripheralLikeDelegate {
     flushBatches(Array(batchers.keys))
     setState(.disconnected, error)
     queue.failAll(CoreError(.disconnected, "Disconnected"))
+    closeL2CAP(endedWith: error)
     // Subscriptions end with the connection (plan §4.8); a reconnection keeps them (P2-01).
     subscriptions.removeAll()
     subscriptionKeys.removeAll()

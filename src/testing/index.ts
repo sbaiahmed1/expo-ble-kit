@@ -16,6 +16,7 @@ export type {
   VirtualPeripheralConfig,
 } from './FakeBleAdapter';
 export type { VirtualCentral } from './FakeGattServer';
+export type { VirtualL2CAPChannel } from './FakeL2CAP';
 export { BleErrorCode };
 
 const ALL_GRANTED: BlePermissions = {
@@ -47,5 +48,6 @@ export function installFakeBle(
     get advertisement() {
       return adapter.currentAdvertisement();
     },
+    openL2CAPChannel: (psm, options) => adapter.openL2CAPChannel(psm, options),
   };
 }

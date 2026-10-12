@@ -6,6 +6,7 @@ import type {
 import { BleError, BleErrorCode } from '../errors';
 import { Emitter } from './Emitter';
 import { FakeGattServer, type VirtualCentral } from './FakeGattServer';
+import { FakeL2CAPLink, FakeL2CAPServer, type VirtualL2CAPChannel } from './FakeL2CAP';
 import type {
   NativeAttributeRequest,
   NativeBatch,
@@ -23,7 +24,12 @@ import {
 } from '../internal/gattQueue';
 import type { NativeServiceDefinition } from '../internal/gattServer';
 import { NotificationBatcher } from '../internal/notificationBatcher';
-import type { NativeBleKitPort, NativeDiagnostics, NativePeripheralPort } from '../internal/port';
+import type {
+  NativeBleKitPort,
+  NativeDiagnostics,
+  NativeL2CAPChannelPort,
+  NativePeripheralPort,
+} from '../internal/port';
 import type { NativeScanOptions } from '../internal/scanOptions';
 import { timerScheduler, type Scheduler } from '../internal/scheduler';
 import type {
@@ -98,7 +104,9 @@ export type FakeOperation =
   | 'startAdvertising'
   | 'createBond'
   | 'requestConnectionPriority'
-  | 'setPreferredPhy';
+  | 'setPreferredPhy'
+  | 'openL2CAPChannel'
+  | 'publishL2CAPChannel';
 
 /** Controls the fake, from `installFakeBle()`. */
 export interface FakeBle {
@@ -128,6 +136,12 @@ export interface FakeBle {
     /** How. */
     options: AdvertisingOptions;
   } | null;
+  /**
+   * A central opens a channel to the app's L2CAP server with this PSM (`BleManager.publishL2CAPChannel`);
+   * the server's channel listener gets the app's end. Rejects with `L2CAP_FAILED` when no server
+   * has that PSM.
+   */
+  openL2CAPChannel(psm: number, options?: { centralId?: string }): Promise<VirtualL2CAPChannel>;
 }
 
 /** The peripheral side of a virtual peripheral. */
@@ -152,6 +166,11 @@ export interface VirtualPeripheral {
    * emits `servicesChanged`.
    */
   setServices(services: VirtualPeripheralConfig['services']): void;
+  /**
+   * Accepts L2CAP channels at `psm` (P5-03): `onChannel` gets the peripheral's end of each one the
+   * app opens. Without `onChannel`, the channels send back what they receive (an echo server).
+   */
+  publishL2CAPChannel(psm: number, onChannel?: (channel: VirtualL2CAPChannel) => void): void;
   /** Every characteristic write the app made, oldest first. */
   readonly writes: readonly {
     /** The characteristic written. */
@@ -168,6 +187,15 @@ const MAX_ATTRIBUTE_LENGTH = 512;
 /** writeStream reports progress about this many times, like the native cores. */
 const STREAM_PROGRESS_STEPS = 100;
 const MIN_MTU = 23;
+/** Errors that mean Bluetooth itself went away. */
+const ADAPTER_ERRORS: BleErrorCode[] = [
+  BleErrorCode.BLUETOOTH_POWERED_OFF,
+  BleErrorCode.BLUETOOTH_RESETTING,
+  BleErrorCode.BLUETOOTH_UNSUPPORTED,
+  BleErrorCode.BLUETOOTH_UNAUTHORIZED,
+];
+/** The first PSM the systems assign to a published L2CAP channel. */
+const FIRST_DYNAMIC_PSM = 0x80;
 const MAX_MTU = 517;
 
 const fail = (code: BleErrorCode, message: string) => new BleError(code, message);
@@ -247,6 +275,8 @@ class VirtualDevice implements VirtualPeripheral {
   rssi: number;
   readonly mtu: number;
   advertising = true;
+  /** L2CAP servers by PSM (P5-03). */
+  readonly l2capServers = new Map<number, (channel: VirtualL2CAPChannel) => void>();
 
   constructor(
     readonly id: string,
@@ -262,6 +292,13 @@ class VirtualDevice implements VirtualPeripheral {
   setServices(services: VirtualPeripheralConfig['services']): void {
     this.services = buildServices(services);
     this.adapter.servicesChanged(this);
+  }
+
+  publishL2CAPChannel(psm: number, onChannel?: (channel: VirtualL2CAPChannel) => void): void {
+    this.l2capServers.set(
+      psm,
+      onChannel ?? ((channel) => channel.onData((data) => channel.write(data)))
+    );
   }
 
   advertise(on: boolean): void {
@@ -387,6 +424,10 @@ class FakePeripheralHandle implements NativePeripheralPort {
   private cancellable = new Map<number, GattOperation>();
   /** writeStream calls in flight, by operation id. */
   private readonly streams = new Map<number, { cancelled: boolean }>();
+  /** Open L2CAP channels (P5-03): they close with the connection. */
+  private readonly links = new Set<FakeL2CAPLink>();
+  /** L2CAP opens a signal may cancel, by operation id. */
+  private readonly opens = new Map<number, (error: BleError) => void>();
 
   constructor(
     readonly id: string,
@@ -792,6 +833,52 @@ class FakePeripheralHandle implements NativePeripheralPort {
     }));
   }
 
+  /**
+   * P5-03: not a GATT operation, so it doesn't queue; the channel opens on a later tick when the
+   * virtual peripheral published `psm`. The fake doesn't encrypt, so `secure` changes nothing.
+   */
+  openL2CAPChannel(
+    psm: number,
+    _secure: boolean,
+    _timeoutMs: number,
+    operationId: number | null
+  ): Promise<NativeL2CAPChannelPort> {
+    if (this.state !== 'connected') {
+      return Promise.reject(fail(BleErrorCode.DISCONNECTED, `Not connected to ${this.id}`));
+    }
+    const attempt = this.attempt;
+    return new Promise((resolve, reject) => {
+      let settled = false;
+      const settle = (error: BleError | null, port?: NativeL2CAPChannelPort) => {
+        if (settled) return;
+        settled = true;
+        if (operationId !== null) this.opens.delete(operationId);
+        return error ? reject(error) : resolve(port!);
+      };
+      if (operationId !== null) this.opens.set(operationId, (error) => settle(error));
+      this.scheduler.schedule(() => {
+        if (settled) return;
+        if (attempt !== this.attempt || this.state !== 'connected') {
+          return settle(fail(BleErrorCode.DISCONNECTED, `Disconnected from ${this.id}`));
+        }
+        const injected = this.adapter.takeError('openL2CAPChannel', this.id);
+        if (injected) return settle(injected);
+        const server = this.device()?.l2capServers.get(psm);
+        if (!server) {
+          return settle(
+            fail(BleErrorCode.L2CAP_FAILED, `${this.id} has no L2CAP server at PSM ${psm}`)
+          );
+        }
+        const link = new FakeL2CAPLink(psm, this.id, this.scheduler, (closed) =>
+          this.links.delete(closed)
+        );
+        this.links.add(link);
+        server(link.peer);
+        settle(null, link.app);
+      });
+    });
+  }
+
   createBond(timeoutMs: number, operationId: number | null): Promise<void> {
     return this.operation('bond', 'createBond', { timeoutMs, operationId }, () => {
       this.adapter.bond(this.id);
@@ -799,6 +886,9 @@ class FakePeripheralHandle implements NativePeripheralPort {
   }
 
   async cancelOperation(operationId: number): Promise<void> {
+    this.opens.get(operationId)?.(
+      fail(BleErrorCode.OPERATION_CANCELLED, 'The L2CAP channel open was cancelled')
+    );
     const stream = this.streams.get(operationId);
     if (stream) {
       stream.cancelled = true;
@@ -905,6 +995,18 @@ class FakePeripheralHandle implements NativePeripheralPort {
 
   // Private
 
+  /**
+   * L2CAP channels belong to the connection (plan §5.5): they close with the adapter's error when
+   * Bluetooth went off, else with DISCONNECTED.
+   */
+  private closeLinks(ended: BleError | null): void {
+    const error =
+      ended && ADAPTER_ERRORS.includes(ended.code)
+        ? ended
+        : fail(BleErrorCode.DISCONNECTED, `Disconnected from ${this.id}`);
+    [...this.links].forEach((link) => link.close(error));
+  }
+
   private device(): VirtualDevice | undefined {
     return this.adapter.device(this.id);
   }
@@ -950,6 +1052,7 @@ class FakePeripheralHandle implements NativePeripheralPort {
 
   /** A ready connection was lost and a policy is set: wait, then try again. */
   private startReconnecting(error: BleError): void {
+    this.closeLinks(null);
     this.resetLink();
     this.reconnectAttempt = 1;
     this.setState('reconnecting', error);
@@ -1177,6 +1280,7 @@ class FakePeripheralHandle implements NativePeripheralPort {
     this.setState('disconnected', error);
     this.queue.failAll(fail(BleErrorCode.DISCONNECTED, 'Disconnected'));
     this.queue = this.newQueue();
+    this.closeLinks(error);
     // Subscriptions end with the connection (plan §4.8), and the peripheral forgets the CCCDs.
     this.subscriptions.clear();
     this.subscriptionKeys.clear();
@@ -1431,6 +1535,7 @@ export class FakeBleAdapter implements NativeBleKitPort {
       this.handles.forEach((handle) => handle.forceDisconnected(error));
       this.server?.close();
       this.advertising = null;
+      [...this.l2capServers.values()].forEach((server) => server.shut(error));
     }
   }
 
@@ -1454,6 +1559,8 @@ export class FakeBleAdapter implements NativeBleKitPort {
     this.errors = [];
     this.server?.close();
     this.advertising = null;
+    [...this.l2capServers.values()].forEach((server) => server.shut(null));
+    this.nextPsm = FIRST_DYNAMIC_PSM;
     this.bonded.clear();
     this.state = this.initial.state;
     this.permissions = { ...this.initial.permissions };
@@ -1626,6 +1733,37 @@ export class FakeBleAdapter implements NativeBleKitPort {
   connectCentral(options: { id?: string; mtu?: number } = {}): VirtualCentral {
     if (!this.server) throw fail(BleErrorCode.DISCONNECTED, 'No GATT server is open');
     return this.server.connect(options.id ?? `central-${this.nextId++}`, options.mtu ?? MIN_MTU);
+  }
+
+  /** The app's L2CAP servers by PSM (P5-03); several may run. Bluetooth off closes them. */
+  private readonly l2capServers = new Map<number, FakeL2CAPServer>();
+  private nextPsm = FIRST_DYNAMIC_PSM;
+
+  async publishL2CAPChannel(_secure: boolean): Promise<FakeL2CAPServer> {
+    const precondition =
+      this.takeError('publishL2CAPChannel') ??
+      adapterError(this.state) ??
+      this.permissionError('connect');
+    if (precondition) throw precondition;
+    const psm = this.nextPsm;
+    this.nextPsm = this.nextPsm === 0xff ? FIRST_DYNAMIC_PSM : this.nextPsm + 1;
+    const server = new FakeL2CAPServer(psm, this.scheduler, (closed) => {
+      if (this.l2capServers.get(closed.psm) === closed) this.l2capServers.delete(closed.psm);
+    });
+    this.l2capServers.set(psm, server);
+    await new Promise<void>((resolve) => this.scheduler.schedule(resolve));
+    return server;
+  }
+
+  openL2CAPChannel(
+    psm: number,
+    options: { centralId?: string } = {}
+  ): Promise<VirtualL2CAPChannel> {
+    const server = this.l2capServers.get(psm);
+    if (!server || this.state !== 'poweredOn') {
+      return Promise.reject(fail(BleErrorCode.L2CAP_FAILED, `No L2CAP server at PSM ${psm}`));
+    }
+    return server.accept(options.centralId ?? `central-${this.nextId++}`);
   }
 
   /** Android's keep-alive notification (P3-03). The fake keeps it; it has no service to show it. */

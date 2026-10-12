@@ -325,6 +325,25 @@ class ExpoBleKitModule : Module() {
         attributeOperation(promise) { engine.createBond(ref.id, timeoutMs.toLong(), promise.settler(), operationId) }
       }
 
+      // P5-03: not a GATT operation; resolves with the channel's own object.
+      AsyncFunction("openL2CAPChannel") {
+          ref: PeripheralObject,
+          psm: Int,
+          secure: Boolean,
+          timeoutMs: Double,
+          operationId: Int?,
+          promise: Promise,
+        ->
+        attributeOperation(promise) {
+          engine.openL2capChannel(ref.id, psm, secure, timeoutMs.toLong(), { result ->
+            result.fold(
+              onSuccess = { promise.resolve(L2capChannelObject(appContext, it)) },
+              onFailure = { promise.reject(BleKitException(it as CoreError)) },
+            )
+          }, operationId)
+        }
+      }
+
       // Hidden API, opt-in by calling it (plan §4.4, P2-06): false where Android lacks it.
       AsyncFunction("refreshGattCache") { ref: PeripheralObject, promise: Promise ->
         attributeOperation(promise) { engine.refreshGattCache(ref.id, promise.settler()) }
@@ -475,6 +494,62 @@ class ExpoBleKitModule : Module() {
         serverExecutor.execute {
           if (openServer === ref) closeServer() else ref.server?.close()
           ref.server = null
+          promise.resolve(null)
+        }
+      }
+    }
+
+    // P5-03: L2CAP servers and channels, on the BLE thread; their sockets block on threads of their own.
+    AsyncFunction("publishL2CAPChannel") { secure: Boolean, promise: Promise ->
+      executor.execute {
+        settle(promise) {
+          val server = engine.publishL2capChannel(secure)
+          val ref = L2capServerObject(appContext, server)
+          server.start()
+          promise.resolve(ref)
+        }
+      }
+    }
+
+    Class(L2capServerObject::class) {
+      Constructor {
+        throw CodedException(CoreError.Code.INVALID_ARGUMENT.value, "Use BleManager.publishL2CAPChannel()", null)
+      }
+
+      Property("psm") { ref: L2capServerObject -> ref.server.psm }
+
+      Function("takeChannel") { ref: L2capServerObject, channelId: Int -> ref.take(channelId) }
+
+      AsyncFunction("close") { ref: L2capServerObject, promise: Promise ->
+        executor.execute {
+          ref.close()
+          promise.resolve(null)
+        }
+      }
+    }
+
+    Class(L2capChannelObject::class) {
+      Constructor {
+        throw CodedException(CoreError.Code.INVALID_ARGUMENT.value, "Use openL2CAPChannel()", null)
+      }
+
+      Property("psm") { ref: L2capChannelObject -> ref.channel.psm }
+
+      Property("peerId") { ref: L2capChannelObject -> ref.channel.peerId }
+
+      Property("isOpen") { ref: L2capChannelObject -> ref.channel.isOpen }
+
+      AsyncFunction("write") { ref: L2capChannelObject, data: ByteArray, promise: Promise ->
+        executor.execute { ref.channel.write(data, promise.settler()) }
+      }
+
+      Function("receive") { ref: L2capChannelObject ->
+        executor.execute { ref.channel.receive() }
+      }
+
+      AsyncFunction("close") { ref: L2capChannelObject, promise: Promise ->
+        executor.execute {
+          ref.channel.close(null)
           promise.resolve(null)
         }
       }

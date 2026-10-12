@@ -7,6 +7,12 @@ import type {
   StreamProgressEvent,
   SubscriptionEndedEvent,
 } from './ExpoBleKit.types';
+import {
+  L2CAPChannelImpl,
+  L2CAP_OPEN_TIMEOUT_MS,
+  validatePsm,
+  validateSecure,
+} from './L2CAPChannel';
 import { BleError, BleErrorCode } from './errors';
 import {
   checkStreamData,
@@ -40,6 +46,7 @@ import type {
   CharacteristicSubscription,
   ConnectionState,
   ConnectOptions,
+  L2CAPChannel,
   NotificationBatch,
   OpOptions,
   Peripheral,
@@ -499,6 +506,25 @@ export class PeripheralImpl implements Peripheral {
         return peripheral.native.refreshGattCache();
       }, peripheral.context()),
   }))(this);
+
+  openL2CAPChannel(
+    psm: number,
+    options?: OpOptions & { android?: { secure?: boolean } }
+  ): Promise<L2CAPChannel> {
+    return guard(async () => {
+      const value = validatePsm(psm);
+      const android = options?.android;
+      if (android !== undefined && (typeof android !== 'object' || android === null)) {
+        throw invalid('android', 'expected an object');
+      }
+      const secure = validateSecure('android.secure', android?.secure);
+      const timeoutMs = operationTimeout(options, L2CAP_OPEN_TIMEOUT_MS);
+      const port = await this.cancellable(options, (operationId) =>
+        this.native.openL2CAPChannel(value, secure, timeoutMs, operationId)
+      );
+      return new L2CAPChannelImpl(port);
+    }, this.context());
+  }
 
   // Private
 

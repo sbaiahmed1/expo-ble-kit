@@ -2,6 +2,8 @@ import type {
   ConnectionStateEvent,
   ExpoBleKitModuleEvents,
   GattServerObjectEvents,
+  L2CAPChannelObjectEvents,
+  L2CAPServerObjectEvents,
   MtuChangeEvent,
   NotificationEvent,
   PeripheralObjectEvents,
@@ -57,6 +59,8 @@ export interface NativeBleKitPort {
   startAdvertising(data: NativeAdvertisingData, options: NativeAdvertisingOptions): Promise<number>;
   /** Stops advertisement `id`; does nothing once it ended. */
   stopAdvertising(id: number): Promise<void>;
+  /** P5-03: an L2CAP server; `secure` as validated by the TS layer. */
+  publishL2CAPChannel(secure: boolean): Promise<NativeL2CAPServerPort>;
   /** Android only (P3-04): a TaskManager task with a background scan. */
   registerBackgroundTask?(taskName: string, options: NativeBackgroundTaskOptions): Promise<void>;
   unregisterBackgroundTask?(taskName: string): Promise<void>;
@@ -145,6 +149,13 @@ export interface NativePeripheralPort {
   ): Promise<{ tx: Phy; rx: Phy }>;
   /** The link's RSSI in dBm. */
   readRssi(timeoutMs: number, operationId: number | null): Promise<number>;
+  /** P5-03: `secure` applies on Android only; cancellable through `operationId`. */
+  openL2CAPChannel(
+    psm: number,
+    secure: boolean,
+    timeoutMs: number,
+    operationId: number | null
+  ): Promise<NativeL2CAPChannelPort>;
   /**
    * A queued operation is removed; a running one rejects at once with OPERATION_CANCELLED while
    * the radio finishes it. Unknown or finished ids do nothing.
@@ -168,5 +179,34 @@ export interface NativeGattServerPort {
   addListener<E extends keyof GattServerObjectEvents>(
     event: E,
     listener: GattServerObjectEvents[E]
+  ): Subscription;
+}
+
+/** An L2CAP channel's native handle (P5-03). It emits `close` once, also after `close()`. */
+export interface NativeL2CAPChannelPort {
+  readonly psm: number;
+  readonly peerId: string;
+  /** A published snapshot: a channel can close before JS subscribed to its events. */
+  readonly isOpen: boolean;
+  /** Resolves once the OS took every byte; rejects (and closes) after 10 s without progress. */
+  write(data: Uint8Array): Promise<void>;
+  /** Starts reading: until then nothing is read, and flow control holds the peer back. */
+  receive(): void;
+  close(): Promise<void>;
+  addListener<E extends keyof L2CAPChannelObjectEvents>(
+    event: E,
+    listener: L2CAPChannelObjectEvents[E]
+  ): Subscription;
+}
+
+/** An L2CAP server's native handle (P5-03). */
+export interface NativeL2CAPServerPort {
+  readonly psm: number;
+  /** The channel a `channel` event announced; null once taken, or when it closed meanwhile. */
+  takeChannel(channelId: number): NativeL2CAPChannelPort | null;
+  close(): Promise<void>;
+  addListener<E extends keyof L2CAPServerObjectEvents>(
+    event: E,
+    listener: L2CAPServerObjectEvents[E]
   ): Subscription;
 }

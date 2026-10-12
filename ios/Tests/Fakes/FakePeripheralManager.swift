@@ -23,6 +23,7 @@ final class FakePeripheralManager: PeripheralManaging {
   var state: CBManagerState
   weak var delegate: PeripheralManagingDelegate?
   weak var advertisingDelegate: PeripheralAdvertisingDelegate?
+  weak var l2capDelegate: PeripheralL2CAPDelegate?
   var confirmsAdds = true
   private(set) var added: [CBUUID] = []
   private(set) var answers: [(request: FakeATTRequest, result: CBATTError.Code)] = []
@@ -69,6 +70,7 @@ final class FakePeripheralManager: PeripheralManaging {
     self.state = state
     delegate?.peripheralManagerDidUpdateState(self)
     advertisingDelegate?.peripheralManagerStateChanged(self)
+    l2capDelegate?.peripheralManagerStateChanged(self)
   }
 
   struct Advertisement: Equatable {
@@ -90,5 +92,26 @@ final class FakePeripheralManager: PeripheralManaging {
 
   func didStartAdvertising(error: Error? = nil) {
     advertisingDelegate?.peripheralManagerDidStartAdvertising(self, error: error)
+  }
+
+  /// What `publishL2CAPChannel` was asked (P5-03); the test answers with `didPublish`.
+  private(set) var publishes: [Bool] = []
+  private(set) var unpublished: [CBL2CAPPSM] = []
+
+  func publishL2CAPChannel(withEncryption encryptionRequired: Bool) {
+    publishes.append(encryptionRequired)
+  }
+
+  func unpublishL2CAPChannel(_ psm: CBL2CAPPSM) {
+    unpublished.append(psm)
+  }
+
+  func didPublish(_ psm: CBL2CAPPSM, error: Error? = nil) {
+    l2capDelegate?.peripheralManager(self, didPublishL2CAPChannel: psm, error: error)
+  }
+
+  /// A central opened a channel.
+  func didOpen(_ channel: FakeL2CAPChannel?, error: Error? = nil) {
+    l2capDelegate?.peripheralManager(self, didOpen: channel, error: error)
   }
 }

@@ -1,5 +1,6 @@
 package expo.modules.blekit.core
 
+import java.io.IOException
 import java.util.UUID
 
 /** Native connection states (plan §4.8). */
@@ -136,6 +137,24 @@ class PeripheralSession(
 
   /** Arrival times of notifications; the engine makes them epoch milliseconds (plan §4.10). */
   var clock: () -> Double = { executor.nowMs().toDouble() }
+
+  /** Runs the blocking socket calls of L2CAP channels (P5-03); tests run them by hand. */
+  var runner: BlockingRunner = ThreadRunner
+
+  /** An L2CAP channel being opened (P5-03). */
+  private class PendingOpen(
+    val psm: Int,
+    val socket: L2capSocketPort,
+    val operationId: Int?,
+    val completion: (Result<L2capChannel>) -> Unit,
+  ) {
+    var timeout: Cancellable? = null
+  }
+
+  private val opens = mutableListOf<PendingOpen>()
+
+  /** Open L2CAP channels: they end with the connection. */
+  private val channels = linkedSetOf<L2capChannel>()
 
   /**
    * Subscriptions that end while the connection lives on (reconnecting): a reconnection without
@@ -284,6 +303,8 @@ class PeripheralSession(
       SessionState.READY -> {
         disconnectWaiters += completion
         setState(SessionState.DISCONNECTING, null)
+        // A channel's socket would otherwise keep the link up.
+        closeL2cap(CoreError(CoreError.Code.DISCONNECTED, "Disconnected from $address"))
         gatt?.disconnect()
         // Rule 4: if the stack never confirms, close anyway.
         disconnectTimeout = executor.executeDelayed(DISCONNECT_TIMEOUT_MS) {
@@ -341,6 +362,9 @@ class PeripheralSession(
    */
   fun cancel(operationId: Int) {
     cancellable[operationId]?.let(queue::cancel)
+    opens.firstOrNull { it.operationId == operationId }?.let {
+      failOpen(it, CoreError(CoreError.Code.OPERATION_CANCELLED, "Opening L2CAP channel ${it.psm} was cancelled"))
+    }
   }
 
   /** Reads a characteristic (plan §5.4). Long values are read in full by the stack. */
@@ -796,6 +820,79 @@ class PeripheralSession(
 
   private fun phyPair(number: Int?): Pair<Int, Int> = (number ?: 0).let { (it shr 8) to (it and 0xff) }
 
+  /**
+   * Opens an L2CAP channel to [psm] on a ready connection (P5-03). Not a GATT operation, so it
+   * doesn't queue. `connect()` blocks a thread of its own; a timeout or a cancel closes the socket,
+   * which aborts it (`BluetoothSocket.connect` docs).
+   */
+  fun openL2capChannel(
+    psm: Int,
+    secure: Boolean,
+    timeoutMs: Long?,
+    completion: (Result<L2capChannel>) -> Unit,
+    operationId: Int? = null,
+  ) {
+    if (state != SessionState.READY) {
+      return completion(Result.failure(CoreError(CoreError.Code.DISCONNECTED, "Not connected to $address")))
+    }
+    val socket = try {
+      device().createL2capChannel(psm, secure)
+    } catch (error: IOException) {
+      return completion(Result.failure(l2capFailed(psm, error)))
+    }
+    val open = PendingOpen(psm, socket, operationId, completion)
+    opens += open
+    val limit = timeoutMs ?: L2CAP_OPEN_TIMEOUT_MS
+    open.timeout = executor.executeDelayed(limit) {
+      failOpen(
+        open,
+        CoreError(CoreError.Code.OPERATION_TIMEOUT, "Opening L2CAP channel $psm timed out after $limit ms"),
+      )
+    }
+    logger.log(LogLevel.DEBUG, address) { "opening L2CAP channel $psm${if (secure) "" else " (insecure)"}" }
+    runner.run("blekit-l2cap-connect") {
+      val failure = try {
+        socket.connect()
+        null
+      } catch (error: IOException) {
+        error
+      }
+      executor.execute { opened(open, failure) }
+    }
+  }
+
+  private fun opened(open: PendingOpen, failure: IOException?) {
+    if (open !in opens) {
+      // Timed out or cancelled meanwhile: the socket is closed already.
+      return
+    }
+    if (failure != null) return failOpen(open, l2capFailed(open.psm, failure))
+    opens -= open
+    open.timeout?.cancel()
+    val channel = L2capChannel(open.psm, address, open.socket, executor, runner)
+    channel.onEnded = { channels -= it }
+    channels += channel
+    logger.log(LogLevel.INFO, address) { "L2CAP channel ${open.psm} open" }
+    open.completion(Result.success(channel))
+  }
+
+  private fun failOpen(open: PendingOpen, error: CoreError) {
+    if (!opens.remove(open)) return
+    open.timeout?.cancel()
+    runCatching { open.socket.close() }
+    logger.log(LogLevel.WARN, address) { "L2CAP channel ${open.psm}: ${error.code.value} ${error.message}" }
+    open.completion(Result.failure(error))
+  }
+
+  private fun l2capFailed(psm: Int, error: IOException) =
+    CoreError(CoreError.Code.L2CAP_FAILED, "Opening L2CAP channel $psm failed: ${error.message}")
+
+  /** L2CAP opens and channels end with the connection (plan §5.5). */
+  private fun closeL2cap(error: CoreError) {
+    opens.toList().forEach { failOpen(it, error) }
+    channels.toList().forEach { it.close(error) }
+  }
+
   /** The adapter went away (off, or the module is destroyed): drop everything with [error]. */
   fun forceDisconnected(error: CoreError) {
     if (state == SessionState.DISCONNECTED) {
@@ -1235,6 +1332,7 @@ class PeripheralSession(
 
   /** A ready connection was lost unexpectedly and a policy is set: wait, then try again (P2-01). */
   private fun startReconnecting(error: CoreError) {
+    closeL2cap(CoreError(CoreError.Code.DISCONNECTED, "Disconnected from $address"))
     services = emptyList()
     mtu = DEFAULT_MTU
     reconnectAttempt = 1
@@ -1374,6 +1472,11 @@ class PeripheralSession(
     // The state changes first, so callbacks of the operations failed below see the final state.
     setState(SessionState.DISCONNECTED, error)
     queue.failAll(CoreError(CoreError.Code.DISCONNECTED, "Disconnected from $address"))
+    // Channels close with the adapter's error when Bluetooth went off, else DISCONNECTED (plan §5.5).
+    closeL2cap(
+      error?.takeIf { it.code in ADAPTER_ERRORS }
+        ?: CoreError(CoreError.Code.DISCONNECTED, "Disconnected from $address"),
+    )
     // Subscriptions end with the connection (plan §4.8); a reconnection keeps them (P2-01).
     subscriptions.clear()
     subscriptionKeys.clear()
@@ -1403,6 +1506,17 @@ class PeripheralSession(
   companion object {
     /** How long setPreferredPhy waits for onPhyUpdate before reading the PHYs (P5-02). */
     const val PHY_UPDATE_WAIT_MS = 2_000L
+
+    /** openL2capChannel's default timeout (P5-03): a secure channel may wait for pairing. */
+    const val L2CAP_OPEN_TIMEOUT_MS = 30_000L
+
+    /** Errors that mean Bluetooth itself went away. */
+    private val ADAPTER_ERRORS = setOf(
+      CoreError.Code.BLUETOOTH_POWERED_OFF,
+      CoreError.Code.BLUETOOTH_RESETTING,
+      CoreError.Code.BLUETOOTH_UNSUPPORTED,
+      CoreError.Code.BLUETOOTH_UNAUTHORIZED,
+    )
 
     /** `BluetoothGatt.GATT_ERROR` (0x85), Android's catch-all connect failure. */
     const val GATT_ERROR = 133

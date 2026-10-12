@@ -3,6 +3,8 @@ import { NativeModule, requireOptionalNativeModule, SharedObject } from 'expo';
 import type {
   ExpoBleKitModuleEvents,
   GattServerObjectEvents,
+  L2CAPChannelObjectEvents,
+  L2CAPServerObjectEvents,
   PeripheralObjectEvents,
 } from './ExpoBleKit.types';
 import type { NativeAdvertisingData, NativeAdvertisingOptions } from './internal/advertising';
@@ -13,6 +15,8 @@ import type {
   NativeBleKitPort,
   NativeDiagnostics,
   NativeGattServerPort,
+  NativeL2CAPChannelPort,
+  NativeL2CAPServerPort,
   NativePeripheralPort,
 } from './internal/port';
 import type { NativeScanOptions } from './internal/scanOptions';
@@ -75,7 +79,36 @@ export declare class NativePeripheral
     timeoutMs: number,
     operationId: number | null
   ): Promise<{ tx: Phy; rx: Phy }>;
+  openL2CAPChannel(
+    psm: number,
+    secure: boolean,
+    timeoutMs: number,
+    operationId: number | null
+  ): Promise<NativeL2CAPChannel>;
   cancelOperation(operationId: number): Promise<void>;
+}
+
+/** An L2CAP channel's native handle (P5-03). */
+export declare class NativeL2CAPChannel
+  extends SharedObject<L2CAPChannelObjectEvents>
+  implements NativeL2CAPChannelPort
+{
+  readonly psm: number;
+  readonly peerId: string;
+  readonly isOpen: boolean;
+  write(data: Uint8Array): Promise<void>;
+  receive(): void;
+  close(): Promise<void>;
+}
+
+/** An L2CAP server's native handle (P5-03). */
+export declare class NativeL2CAPServer
+  extends SharedObject<L2CAPServerObjectEvents>
+  implements NativeL2CAPServerPort
+{
+  readonly psm: number;
+  takeChannel(channelId: number): NativeL2CAPChannel | null;
+  close(): Promise<void>;
 }
 
 /** The GATT server's native handle (plan §4.5, P4-01). */
@@ -106,6 +139,7 @@ export declare class ExpoBleKitModule
   openGattServer(services: NativeServiceDefinition[]): Promise<NativeGattServer>;
   startAdvertising(data: NativeAdvertisingData, options: NativeAdvertisingOptions): Promise<number>;
   stopAdvertising(id: number): Promise<void>;
+  publishL2CAPChannel(secure: boolean): Promise<NativeL2CAPServer>;
   setLogLevel(level: LogLevel): void;
   setLogForwarding(enabled: boolean): void;
 }

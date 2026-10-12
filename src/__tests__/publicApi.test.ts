@@ -13,13 +13,10 @@ const LATER: Record<string, Record<string, string>> = {
   BleManagerApi: {
     ios: 'P5-04',
   },
-  Peripheral: {
-    openL2CAPChannel: 'P5-03',
-  },
 };
 
 /** Interfaces of the later tasks themselves (P2–P5), not yet in src/types.ts. */
-const LATER_INTERFACES = new Set(['L2CAPChannel', 'AccessoryPickerItem', 'CompanionDeviceFilter']);
+const LATER_INTERFACES = new Set(['AccessoryPickerItem', 'CompanionDeviceFilter']);
 
 /**
  * The top-level member names of each `interface Name … { … }` in `source`. Comments are dropped
@@ -67,6 +64,7 @@ describe('the public API matches plan §5', () => {
       read('src/types.ts'),
       read('src/testing/FakeBleAdapter.ts'),
       read('src/testing/FakeGattServer.ts'),
+      read('src/testing/FakeL2CAP.ts'),
     ].join('\n')
   );
 

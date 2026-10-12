@@ -50,9 +50,12 @@ enum DescriptorValue {
 final class CBPeripheralAdapter: NSObject, PeripheralLike, CBPeripheralDelegate {
   let peripheral: CBPeripheral
   weak var delegate: PeripheralLikeDelegate?
+  /// The manager's queue, where L2CAP channel streams report too (P5-03).
+  private let queue: DispatchQueue
 
-  init(peripheral: CBPeripheral) {
+  init(peripheral: CBPeripheral, queue: DispatchQueue) {
     self.peripheral = peripheral
+    self.queue = queue
     super.init()
     peripheral.delegate = self
   }
@@ -101,6 +104,10 @@ final class CBPeripheralAdapter: NSObject, PeripheralLike, CBPeripheralDelegate 
 
   func maximumWriteValueLength(for type: CBCharacteristicWriteType) -> Int {
     peripheral.maximumWriteValueLength(for: type)
+  }
+
+  func openL2CAPChannel(_ psm: CBL2CAPPSM) {
+    peripheral.openL2CAPChannel(psm)
   }
 
   // Attributes handed to this adapter always come from its own discovery, so they are
@@ -189,18 +196,24 @@ final class CBPeripheralAdapter: NSObject, PeripheralLike, CBPeripheralDelegate 
   func peripheralDidUpdateName(_ peripheral: CBPeripheral) {
     delegate?.peripheralDidUpdateName(self)
   }
+
+  func peripheral(_ peripheral: CBPeripheral, didOpen channel: CBL2CAPChannel?, error: Error?) {
+    delegate?.peripheral(self, didOpen: channel.map { CBL2CAPChannelAdapter($0, queue: queue) }, error: error)
+  }
 }
 
 // MARK: - Central manager
 
 final class CBCentralManagerAdapter: NSObject, CentralManaging, CBCentralManagerDelegate {
   private let manager: CBCentralManager
+  private let queue: DispatchQueue
   /// One adapter per peripheral identifier, so the core always sees the same object.
   private var adapters: [UUID: CBPeripheralAdapter] = [:]
   weak var delegate: CentralManagingDelegate?
 
   /// Creates the CBCentralManager, which may show the Bluetooth permission prompt.
   init(queue: DispatchQueue, options: [String: Any]?) {
+    self.queue = queue
     manager = CBCentralManager(delegate: nil, queue: queue, options: options)
     super.init()
     // Callbacks are delivered on `queue`, so none can arrive before the delegate is set.
@@ -242,7 +255,7 @@ final class CBCentralManagerAdapter: NSObject, CentralManaging, CBCentralManager
     if let existing = adapters[peripheral.identifier] {
       return existing
     }
-    let created = CBPeripheralAdapter(peripheral: peripheral)
+    let created = CBPeripheralAdapter(peripheral: peripheral, queue: queue)
     adapters[peripheral.identifier] = created
     return created
   }

@@ -10,9 +10,10 @@ import profile from '../../../test-peripherals/profile.json';
 import { TestProfile } from './gattNames';
 import { profileValue, type ProfileValue } from './profile';
 
-// P4-01 … P5-01: the phone as the test peripheral, for the two-phone suite and the other central
-// checks: the profile's TEST service (without L2CAP_PSM) and Heart Rate. SECURE needs an encrypted
-// link, so reading it from another phone pairs the two. CONTROL takes
+// P4-01 … P5-03: the phone as the test peripheral, for the two-phone suite and the other central
+// checks: the profile's TEST service and Heart Rate. SECURE needs an encrypted link, so reading it
+// from another phone pairs the two. L2CAP_PSM tells the PSM of the phone's L2CAP echo server
+// (l2capEcho.ts), which the system assigns, so the read handler answers it. CONTROL takes
 // SET_STREAM, RESET_COUNTERS and SEND_INDICATIONS like the Bumble peripheral; DISCONNECT_AFTER and
 // TOGGLE_SECONDARY_SERVICE need APIs the peripheral role doesn't have.
 
@@ -24,8 +25,9 @@ const spec = (key: string) =>
   };
 
 /**
- * STATIC_READ static; LONG_READ, ECHO_READ and SINK_COUNTER from the handlers; STREAM and INDICATE
- * sent on CONTROL commands; Heart Rate Measurement every second while a central subscribes.
+ * STATIC_READ static; LONG_READ, ECHO_READ, SINK_COUNTER and L2CAP_PSM from the handlers; STREAM
+ * and INDICATE sent on CONTROL commands; Heart Rate Measurement every second while a central
+ * subscribes.
  */
 export const serverServices: ServiceDefinition[] = [
   {
@@ -63,6 +65,7 @@ export const serverServices: ServiceDefinition[] = [
         value: profileValue(spec('SECURE').value),
       },
       { uuid: TestProfile.CONTROL, properties: ['write'], permissions: ['writeable'] },
+      { uuid: TestProfile.L2CAP_PSM, properties: ['read'], permissions: ['readable'] },
     ],
   },
   {
@@ -120,7 +123,9 @@ const invalidParameters = () =>
 export function serveTestProfile(
   server: GattServer,
   onRequest: (line: string) => void,
-  onCentral?: (centralId: string) => void
+  onCentral?: (centralId: string) => void,
+  /** The L2CAP echo server's PSM; without one, L2CAP_PSM reads are refused. */
+  l2capPsm?: number
 ): Subscription[] {
   let reads = 0;
   let echo: Uint8Array = new Uint8Array(0);
@@ -239,6 +244,10 @@ export function serveTestProfile(
         return longRead.map((byte) => (byte + shift) & 0xff);
       }
       if (characteristic === TestProfile.ECHO_READ) return echo;
+      if (characteristic === TestProfile.L2CAP_PSM) {
+        if (l2capPsm === undefined) throw new BleError('NOT_SUPPORTED', 'No L2CAP echo server');
+        return Uint8Array.of(l2capPsm & 0xff, l2capPsm >> 8);
+      }
       return uint32(sink);
     }),
     server.onWriteRequest(({ centralId, characteristic, value }) => {

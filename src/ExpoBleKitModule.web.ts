@@ -54,6 +54,10 @@ class WebPeripheral {
     throw notSupported();
   }
 
+  async openL2CAPChannel(): Promise<never> {
+    throw notSupported();
+  }
+
   async cancelOperation(): Promise<void> {}
 
   addListener() {

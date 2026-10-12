@@ -3,6 +3,7 @@ import { Platform } from 'react-native';
 import { AdvertisementImpl } from './Advertiser';
 import type { LogEvent, ScanErrorEvent, ScanResultsEvent } from './ExpoBleKit.types';
 import { GattServerImpl } from './GattServer';
+import { L2CAPServerImpl, validateSecure } from './L2CAPChannel';
 import { PeripheralImpl } from './Peripheral';
 import { BleError, BleErrorCode } from './errors';
 import { toNativeAdvertising } from './internal/advertising';
@@ -346,6 +347,16 @@ export const BleManager: BleManagerApi = {
       const module = getNativeModule();
       const id = await module.startAdvertising(native.data, native.options);
       return new AdvertisementImpl(module, id);
+    });
+  },
+
+  publishL2CAPChannel(options) {
+    return guard(async () => {
+      if (options !== undefined && (typeof options !== 'object' || options === null)) {
+        throw new BleError(BleErrorCode.INVALID_ARGUMENT, 'Invalid options: expected an object');
+      }
+      const secure = validateSecure('secure', options?.secure);
+      return new L2CAPServerImpl(await getNativeModule().publishL2CAPChannel(secure));
     });
   },
 

@@ -51,8 +51,10 @@ describe('two-phone suite', () => {
       'INDICATE',
       'CONTROL errors',
       'Heart Rate',
+      'L2CAP echo',
     ]);
-    expect(describeSuite(report)).toBe('Two-phone suite OK: 10/10 checks');
+    expect(report.checks.at(-1)?.detail).toMatch(/^1024 KB each way over PSM 0x81: sent in/);
+    expect(describeSuite(report)).toBe('Two-phone suite OK: 11/11 checks');
   });
 
   it('fails a check without stopping the others, and names it', async () => {
@@ -62,8 +64,8 @@ describe('two-phone suite', () => {
       ok: false,
       detail: 'unknown opcode: accepted, bad parameters: accepted',
     });
-    expect(report.checks.at(-1)?.name).toBe('Heart Rate');
-    expect(describeSuite(report)).toBe('Two-phone suite FAILED: 9/10 checks (CONTROL errors)');
+    expect(report.checks.at(-1)?.name).toBe('L2CAP echo');
+    expect(describeSuite(report)).toBe('Two-phone suite FAILED: 10/11 checks (CONTROL errors)');
   });
 
   it('reports a missing peripheral', async () => {

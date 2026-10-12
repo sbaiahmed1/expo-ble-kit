@@ -3,6 +3,7 @@ import { BleError, BleManager, type Peripheral } from 'expo-ble-kit';
 import profile from '../../../test-peripherals/profile.json';
 import { describeBatchedStream, runBatchedStream } from './batchedStream';
 import { TestProfile } from './gattNames';
+import { describeEcho, runL2capEcho } from './l2capEcho';
 import { profileValue, type ProfileValue } from './profile';
 import { payload, resetCounters, settledCounter } from './sink';
 
@@ -10,7 +11,8 @@ import { payload, resetCounters, settledCounter } from './sink';
 // peripheral of test-peripherals/profile.json works too). Phone A finds it by the TEST service and
 // checks what the peripheral role must do (P4-01 … P4-03): static and long reads, writes and long
 // writes, writes without response, the 100 Hz stream without gaps, indications, invalid commands
-// and Heart Rate. The same checks as e2e/macos-central, from a phone.
+// and Heart Rate; then 1 MB each way over an L2CAP channel (P5-03). The same checks as
+// e2e/macos-central, from a phone.
 
 export type SuiteCheck = { name: string; ok: boolean; detail: string };
 export type SuiteReport = { peripheral: string | null; checks: SuiteCheck[]; ok: boolean };
@@ -156,6 +158,13 @@ function checks(device: Peripheral, streamSeconds: number): [string, () => Promi
           values.length >= 2 &&
           values.every(([flags, bpm]) => flags === 0 && bpm >= heartRate.minBpm && bpm <= heartRate.maxBpm);
         return [ok, `${values.length} measurements: ${values.map(([, bpm]) => bpm).join(', ')} bpm`];
+      },
+    ],
+    [
+      'L2CAP echo',
+      async () => {
+        const report = await runL2capEcho(device);
+        return [report.ok, describeEcho(report)];
       },
     ],
   ];

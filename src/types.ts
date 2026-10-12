@@ -541,6 +541,62 @@ export interface Advertisement {
   stop(): Promise<void>;
 }
 
+/**
+ * An L2CAP connection-oriented channel: a byte stream to another device, faster than GATT for bulk
+ * data. From `peripheral.openL2CAPChannel()`, or a central opening one to your
+ * `BleManager.publishL2CAPChannel()` server. Chunk boundaries aren't kept: the bytes of one
+ * `write` may arrive in several pieces, and several writes in one.
+ */
+export interface L2CAPChannel {
+  /** The channel's PSM. */
+  readonly psm: number;
+  /**
+   * The other device: the peripheral's id on a channel you opened, the central's id (as the GATT
+   * server reports it) on a channel a central opened to your server.
+   */
+  readonly peerId: string;
+  /** False once the channel closed. */
+  readonly isOpen: boolean;
+  /**
+   * Sends bytes. Resolves once the system took all of them, so awaiting each call paces a transfer
+   * to what the link carries; writes keep their order. Rejects with `OPERATION_TIMEOUT`, and closes
+   * the channel, when the system takes none of the bytes for 10 s (the other side stopped reading),
+   * and with `L2CAP_FAILED` once the channel is closed.
+   */
+  write(data: Uint8Array): Promise<void>;
+  /**
+   * Calls `listener` with bytes as they arrive. Reading starts with the first listener: until then
+   * the other side is held back by flow control, so no data is lost while you set up. Data that
+   * arrives after the last listener was removed is dropped.
+   */
+  addDataListener(listener: (data: Uint8Array) => void): Subscription;
+  /**
+   * Calls `listener` once, when the channel closes: without an error when either side closed it,
+   * with `DISCONNECTED` when the peripheral's connection ended, `OPERATION_TIMEOUT` after a stalled
+   * write, `L2CAP_FAILED` after an I/O error, or the adapter's error when Bluetooth went off. Not
+   * called when added after the channel closed.
+   */
+  addCloseListener(listener: (error?: BleError) => void): Subscription;
+  /** Closes the channel; pending writes reject with `L2CAP_FAILED`. Does nothing once closed. */
+  close(): Promise<void>;
+}
+
+/** An L2CAP channel server (`BleManager.publishL2CAPChannel`). */
+export interface L2CAPServer {
+  /**
+   * The PSM the system assigned. Centrals can't discover it: tell them, for example in a
+   * characteristic of your GATT server.
+   */
+  readonly psm: number;
+  /**
+   * Calls `listener` with each channel a central opens. A channel that arrives while there is no
+   * listener is closed.
+   */
+  addChannelListener(listener: (channel: L2CAPChannel) => void): Subscription;
+  /** Stops accepting channels and closes the open ones. Turning Bluetooth off closes it too. */
+  close(): Promise<void>;
+}
+
 /** What the notification of Android's keep-alive foreground service shows. */
 export interface ForegroundServiceNotification {
   /**
@@ -837,6 +893,29 @@ export interface Peripheral {
      */
     refreshGattCache(): Promise<boolean>;
   };
+
+  /**
+   * Opens an L2CAP channel to the peripheral's `psm` (1–255), which the peripheral's app or
+   * firmware tells you, often in a characteristic. Needs a ready connection; the channel closes
+   * with it. Rejects with `L2CAP_FAILED` when the peripheral refuses, `OPERATION_TIMEOUT` after
+   * `timeoutMs` (default 30 s: a secure channel may wait for pairing), `DISCONNECTED` without a
+   * connection, and `NOT_SUPPORTED` before Android 10.
+   */
+  openL2CAPChannel(
+    psm: number,
+    options?: OpOptions & {
+      /** Android-only. */
+      android?: {
+        /**
+         * Ask for an authenticated, encrypted link (`createL2capChannel`), which may start pairing;
+         * false accepts an unencrypted one (`createInsecureL2capChannel`). On iOS the publishing
+         * side decides.
+         * @defaultValue true
+         */
+        secure?: boolean;
+      };
+    }
+  ): Promise<L2CAPChannel>;
 }
 
 /** The type of {@link BleManager}. */
@@ -906,6 +985,21 @@ export interface BleManagerApi {
    * `bluetooth-peripheral` background mode (plugin option `ios.backgroundModes: ['peripheral']`).
    */
   startAdvertising(data: AdvertisingData, options?: AdvertisingOptions): Promise<Advertisement>;
+
+  /**
+   * Publishes an L2CAP channel server; centrals open channels to its `psm`. Several servers may
+   * run. Needs Bluetooth on and the connect permission (`requestPermissionsAsync()` first), and
+   * Android 10+ (`NOT_SUPPORTED` before). Centrals reach the phone while it advertises or through a
+   * connection they already have.
+   */
+  publishL2CAPChannel(options?: {
+    /**
+     * Require an encrypted link (iOS) or an authenticated, encrypted one (Android), which may start
+     * pairing; false accepts unencrypted links.
+     * @defaultValue true
+     */
+    secure?: boolean;
+  }): Promise<L2CAPServer>;
 
   /**
    * Delivers events to the `expo-task-manager` task `taskName`, also while the app isn't running:

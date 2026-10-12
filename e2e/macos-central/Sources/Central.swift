@@ -51,6 +51,7 @@ final class Central: NSObject, @unchecked Sendable {
   let writing = Slot<Void>()
   let notifying = Slot<Void>()
   let sending = Slot<Void>()
+  let opening = Slot<CBL2CAPChannel>()
 
   init(profile: Profile, streamSeconds: Double) {
     self.profile = profile
@@ -263,6 +264,7 @@ extension Central: CBCentralManagerDelegate {
     writing.finish(.failure(failure))
     notifying.finish(.failure(failure))
     sending.finish(.failure(failure))
+    opening.finish(.failure(failure))
   }
 }
 
@@ -296,5 +298,13 @@ extension Central: CBPeripheralDelegate {
 
   func peripheralIsReady(toSendWriteWithoutResponse peripheral: CBPeripheral) {
     sending.finish(.success(()))
+  }
+
+  func peripheral(_ peripheral: CBPeripheral, didOpen channel: CBL2CAPChannel?, error: Error?) {
+    if let channel, error == nil {
+      opening.finish(.success(channel))
+    } else {
+      opening.finish(.failure(error ?? Failure("no L2CAP channel")))
+    }
   }
 }

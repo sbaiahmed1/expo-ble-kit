@@ -52,6 +52,12 @@ protocol PeripheralManaging: AnyObject {
   /// Advertises the two keys iOS supports (Apple's `startAdvertising(_:)` docs).
   func startAdvertising(localName: String?, serviceUUIDs: [CBUUID])
   func stopAdvertising()
+  /// The L2CAP publisher's callbacks (P5-03).
+  var l2capDelegate: PeripheralL2CAPDelegate? { get set }
+  /// Answered by `didPublishL2CAPChannel` with the PSM iOS assigned.
+  func publishL2CAPChannel(withEncryption encryptionRequired: Bool)
+  /// Also closes the channels on `psm` (Apple's `unpublishL2CAPChannel(_:)` docs).
+  func unpublishL2CAPChannel(_ psm: CBL2CAPPSM)
 }
 
 /// Callbacks of `PeripheralManaging`, on the peripheral queue.

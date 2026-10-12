@@ -5,12 +5,16 @@ import Foundation
 final class CBPeripheralManagerAdapter: NSObject, PeripheralManaging {
   weak var delegate: PeripheralManagingDelegate?
   weak var advertisingDelegate: PeripheralAdvertisingDelegate?
+  weak var l2capDelegate: PeripheralL2CAPDelegate?
   private var manager: CBPeripheralManager!
+  /// Where L2CAP channel streams report (P5-03): the peripheral queue.
+  private let queue: DispatchQueue
   /// What notifications need: the published characteristics and the subscribed centrals.
   private var characteristics: [CBUUID: CBMutableCharacteristic] = [:]
   private var centrals: [UUID: CBCentral] = [:]
 
   init(queue: DispatchQueue) {
+    self.queue = queue
     super.init()
     manager = CBPeripheralManager(
       delegate: self,
@@ -60,12 +64,33 @@ final class CBPeripheralManagerAdapter: NSObject, PeripheralManaging {
   func stopAdvertising() {
     manager.stopAdvertising()
   }
+
+  func publishL2CAPChannel(withEncryption encryptionRequired: Bool) {
+    manager.publishL2CAPChannel(withEncryption: encryptionRequired)
+  }
+
+  func unpublishL2CAPChannel(_ psm: CBL2CAPPSM) {
+    manager.unpublishL2CAPChannel(psm)
+  }
 }
 
 extension CBPeripheralManagerAdapter: CBPeripheralManagerDelegate {
   func peripheralManagerDidUpdateState(_ peripheral: CBPeripheralManager) {
     delegate?.peripheralManagerDidUpdateState(self)
     advertisingDelegate?.peripheralManagerStateChanged(self)
+    l2capDelegate?.peripheralManagerStateChanged(self)
+  }
+
+  func peripheralManager(_ peripheral: CBPeripheralManager, didPublishL2CAPChannel PSM: CBL2CAPPSM, error: Error?) {
+    l2capDelegate?.peripheralManager(self, didPublishL2CAPChannel: PSM, error: error)
+  }
+
+  func peripheralManager(_ peripheral: CBPeripheralManager, didOpen channel: CBL2CAPChannel?, error: Error?) {
+    l2capDelegate?.peripheralManager(
+      self,
+      didOpen: channel.map { CBL2CAPChannelAdapter($0, queue: queue) },
+      error: error
+    )
   }
 
   func peripheralManagerDidStartAdvertising(_ peripheral: CBPeripheralManager, error: Error?) {
