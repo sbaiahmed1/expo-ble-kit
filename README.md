@@ -65,7 +65,7 @@ Debug builds of the example app on a Samsung Galaxy A52 (Android 14) and an iPho
 - [Troubleshooting](docs/troubleshooting.md): Android status 133, reconnecting by id, location services, the iOS Simulator.
 - [Soak tests](docs/soak.md) and [benchmarks](docs/benchmarks.md): the long runs and the throughput measurements.
 - API reference: on the website, or `yarn docs` builds it into `docs/api/`.
-- The example app in `example/`: Explorer, Heart Rate, Throughput, the phone as a test peripheral, and the developer checks.
+- The example app in `example/`: Explorer, Heart Rate, Throughput, the phone as a test peripheral, Background (the background scenarios), and the developer checks.
 
 ## For coding agents
 

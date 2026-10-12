@@ -4,7 +4,7 @@ appId: expo.modules.blekit.example
 ---
 - runFlow: _setup.yaml
 - tapOn:
-    id: tab-checks
+    id: tab-background
 - scrollUntilVisible:
     element:
       id: keep-alive-refresh

@@ -7,7 +7,7 @@ name: Keep alive
 ---
 - runFlow: _setup.yaml
 - tapOn:
-    id: tab-checks
+    id: tab-background
 - scrollUntilVisible:
     element:
       id: keep-alive-refresh

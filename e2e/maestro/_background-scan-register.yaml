@@ -5,7 +5,7 @@ appId: expo.modules.blekit.example
 - evalScript: "${output.registerButton = typeof FILTER !== 'undefined' && FILTER == 'apple' ? 'background-scan-apple' : 'background-scan-test'}"
 - runFlow: _setup.yaml
 - tapOn:
-    id: tab-checks
+    id: tab-background
 - scrollUntilVisible:
     element:
       id: background-scan-unregister

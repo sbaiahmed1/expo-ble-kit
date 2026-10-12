@@ -6,6 +6,7 @@ import { useBleState } from 'expo-ble-kit';
 
 import { startDemo } from './src/demo/testPeripheral';
 import { useRestorationLink } from './src/lib/restoration';
+import { BackgroundScreen } from './src/screens/BackgroundScreen';
 import { DevChecksScreen } from './src/screens/DevChecksScreen';
 import { ExplorerScreen } from './src/screens/ExplorerScreen';
 import { HeartRateScreen } from './src/screens/HeartRateScreen';
@@ -18,6 +19,7 @@ const TABS = [
   { key: 'heart-rate', title: 'Heart Rate', Screen: HeartRateScreen },
   { key: 'throughput', title: 'Throughput', Screen: ThroughputScreen },
   { key: 'peripheral', title: 'Peripheral', Screen: PhoneAsPeripheralScreen },
+  { key: 'background', title: 'Background', Screen: BackgroundScreen },
   { key: 'checks', title: 'Checks', Screen: DevChecksScreen },
 ] as const;
 

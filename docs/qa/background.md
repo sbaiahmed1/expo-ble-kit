@@ -1,6 +1,6 @@
 # Background scenarios
 
-The scenarios of plan §8.4, per device. The test peripheral is this Mac running `e2e/macos-peripheral` (the test profile over CoreBluetooth), unless a row says otherwise.
+The scenarios of plan §8.4, per device. The example app's Background tab lists the scenarios of the platform it runs on, with their steps and controls. The test peripheral is this Mac running `e2e/macos-peripheral` (the test profile over CoreBluetooth), unless a row says otherwise.
 
 ## iPhone 14 Pro Max, iOS 27.0.1 (2026-10-12)
 
