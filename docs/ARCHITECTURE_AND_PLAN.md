@@ -1475,7 +1475,7 @@ Parallelism: P0-06/P0-07 can run alongside P0-03/P0-04. With two people, P4 can 
   - Plugin: `ios.backgroundModes: ['central']` and `ios.restoreIdentifier` (Info.plist `ExpoBleKitRestoreIdentifier`; needs `'central'`), with the bare-setup section the sync test checks.
   - iOS: the manager gets `CBCentralManagerOptionRestoreIdentifierKey` when Info.plist has both; `BleKitAppDelegateSubscriber` and `BleKitRuntime` create the engine at launch and keep it for the process (the module uses it); `CentralEngine+Restoration` and `PeripheralSession+Restoration` adopt restored peripherals (§4.3). `RestorationJournal` keeps the last 100 events across launches, in `getDiagnostics().ios.restoration`.
   - Found on the device: CoreBluetooth asserts at the manager's creation, with a restore identifier, unless the delegate it is given implements `willRestoreState` (the adapter set itself as delegate afterwards: every launch crashed); and a restored pending connection that doesn't complete made a joining `connect()` wait forever (now the first JS connect takes it over with its own options and timeout).
-  - Example: **Checks → State restoration (iOS)**, also armed by the deep link `expo.modules.blekit.example://restoration/arm`.
+  - Example: **Checks → State restoration (iOS)** (on the Background tab since P3-06), also armed by the deep link `expo.modules.blekit.example://restoration/arm`.
   - Tests: 9 Swift (`RestorationTests`), 2 plugin cases, 1 Jest.
 - [x] **P3-02 Event buffer and delivery** — deps: P3-01.
   Native buffer, `restoration` event, TaskManager consumer on iOS.
@@ -1515,7 +1515,7 @@ Parallelism: P0-06/P0-07 can run alongside P0-03/P0-04. With two people, P4 can 
 - [ ] **P3-06 Background example and scenario suite** — deps: P3-02 … P3-05.
   The Background example screen hosts scenarios S-B1 … S-B6.
   **Accept:** S-B1 … S-B6 recorded per device in `docs/qa/background.md`. Publish `0.3.0`.
-  **Progress 2026-10-12 (open: S-B3, S-B4 against the test peripheral and on Android 10–11, S-B5, S-B2 in a release build):** the example's Background tab (`BackgroundScreen.tsx`) shows the scenarios of its platform, each with its steps, the expected result and its controls (restoration on iOS; keep-alive, background scan and companion device on Android), which moved there from Checks; the Maestro flows that use them open the new tab. Recorded so far: S-B1, S-B2 and S-B6 on the iPhone 14 Pro Max (`docs/qa/background.md`).
+  **Progress 2026-10-12 (open: S-B3, S-B4 against the test peripheral and on Android 10–11, S-B5):** the example's Background tab (`BackgroundScreen.tsx`) shows the scenarios of its platform, each with its steps, the expected result and its controls (restoration on iOS; keep-alive, background scan and companion device on Android), which moved there from Checks; the Maestro flows that use them open the new tab. Recorded so far: S-B1, S-B2 (debug and release builds) and S-B6 on the iPhone 14 Pro Max (`docs/qa/background.md`).
 
 ### 7.6 P4 — Peripheral role
 
@@ -1646,6 +1646,7 @@ Parallelism: P0-06/P0-07 can run alongside P0-03/P0-04. With two people, P4 can 
 - [ ] **P6-04 (optional) EAS Observe integration** — deps: P2-07.
   Report BLE errors and connection metrics through `Observe.registerIntegration` ⚠️ VERIFY API.
   **Accept:** errors visible in an Observe dashboard for the example app.
+  **Deferred 2026-10-12:** not in 2.0. The task is optional, and its acceptance needs an EAS project with an Observe dashboard for the example app; `BleManager.setLogHandler` and `getDiagnostics()` already let an app send errors to any service.
 - [ ] **P6-05 1.0 release** — deps: everything above except optional tasks.
   Docs site, compatibility table, release-candidate soak.
   **Accept:** §1.4 success criteria met. Publish `1.0.0`.

@@ -23,4 +23,4 @@ Background events reach an `expo-task-manager` task through a consumer (`Backgro
 - The task gets `restored` when iOS hands back connections, and `connectionStateChange` and `notification` while the app isn't in the foreground. Delivery waits for JS (finding 5).
 - A restoration journal (`getDiagnostics().ios.restoration.journal`, kept across launches) records launches, scenes, restored peripherals and background events, since none of it shows on screen.
 
-Open: S-B1 (a suspended app with a 1 Hz stream), S-B6 (force quit) and a release build, where JS loads from the app bundle instead of Metro.
+Since run (`docs/qa/background.md`): S-B1 (a suspended app with a 1 Hz stream), S-B6 (force quit), and S-B2 in a release build, where JS loads from the app bundle instead of Metro: the relaunch, the restored connection and the background scene behave the same.
