@@ -87,14 +87,24 @@ describe('validateProps', () => {
     [{ ios: { accessorySetupKit: {} } }, 'needs at least one service or company identifier'],
     [{ ios: { accessorySetupKit: { names: ['x'] } } }, 'needs at least one service'],
     [{ ios: { accessorySetupKit: { services: ['xyz'] } } }, 'takes 16- or 128-bit UUID strings'],
-    [{ ios: { accessorySetupKit: { services: ['180d'], names: [''] } } }, 'takes non-empty strings'],
+    [
+      { ios: { accessorySetupKit: { services: ['180d'], names: [''] } } },
+      'takes non-empty strings',
+    ],
     [{ ios: { accessorySetupKit: { companyIdentifiers: [70000] } } }, 'takes 0…0xFFFF'],
     [{ ios: { accessorySetupKit: { services: '180d' } } }, 'must be an array'],
     [
-      { ios: { accessorySetupKit: { companyIdentifiers: Array.from({ length: 501 }, (_, i) => i) } } },
+      {
+        ios: {
+          accessorySetupKit: { companyIdentifiers: Array.from({ length: 501 }, (_, i) => i) },
+        },
+      },
       'takes at most 500 values',
     ],
-    [{ ios: { accessorySetupKit: { service: ['180d'] } } }, 'unknown option "ios.accessorySetupKit.service"'],
+    [
+      { ios: { accessorySetupKit: { service: ['180d'] } } },
+      'unknown option "ios.accessorySetupKit.service"',
+    ],
     ['oops', 'options must be an object'],
   ])('rejects %p', (props, message) => {
     expect(() => validateProps(props)).toThrow(message);

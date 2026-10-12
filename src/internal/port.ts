@@ -61,7 +61,10 @@ export interface NativeBleKitPort {
   /** Stops advertisement `id`; does nothing once it ended. */
   stopAdvertising(id: number): Promise<void>;
   /** iOS 18+ only (P5-04): the picked accessory's peripheral id, or null. */
-  showAccessoryPicker?(items: NativeAccessoryPickerItem[], timeoutMs: number): Promise<string | null>;
+  showAccessoryPicker?(
+    items: NativeAccessoryPickerItem[],
+    timeoutMs: number
+  ): Promise<string | null>;
   /** P5-03: an L2CAP server; `secure` as validated by the TS layer. */
   publishL2CAPChannel(secure: boolean): Promise<NativeL2CAPServerPort>;
   /** Android only (P3-04): a TaskManager task with a background scan. */

@@ -141,7 +141,10 @@ export declare class ExpoBleKitModule
   startAdvertising(data: NativeAdvertisingData, options: NativeAdvertisingOptions): Promise<number>;
   stopAdvertising(id: number): Promise<void>;
   publishL2CAPChannel(secure: boolean): Promise<NativeL2CAPServer>;
-  showAccessoryPicker?(items: NativeAccessoryPickerItem[], timeoutMs: number): Promise<string | null>;
+  showAccessoryPicker?(
+    items: NativeAccessoryPickerItem[],
+    timeoutMs: number
+  ): Promise<string | null>;
   setLogLevel(level: LogLevel): void;
   setLogForwarding(enabled: boolean): void;
 }
