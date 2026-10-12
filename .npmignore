@@ -39,6 +39,7 @@ __tests__
 /test-peripherals/
 /test-contracts/
 /e2e/
+/website/
 /eslint.config.cjs
 /CONTRIBUTING.md
 /SECURITY.md

@@ -10,7 +10,7 @@
   "tsconfig": "tsconfig.json",
   "disableGit": true,
   "gitRevision": "main",
-  "sourceLinkTemplate": "https://github.com/sbaiahmed1/expo-ble-kit/blob/{gitRevision}/{path}#L{line}",
+  "sourceLinkTemplate": "https://github.com/sbaiahmed1/expo-ble-kit/blob/{gitRevision}/src/{path}#L{line}",
   "readme": "README.md",
   "projectDocuments": [
     "docs/getting-started.md",

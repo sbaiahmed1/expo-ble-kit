@@ -1,0 +1,102 @@
+/* expo-ble-kit's palette: a teal accent on cool, slightly green-tinted neutrals. */
+
+:root {
+  --ifm-color-primary: #0f766e;
+  --ifm-color-primary-dark: #0d6a63;
+  --ifm-color-primary-darker: #0c645e;
+  --ifm-color-primary-darkest: #0a524d;
+  --ifm-color-primary-light: #118279;
+  --ifm-color-primary-lighter: #12887f;
+  --ifm-color-primary-lightest: #149a90;
+
+  --ifm-background-color: #ffffff;
+  --ifm-background-surface-color: #f4f8f7;
+  --site-border: #dde7e5;
+  --site-muted: #52615f;
+  --site-chip: #e6f2f0;
+  --site-wave: rgba(15, 118, 110, 0.1);
+
+  --ifm-font-family-base:
+    system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+  --ifm-font-family-monospace:
+    ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, 'Liberation Mono', monospace;
+  --ifm-heading-font-weight: 650;
+  --ifm-code-font-size: 90%;
+  --ifm-navbar-shadow: none;
+  --ifm-toc-border-color: var(--site-border);
+  --ifm-table-border-color: var(--site-border);
+  --docusaurus-highlighted-code-line-bg: rgba(15, 118, 110, 0.1);
+}
+
+[data-theme='dark'] {
+  --ifm-color-primary: #2dd4bf;
+  --ifm-color-primary-dark: #24c7b2;
+  --ifm-color-primary-darker: #22bca8;
+  --ifm-color-primary-darkest: #1c9b8a;
+  --ifm-color-primary-light: #45d9c6;
+  --ifm-color-primary-lighter: #51dbca;
+  --ifm-color-primary-lightest: #73e3d5;
+
+  --ifm-background-color: #0d1312;
+  --ifm-background-surface-color: #141c1b;
+  --ifm-navbar-background-color: #0d1312;
+  --ifm-footer-background-color: #080d0c;
+  --site-border: #24302e;
+  --site-muted: #9aaba8;
+  --site-chip: #18302d;
+  --site-wave: rgba(45, 212, 191, 0.09);
+  --docusaurus-highlighted-code-line-bg: rgba(45, 212, 191, 0.12);
+}
+
+h1,
+h2,
+h3 {
+  letter-spacing: -0.015em;
+  text-wrap: balance;
+}
+
+.navbar {
+  border-bottom: 1px solid var(--site-border);
+}
+
+html .theme-announcement-bar {
+  background: var(--site-chip);
+  color: var(--ifm-font-color-base);
+  border-bottom: 1px solid var(--site-border);
+}
+
+html .theme-announcement-bar .close {
+  color: var(--ifm-font-color-base);
+}
+
+.navbar__title {
+  font-weight: 650;
+}
+
+.footer--dark {
+  --ifm-footer-background-color: #0a1110;
+}
+
+/* Wide tables in the guides scroll inside themselves. */
+.markdown table {
+  display: block;
+  max-width: 100%;
+  overflow-x: auto;
+}
+
+.markdown blockquote {
+  border-left-color: var(--ifm-color-primary);
+  background: var(--ifm-background-surface-color);
+  padding: 0.75rem 1rem;
+  border-radius: 0 6px 6px 0;
+}
+
+/* The generated API pages: keep long signatures readable. */
+.theme-doc-markdown h3 code,
+.theme-doc-markdown h4 code {
+  word-break: break-word;
+}
+
+.typedoc-sidebar-item-deprecated {
+  text-decoration: line-through;
+}

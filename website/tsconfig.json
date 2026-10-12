@@ -1,0 +1,9 @@
+{
+  "extends": "@docusaurus/tsconfig",
+  "compilerOptions": {
+    // @docusaurus/tsconfig 3.10 sets baseUrl, which TypeScript 6 deprecates. The site keeps
+    // TypeScript 6 because the API reference compiles the library with it.
+    "ignoreDeprecations": "6.0"
+  },
+  "exclude": [".docusaurus", "build", "api"]
+}

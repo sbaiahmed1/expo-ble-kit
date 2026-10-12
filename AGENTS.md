@@ -27,6 +27,10 @@ cd example && yarn test      # example screens against the fake adapter (Jest, l
 cd example && npx expo prebuild --clean   # regenerate example/ios and example/android (gitignored)
 cd example && npx expo run:ios            # or run:android
 
+cd website && yarn install    # documentation website dependencies (separate lockfile)
+cd website && yarn start      # the website with live reload (search works only in a build)
+cd website && yarn build      # the website into website/build; fails on broken links and anchors
+
 cd test-peripherals/bumble && uv run pytest              # test peripheral tests (no hardware)
 cd test-peripherals/bumble && uv run blekit-peripheral   # advertise on a running Android emulator
 e2e/android-netsim/run.sh    # L3: peripheral + instrumented tests on a running emulator (needs ANDROID_HOME and example/android)

@@ -49,13 +49,15 @@ Debug builds of the example app on a Samsung Galaxy A52 (Android 14) and an iPho
 
 ## Documentation
 
+The documentation website (`website/`, Docusaurus) puts the guides below, the API reference and the changelog in one place with search: `cd website && yarn install && yarn start`.
+
 - [Getting started](docs/getting-started.md): requirements, install, scanning, connecting, sending data, notifications, background (Android), the GATT server, advertising, hooks, errors, testing.
 - [Permissions](docs/guides/permissions.md): what each platform asks for.
 - [Bare React Native setup](docs/guides/bare-setup.md): for apps without prebuild.
 - [Moving from react-native-ble-plx](docs/guides/migration-from-plx.md): `expo-ble-kit/compat/plx` keeps ble-plx's API, so an app moves by changing its imports.
 - [Troubleshooting](docs/troubleshooting.md): Android status 133, reconnecting by id, location services, the iOS Simulator.
 - [Soak tests](docs/soak.md) and [benchmarks](docs/benchmarks.md): the long runs and the throughput measurements.
-- API reference: `yarn docs` builds it into `docs/api/`.
+- API reference: on the website, or `yarn docs` builds it into `docs/api/`.
 - The example app in `example/`: Explorer, Heart Rate, Throughput, the phone as a test peripheral, and the developer checks.
 
 ## Why expo-ble-kit

@@ -33,6 +33,24 @@ jobs:
         run: yarn install --immutable && yarn test --ci
         working-directory: example
 
+  website:
+    name: Documentation website
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: .nvmrc
+      # The API reference compiles the library's sources, which need the root dependencies.
+      - run: yarn install --immutable
+      - run: yarn install --immutable
+        working-directory: website
+      - run: yarn typecheck
+        working-directory: website
+      - name: Build (fails on broken links and anchors)
+        run: yarn build
+        working-directory: website
+
   test-peripheral:
     name: Test peripheral (Bumble)
     runs-on: ubuntu-latest
