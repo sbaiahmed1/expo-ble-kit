@@ -9,3 +9,10 @@ Scenario S-B2 of the plan: the app holds a connection with notifications on, iOS
 5. Open the app: **Show the journal** lists what happened while it wasn't on screen (also in `BleManager.getDiagnostics()` as `ios.restoration.journal`).
 
 `kill.sh` sends SIGKILL through `xcrun devicectl`, so the iPhone needs to be paired with this Mac (cable or network).
+
+## The GATT server (P4-04)
+
+`e2e/ios-restoration/server.sh <device id>` opens the example's test GATT server and advertises it (deep link `…://server/serve`), stops the app with SIGKILL, then runs this Mac as the central (`e2e/macos-central`). iOS answers static values while the app isn't running and relaunches it for the others; the example serves the restored server again when its journal says iOS restored one, and the central's checks must all pass.
+
+Both scripts need the phone unlocked: iOS doesn't launch apps on a locked phone.
+

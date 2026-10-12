@@ -25,7 +25,7 @@ public class ExpoBleKitModule: Module {
 
   /// The peripheral role's queue (plan §4.7), its manager once a server opened or advertising
   /// started, the open server and the advertiser.
-  let peripheralQueue = DispatchQueue(label: "expo.blekit.peripheral")
+  let peripheralQueue = BleKitRuntime.shared.peripheralQueue
   var peripheralManager: CBPeripheralManagerAdapter?
   var openServer: GattServerObject?
   var advertiser: Advertiser?

@@ -58,6 +58,10 @@ protocol PeripheralManaging: AnyObject {
   func publishL2CAPChannel(withEncryption encryptionRequired: Bool)
   /// Also closes the channels on `psm` (Apple's `unpublishL2CAPChannel(_:)` docs).
   func unpublishL2CAPChannel(_ psm: CBL2CAPPSM)
+  /// P4-04: the services iOS kept published while the app wasn't running, from state restoration.
+  var restoredServices: [CBUUID] { get }
+  /// Takes the restored services over: their subscriptions reach the delegate as subscribes.
+  func adoptRestoredServices()
 }
 
 /// Callbacks of `PeripheralManaging`, on the peripheral queue.

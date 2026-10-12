@@ -8,12 +8,13 @@ import {
 import { useEffect } from 'react';
 import { Linking } from 'react-native';
 
-
 import { TestProfile } from './gattNames';
+import { serverAdvertisement, serverServices, serveTestProfile } from './serverProfile';
 import { RESTORATION_TASK } from '../background/restorationTask';
 
 // P3-01/P3-02 (S-B2): what the restoration check arms. e2e/ios-restoration/run.sh opens
-// `expo.modules.blekit.example://restoration/arm` to arm it without touching the screen.
+// `expo.modules.blekit.example://restoration/arm` to arm it without touching the screen, and
+// `…://server/serve` for the peripheral role (P4-04): the test GATT server, advertised.
 
 let subscription: Subscription | null = null;
 
@@ -49,6 +50,22 @@ export async function armRestoration(onStatus: (status: string) => void): Promis
   onStatus(`Connected to ${device.id}, waiting for heart rate values`);
 }
 
+let serving = false;
+
+/**
+ * Opens the test GATT server and advertises it, for P4-04: after iOS stops the app, the services
+ * and the advertisement live on, and the server JS opens again with the same services adopts them.
+ * Requests go to the console.
+ */
+export async function serveForRestoration(): Promise<void> {
+  if (serving) return;
+  serving = true;
+  const server = await BleManager.openGattServer(serverServices);
+  serveTestProfile(server, (line) => console.log(`BleKit server: ${line}`));
+  await BleManager.startAdvertising(serverAdvertisement);
+  console.log('BleKit server: open and advertising');
+}
+
 /** Arms the check when the app opens `…://restoration/arm`; progress goes to the console. */
 export function useRestorationLink(): void {
   useEffect(() => {
@@ -61,6 +78,14 @@ export function useRestorationLink(): void {
       lastKind = kind;
     };
     const handle = (url: string | null) => {
+      if (url?.includes('server/serve')) {
+        serveForRestoration().catch((error) => {
+          serving = false;
+          const bleError = BleError.fromNative(error);
+          console.warn(`BleKit server: ${bleError.code}: ${bleError.message}`);
+        });
+        return;
+      }
       if (!url?.includes('restoration/arm')) return;
       if (url.includes('debug')) {
         // e2e/ios-restoration/run.sh --debug: the library's log in Metro's output.
@@ -75,6 +100,22 @@ export function useRestorationLink(): void {
       });
     };
     Linking.getInitialURL().then(handle, () => {});
+    // P4-04: a GATT server iOS restored at this launch is served again, as an app would on start.
+    BleManager.getDiagnostics()
+      .then(({ ios }) => {
+        const events = (ios?.restoration.journal ?? []).map((entry) => entry.event);
+        const launched = events.findLastIndex((event) => event.startsWith('launched'));
+        const restored = events.slice(Math.max(0, launched));
+        if (restored.some((event) => event.startsWith('restored the GATT server'))) {
+          console.log('BleKit server: iOS restored it, serving again');
+          return serveForRestoration();
+        }
+      })
+      .catch((error) => {
+        serving = false;
+        const bleError = BleError.fromNative(error);
+        console.warn(`BleKit server: ${bleError.code}: ${bleError.message}`);
+      });
     const listener = Linking.addEventListener('url', ({ url }) => handle(url));
     return () => listener.remove();
   }, []);

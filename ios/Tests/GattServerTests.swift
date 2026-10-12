@@ -212,6 +212,25 @@ final class GattServerTests: XCTestCase, GattServerListener {
     XCTAssertEqual(subscriptions, ["on", "off"])
   }
 
+  /// P4-04: the server iOS restored is taken over when JS opens the same services.
+  func testOpeningTheRestoredServicesAdoptsThemWithTheirSubscriptions() {
+    let service = CBUUID(string: "0c6c2000-b347-4cfa-9827-1c5a13658519")
+    manager.restoredServices = [service]
+    manager.restoredSubscriptions = [(central, notifying)]
+    open()
+    XCTAssertTrue(manager.added.isEmpty, "nothing published again")
+    XCTAssertFalse(manager.removedAll)
+    XCTAssertEqual(server.subscribedCentrals(notifying), [central])
+    XCTAssertEqual(subscriptions, ["on"])
+  }
+
+  func testOtherServicesReplaceTheRestoredOnes() {
+    manager.restoredServices = [CBUUID(string: "180D")]
+    open()
+    XCTAssertTrue(manager.removedAll)
+    XCTAssertEqual(manager.added, [CBUUID(string: "0c6c2000-b347-4cfa-9827-1c5a13658519")])
+  }
+
   func testOpenWaitsForTheManagerAndReportsItsState() {
     manager = FakePeripheralManager(state: .unknown)
     server = makeServer()

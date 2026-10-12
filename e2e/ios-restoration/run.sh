@@ -11,27 +11,14 @@ here="$(cd "$(dirname "$0")" && pwd)"
 root="$(cd "$here/../.." && pwd)"
 device="${1:?usage: run.sh <device id> [seconds]}"
 wait_seconds="${2:-60}"
-bundle="expo.modules.blekit.example"
 peripheral_log="$root/e2e/macos-peripheral/build/peripheral.log"
-journal_path="Library/Application Support/expo-ble-kit/restoration-journal.json"
 work="$(mktemp -d)"
 trap 'rm -rf "$work"' EXIT
+# shellcheck source=lib.sh
+source "$here/lib.sh"
+journal() { print_journal "$device" "$work"; }
 
-journal() {
-  if xcrun devicectl device copy from --device "$device" --domain-type appDataContainer \
-    --domain-identifier "$bundle" --source "$journal_path" --destination "$work/journal.json" >/dev/null 2>&1; then
-    python3 -I -c '
-import datetime, json, sys
-for entry in json.load(open(sys.argv[1])):
-    time = datetime.datetime.fromtimestamp(entry["time"] / 1000).strftime("%H:%M:%S")
-    count = " x" + str(entry["count"]) if entry["count"] > 1 else ""
-    print("  " + time + " " + entry["event"] + count)
-' "$work/journal.json"
-  else
-    echo "  (no journal on the phone yet)"
-  fi
-}
-
+require_unlocked "$device"
 if ! grep -q "advertising as" "$peripheral_log" 2>/dev/null || grep -q "DONE" "$peripheral_log"; then
   echo "Start the test peripheral first: e2e/macos-peripheral/run.sh 3600"
   exit 1

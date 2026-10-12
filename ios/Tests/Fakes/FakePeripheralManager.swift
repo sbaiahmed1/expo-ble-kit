@@ -40,6 +40,17 @@ final class FakePeripheralManager: PeripheralManaging {
 
   func removeAllServices() {
     removedAll = true
+    restoredServices = []
+  }
+
+  /// P4-04: what state restoration handed back, and its subscriptions.
+  var restoredServices: [CBUUID] = []
+  var restoredSubscriptions: [(central: UUID, characteristic: CBUUID)] = []
+
+  func adoptRestoredServices() {
+    for subscription in restoredSubscriptions {
+      delegate?.peripheralManager(self, central: subscription.central, didSubscribeTo: subscription.characteristic)
+    }
   }
 
   func respond(to request: ATTRequestLike, withResult result: CBATTError.Code) {

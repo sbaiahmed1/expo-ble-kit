@@ -67,7 +67,11 @@ extension ExpoBleKitModule {
   /// peripheral queue.
   func sharedPeripheralManager() -> CBPeripheralManagerAdapter {
     if let peripheralManager { return peripheralManager }
-    let manager = CBPeripheralManagerAdapter(queue: peripheralQueue)
+    // With peripheral restoration, the process-wide manager created at launch (P4-04).
+    let runtime = BleKitRuntime.shared
+    let manager = runtime.peripheralRestoreIdentifier != nil
+      ? runtime.sharedPeripheralManager()
+      : CBPeripheralManagerAdapter(queue: peripheralQueue)
     peripheralManager = manager
     return manager
   }

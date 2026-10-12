@@ -11,6 +11,18 @@ final class BleKitRuntime {
   let journal = RestorationJournal(url: RestorationJournal.defaultURL)
   /// The app declares a restore identifier and the bluetooth-central background mode.
   let restorationEnabled = CentralEngine.restoreIdentifier(in: Bundle.main.infoDictionary) != nil
+  /// P4-04: the peripheral role's restore identifier, when the app also declares bluetooth-peripheral.
+  let peripheralRestoreIdentifier: String? = {
+    let info = Bundle.main.infoDictionary
+    let modes = info?["UIBackgroundModes"] as? [String] ?? []
+    guard modes.contains("bluetooth-peripheral"), let identifier = CentralEngine.restoreIdentifier(in: info) else {
+      return nil
+    }
+    return identifier + ".peripheral"
+  }()
+  /// The peripheral role's queue (plan §4.7), shared by every module instance.
+  let peripheralQueue = DispatchQueue(label: "expo.blekit.peripheral")
+  private var peripheralManager: CBPeripheralManagerAdapter?
 
   private let lock = NSLock()
   private var engine: CentralEngine?
@@ -40,6 +52,22 @@ final class BleKitRuntime {
     return created
   }
 
+  /// With peripheral restoration, the one peripheral manager of the process (P4-04); on the
+  /// peripheral queue.
+  func sharedPeripheralManager() -> CBPeripheralManagerAdapter {
+    if let peripheralManager {
+      return peripheralManager
+    }
+    let manager = CBPeripheralManagerAdapter(queue: peripheralQueue, restoreIdentifier: peripheralRestoreIdentifier)
+    manager.onRestore = { [journal] services, advertisement in
+      let names = services.map(\.uuidString).joined(separator: ", ")
+      let advertising = advertisement.map { " and advertising \(Self.describe($0))" } ?? ""
+      journal.record("restored the GATT server: \(services.count) service(s) (\(names))\(advertising)")
+    }
+    peripheralManager = manager
+    return manager
+  }
+
   /// At launch: iOS hands restored peripherals only to a manager created during launch with the
   /// same restore identifier (plan §4.14). Creating it can't show the prompt: only authorized apps
   /// get it this early.
@@ -54,6 +82,10 @@ final class BleKitRuntime {
     journal.record("launched \(Self.name(state))\(reason)")
     let engine = sharedEngine()
     engine.queue.sync { engine.activateIfAuthorized() }
+    // P4-04: the peripheral manager too, when that can't show the prompt either.
+    if peripheralRestoreIdentifier != nil, CBManager.authorization == .allowedAlways {
+      peripheralQueue.sync { _ = sharedPeripheralManager() }
+    }
   }
 
   /// The module set the engine's callbacks: JS runs.
@@ -179,6 +211,12 @@ final class BleKitRuntime {
       $0.journal.record("entered the background")
     }
     observe(UIApplication.willEnterForegroundNotification) { $0.journal.record("entering the foreground") }
+  }
+
+  private static func describe(_ advertisement: [String: Any]) -> String {
+    let name = advertisement[CBAdvertisementDataLocalNameKey] as? String
+    let services = (advertisement[CBAdvertisementDataServiceUUIDsKey] as? [CBUUID] ?? []).map(\.uuidString)
+    return ([name].compactMap { $0 } + services).joined(separator: ", ")
   }
 
   private static func name(_ state: UIApplication.State) -> String {

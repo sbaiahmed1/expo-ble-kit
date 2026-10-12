@@ -106,7 +106,7 @@ final class GattServer {
   private func start(_ completion: @escaping (CoreError?) -> Void) {
     switch manager.state {
     case .poweredOn:
-      addNext(services, completion)
+      adoptOrAdd(completion)
     case .unauthorized:
       completion(CoreError(.bluetoothUnauthorized, "The app may not use Bluetooth"))
     case .unsupported:
@@ -114,6 +114,19 @@ final class GattServer {
     default:
       completion(CoreError(.bluetoothPoweredOff, "Bluetooth is off"))
     }
+  }
+
+  /// P4-04: services iOS restored are taken over when they are the ones asked for, so their
+  /// subscriptions carry on; otherwise whatever is published makes way for these.
+  private func adoptOrAdd(_ completion: @escaping (CoreError?) -> Void) {
+    let restored = manager.restoredServices
+    if !restored.isEmpty, Set(restored) == Set(services.map(\.uuid)) {
+      manager.adoptRestoredServices()
+      return completion(nil)
+    }
+    // One server at a time: what an earlier one (or JS before a reload) published goes.
+    manager.removeAllServices()
+    addNext(services, completion)
   }
 
   /// JS answers a read: the whole value, or an ATT error. Unknown or expired requests are ignored.

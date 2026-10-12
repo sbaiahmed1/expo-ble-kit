@@ -3,24 +3,82 @@ import Foundation
 
 /// `PeripheralManaging` on a real `CBPeripheralManager`, created on the peripheral queue (plan §4.4).
 final class CBPeripheralManagerAdapter: NSObject, PeripheralManaging {
-  weak var delegate: PeripheralManagingDelegate?
+  /// How long a read or write that arrives before the GATT server opens waits for it (P4-04): after
+  /// a background relaunch, until the app's JS opens the server again.
+  static let heldRequestTimeout: TimeInterval = 20
+
+  /// After the GATT server attaches, held requests wait this long for its JS handlers, which the
+  /// app adds once `openGattServer` resolved.
+  static let heldRequestGrace: TimeInterval = 1
+
+  weak var delegate: PeripheralManagingDelegate? {
+    didSet {
+      guard delegate != nil, !heldRequests.isEmpty else { return }
+      queue.asyncAfter(deadline: .now() + Self.heldRequestGrace) { [weak self] in self?.releaseHeldRequests() }
+    }
+  }
   weak var advertisingDelegate: PeripheralAdvertisingDelegate?
   weak var l2capDelegate: PeripheralL2CAPDelegate?
+  /// P4-04: what state restoration handed back, for the journal: services and advertisement.
+  var onRestore: ((_ services: [CBUUID], _ advertisement: [String: Any]?) -> Void)?
   private var manager: CBPeripheralManager!
   /// Where L2CAP channel streams report (P5-03): the peripheral queue.
   private let queue: DispatchQueue
   /// What notifications need: the published characteristics and the subscribed centrals.
   private var characteristics: [CBUUID: CBMutableCharacteristic] = [:]
   private var centrals: [UUID: CBCentral] = [:]
+  private(set) var restoredServices: [CBUUID] = []
+  private var restoredSubscriptions: [(central: CBCentral, characteristic: CBUUID)] = []
+  /// A request that arrived while no GATT server was open.
+  private struct HeldRequest {
+    let arrived: Date
+    let deliver: (PeripheralManagingDelegate) -> Void
+    let reject: () -> Void
+  }
 
-  init(queue: DispatchQueue) {
+  private var heldRequests: [HeldRequest] = []
+
+  /// `restoreIdentifier`: P4-04, iOS keeps the services and the advertisement while the app isn't
+  /// running and hands them back to the manager created with it.
+  init(queue: DispatchQueue, restoreIdentifier: String? = nil) {
     self.queue = queue
     super.init()
-    manager = CBPeripheralManager(
-      delegate: self,
-      queue: queue,
-      options: [CBPeripheralManagerOptionShowPowerAlertKey: false]
-    )
+    var options: [String: Any] = [CBPeripheralManagerOptionShowPowerAlertKey: false]
+    if let restoreIdentifier {
+      options[CBPeripheralManagerOptionRestoreIdentifierKey] = restoreIdentifier
+    }
+    // With a restore identifier, CoreBluetooth asserts that the delegate it gets here implements
+    // willRestoreState.
+    manager = CBPeripheralManager(delegate: self, queue: queue, options: options)
+  }
+
+  func adoptRestoredServices() {
+    let subscriptions = restoredSubscriptions
+    restoredSubscriptions.removeAll()
+    for subscription in subscriptions {
+      centrals[subscription.central.identifier] = subscription.central
+      let central = subscription.central.identifier
+      delegate?.peripheralManager(self, central: central, didSubscribeTo: subscription.characteristic)
+    }
+  }
+
+  /// Keeps a request for the GATT server JS opens next; answers it with an error after the timeout.
+  private func hold(_ deliver: @escaping (PeripheralManagingDelegate) -> Void, reject: @escaping () -> Void) {
+    heldRequests.append(HeldRequest(arrived: Date(), deliver: deliver, reject: reject))
+    queue.asyncAfter(deadline: .now() + Self.heldRequestTimeout) { [weak self] in
+      guard let self else { return }
+      let now = Date()
+      let expired = heldRequests.filter { now.timeIntervalSince($0.arrived) >= Self.heldRequestTimeout }
+      heldRequests.removeAll { now.timeIntervalSince($0.arrived) >= Self.heldRequestTimeout }
+      expired.forEach { $0.reject() }
+    }
+  }
+
+  private func releaseHeldRequests() {
+    guard let delegate, !heldRequests.isEmpty else { return }
+    let held = heldRequests
+    heldRequests.removeAll()
+    held.forEach { $0.deliver(delegate) }
   }
 
   var state: CBManagerState { manager.state }
@@ -36,6 +94,8 @@ final class CBPeripheralManagerAdapter: NSObject, PeripheralManaging {
   func removeAllServices() {
     manager.removeAllServices()
     characteristics.removeAll()
+    restoredServices.removeAll()
+    restoredSubscriptions.removeAll()
   }
 
   func updateValue(_ value: Data, for characteristic: CBUUID, onSubscribedCentrals centrals: [UUID]) -> Bool {
@@ -55,6 +115,11 @@ final class CBPeripheralManagerAdapter: NSObject, PeripheralManaging {
   }
 
   func startAdvertising(localName: String?, serviceUUIDs: [CBUUID]) {
+    // One advertisement at a time; after state restoration iOS resumes the earlier one by itself
+    // (P4-04), and starting over it fails with "Advertising has already started".
+    if manager.isAdvertising {
+      manager.stopAdvertising()
+    }
     var data: [String: Any] = [:]
     if let localName { data[CBAdvertisementDataLocalNameKey] = localName }
     if !serviceUUIDs.isEmpty { data[CBAdvertisementDataServiceUUIDsKey] = serviceUUIDs }
@@ -75,6 +140,21 @@ final class CBPeripheralManagerAdapter: NSObject, PeripheralManaging {
 }
 
 extension CBPeripheralManagerAdapter: CBPeripheralManagerDelegate {
+  /// P4-04: the services and advertisement iOS kept; called before the first state update.
+  func peripheralManager(_ peripheral: CBPeripheralManager, willRestoreState dict: [String: Any]) {
+    let services = dict[CBPeripheralManagerRestoredStateServicesKey] as? [CBMutableService] ?? []
+    for service in services {
+      for case let characteristic as CBMutableCharacteristic in service.characteristics ?? [] {
+        characteristics[characteristic.uuid] = characteristic
+        for central in characteristic.subscribedCentrals ?? [] {
+          restoredSubscriptions.append((central, characteristic.uuid))
+        }
+      }
+    }
+    restoredServices = services.map(\.uuid)
+    onRestore?(restoredServices, dict[CBPeripheralManagerRestoredStateAdvertisementDataKey] as? [String: Any])
+  }
+
   func peripheralManagerDidUpdateState(_ peripheral: CBPeripheralManager) {
     delegate?.peripheralManagerDidUpdateState(self)
     advertisingDelegate?.peripheralManagerStateChanged(self)
@@ -106,11 +186,23 @@ extension CBPeripheralManagerAdapter: CBPeripheralManagerDelegate {
   }
 
   func peripheralManager(_ peripheral: CBPeripheralManager, didReceiveRead request: CBATTRequest) {
-    delegate?.peripheralManager(self, didReceiveRead: ATTRequestAdapter(request))
+    let adapted = ATTRequestAdapter(request)
+    guard let delegate else {
+      return hold({ $0.peripheralManager(self, didReceiveRead: adapted) }, reject: {
+        peripheral.respond(to: request, withResult: .unlikelyError)
+      })
+    }
+    delegate.peripheralManager(self, didReceiveRead: adapted)
   }
 
   func peripheralManager(_ peripheral: CBPeripheralManager, didReceiveWrite requests: [CBATTRequest]) {
-    delegate?.peripheralManager(self, didReceiveWrite: requests.map(ATTRequestAdapter.init))
+    let adapted = requests.map(ATTRequestAdapter.init)
+    guard let delegate else {
+      return hold({ $0.peripheralManager(self, didReceiveWrite: adapted) }, reject: {
+        if let first = requests.first { peripheral.respond(to: first, withResult: .unlikelyError) }
+      })
+    }
+    delegate.peripheralManager(self, didReceiveWrite: adapted)
   }
 
   func peripheralManager(
