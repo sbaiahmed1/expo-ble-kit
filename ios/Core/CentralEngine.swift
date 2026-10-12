@@ -7,21 +7,8 @@ import Foundation
 /// Threading (plan §4.7): call everything except `state` on `queue`. Callbacks run on `queue`.
 final class CentralEngine: CentralManagingDelegate {
   static let usageDescriptionKey = "NSBluetoothAlwaysUsageDescription"
-
-  /// What the engine reads from the system. Injected so tests can script it.
-  struct Environment {
-    /// `CBManager.authorization`. Reading it never shows the prompt.
-    var authorization: () -> CBManagerAuthorization
-    /// The app's Info.plist.
-    var infoDictionary: () -> [String: Any]?
-    var makeCentral: CentralManagerFactory
-
-    static let live = Environment(
-      authorization: { CBManager.authorization },
-      infoDictionary: { Bundle.main.infoDictionary },
-      makeCentral: CBCentralManagerAdapter.factory
-    )
-  }
+  /// The Info.plist key the config plugin writes for `ios.restoreIdentifier` (P3-01).
+  static let restoreIdentifierKey = "ExpoBleKitRestoreIdentifier"
 
   typealias PermissionsCompletion = (Result<BlePermissions, CoreError>) -> Void
 
@@ -29,6 +16,10 @@ final class CentralEngine: CentralManagingDelegate {
   /// Called on `queue` after the published state changes.
   var onStateChange: ((BleState) -> Void)?
   let scanController: ScanController
+  /// The peripherals iOS restored, once adopted (P3-01), on `queue`: each id with its JS state.
+  var onRestored: (([RestoredPeripheral]) -> Void)?
+  /// Restored peripherals waiting for the manager to power on before they can be used.
+  var restoredPeripherals: [PeripheralLike] = []
   /// Called on `queue` when a peripheral's JS connection state changes; `error` is set when the
   /// connection ended or failed unexpectedly.
   var onConnectionStateChange: ((_ peripheralId: String, SessionState, CoreError?) -> Void)?
@@ -47,10 +38,10 @@ final class CentralEngine: CentralManagingDelegate {
   /// The log of plan §4.16; the binding sets its level, its `os.Logger` output and JS forwarding.
   let logger: BleLogger
 
-  private let environment: Environment
+  let environment: Environment
   let scheduler: Scheduling
   let clock: EpochClock
-  private(set) var sessions: [UUID: PeripheralSession] = [:]
+  var sessions: [UUID: PeripheralSession] = [:]
   /// Advertised names from scans, then the names iOS caches for connected peripherals (plan §4.7).
   let names = PeripheralNames()
   /// Work waiting for a new manager to leave `unknown`, by peripheral (connects) or a random id.
@@ -175,6 +166,7 @@ final class CentralEngine: CentralManagingDelegate {
   func centralDidUpdateState(_ central: CentralManaging) {
     publish(BleState(central.state))
     if central.state == .poweredOn {
+      adoptRestoredPeripherals(central)
       scanController.poweredOn(central)
       runPendingConnects(.success(central))
     } else if let error = Self.adapterError(central.state) {
@@ -197,7 +189,11 @@ final class CentralEngine: CentralManagingDelegate {
 
   private func createCentral() {
     // No system "turn on Bluetooth" alert: the app sees `poweredOff` and decides what to show.
-    let central = environment.makeCentral(queue, [CBCentralManagerOptionShowPowerAlertKey: false])
+    var options: [String: Any] = [CBCentralManagerOptionShowPowerAlertKey: false]
+    if let restoreIdentifier {
+      options[CBCentralManagerOptionRestoreIdentifierKey] = restoreIdentifier
+    }
+    let central = environment.makeCentral(queue, options)
     // Callbacks arrive on `queue`, where this runs, so none can be missed.
     central.delegate = self
     self.central = central
@@ -345,6 +341,12 @@ extension CentralEngine {
         "iOS doesn't know a peripheral with id \(identifier.uuidString). Scan for it first."
       ))
     }
+    let session = makeSession(identifier, peripheral: peripheral, central: central)
+    session.connect(spec, completion: completion)
+  }
+
+  /// A session for `peripheral`, wired to the engine's callbacks and registered.
+  func makeSession(_ identifier: UUID, peripheral: PeripheralLike, central: CentralManaging) -> PeripheralSession {
     let session = PeripheralSession(peripheral: peripheral, central: central, scheduler: scheduler)
     session.onStateChange = { [weak self, weak session] state, error in
       self?.publishConnectionState(identifier.uuidString, state, error, mtu: session?.mtu)
@@ -374,7 +376,7 @@ extension CentralEngine {
       stateLock.unlock()
     }
     sessions[identifier] = session
-    session.connect(spec, completion: completion)
+    return session
   }
 
   private func publishConnectionState(_ peripheralId: String, _ state: SessionState, _ error: CoreError?, mtu: Int?) {

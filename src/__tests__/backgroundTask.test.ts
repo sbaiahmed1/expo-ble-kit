@@ -6,9 +6,9 @@ import { getNativeModule } from '../internal/native';
 import { installFakeBle } from '../testing';
 import type { FakeBleAdapter } from '../testing/FakeBleAdapter';
 
-// P3-04: registerBackgroundTask on Android (a background scan delivered to a TaskManager task).
-// The scan and the delivery are native (BackgroundScanningTest.kt, the device check); here: the
-// options, the platforms and the preconditions.
+// registerBackgroundTask: Android's background scans (P3-04) and iOS's restoration events (P3-02),
+// delivered to a TaskManager task. The delivery is native (BackgroundScanningTest.kt, the device
+// checks); here: the options, the platforms and the preconditions.
 
 const TEST_SERVICE = '0c6c1000-b347-4cfa-9827-1c5a13658519';
 const scanTask: BackgroundTaskOptions = {
@@ -83,11 +83,24 @@ describe('registerBackgroundTask', () => {
     });
   });
 
-  it('is not supported on iOS yet, and unregistering there does nothing', async () => {
+  it('takes the restoration events on iOS, without a scan', async () => {
     Platform.OS = 'ios';
-    installFakeBle();
+    expect(
+      toNativeBackgroundTaskOptions({
+        events: ['restored', 'notification', 'connectionStateChange'],
+      })
+    ).toEqual({ events: ['restored', 'notification', 'connectionStateChange'] });
+    installFakeBle({ state: 'poweredOff', permissions: { backgroundScan: 'denied' } });
     expect(await code(BleManager.registerBackgroundTask('task', scanTask))).toBe('NOT_SUPPORTED');
+    expect(
+      await code(
+        BleManager.registerBackgroundTask('task', { events: ['restored', 'notification'] })
+      )
+    ).toBe('ok');
+    const adapter = getNativeModule() as FakeBleAdapter;
+    expect([...adapter.backgroundTasks.keys()]).toEqual(['task']);
     expect(await code(BleManager.unregisterBackgroundTask('task'))).toBe('ok');
+    expect(adapter.backgroundTasks.size).toBe(0);
   });
 
   it('registers on Android with the backgroundScan permission and Bluetooth on', async () => {

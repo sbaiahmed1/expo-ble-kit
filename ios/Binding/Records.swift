@@ -68,11 +68,21 @@ struct ConnectOptionsRecord: Record {
   /// Nil: no reconnection.
   @Field var reconnect: ReconnectPolicyRecord?
   @Field var restoreSubscriptionsOnReconnect: Bool = true
+  @Field var keepAliveInBackground: Bool = false
   @Field var ios: IosConnectOptionsRecord = IosConnectOptionsRecord()
 
   func spec() throws -> ConnectSpec {
     if let timeoutMs, !(timeoutMs > 0) {
       throw CoreError(.invalidArgument, "Invalid connect option timeoutMs: \(timeoutMs)")
+    }
+    // P3-01: iOS keeps an app's connections in the background with the bluetooth-central mode.
+    let modes = Bundle.main.infoDictionary?["UIBackgroundModes"] as? [String] ?? []
+    if keepAliveInBackground, !modes.contains("bluetooth-central") {
+      throw CoreError(
+        .misconfigured,
+        "keepAliveInBackground needs the bluetooth-central background mode: set ios.backgroundModes ['central'] "
+          + "in the expo-ble-kit config plugin options (\(CoreError.setupGuide))"
+      )
     }
     return ConnectSpec(
       timeout: timeoutMs.map { $0 / 1000 },

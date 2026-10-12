@@ -1628,8 +1628,9 @@ export class FakeBleAdapter implements NativeBleKitPort {
   }
 
   /**
-   * Background tasks (P3-04), as Android registers them: the `backgroundScan` permission and an
-   * adapter that is on. The fake has no TaskManager to deliver to, so it only keeps them.
+   * Background tasks: as Android registers background scans (P3-04), with the `backgroundScan`
+   * permission and an adapter that is on; iOS's restoration events (P3-02) need neither. The fake
+   * has no TaskManager to deliver to, so it only keeps them.
    */
   readonly backgroundTasks = new Map<string, NativeBackgroundTaskOptions>();
 
@@ -1637,8 +1638,10 @@ export class FakeBleAdapter implements NativeBleKitPort {
     taskName: string,
     options: NativeBackgroundTaskOptions
   ): Promise<void> {
-    const precondition = adapterError(this.state) ?? this.permissionError('backgroundScan');
-    if (precondition) throw precondition;
+    if (options.scan) {
+      const precondition = adapterError(this.state) ?? this.permissionError('backgroundScan');
+      if (precondition) throw precondition;
+    }
     this.backgroundTasks.set(taskName, options);
   }
 

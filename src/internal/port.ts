@@ -78,7 +78,7 @@ export interface NativeBleKitPort {
   ): Subscription;
 }
 
-export type NativeDiagnostics = Pick<Diagnostics, 'state' | 'sessions' | 'android'>;
+export type NativeDiagnostics = Pick<Diagnostics, 'state' | 'sessions' | 'android' | 'ios'>;
 
 /**
  * One peripheral's native handle (plan §4.5). Operations JS may cancel (an `AbortSignal`) take an

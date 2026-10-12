@@ -331,6 +331,7 @@ export const BleManager: BleManagerApi = {
         sessions: native.sessions,
         recentErrors: recentErrors(),
         ...(native.android && { android: native.android }),
+        ...(native.ios && { ios: native.ios }),
       };
     });
   },
@@ -379,7 +380,7 @@ export const BleManager: BleManagerApi = {
   unregisterBackgroundTask(taskName) {
     return guard(async () => {
       const name = checkTaskName(taskName);
-      if (Platform.OS !== 'android') return;
+      if (Platform.OS !== 'android' && Platform.OS !== 'ios') return;
       await getNativeModule().unregisterBackgroundTask?.(name);
     });
   },

@@ -102,6 +102,23 @@ iOS stops advertising and serving the GATT server while the app is in the backgr
 - Keep the modes your app already has in the array.
 - In the background, iOS doesn't advertise the local name, and service UUIDs go to the overflow area, which only iOS devices scanning for them see.
 
+## iOS: state restoration (optional)
+
+With state restoration, iOS keeps the app's Bluetooth connections while the system has stopped the app, and relaunches it in the background for their events; the plugin writes this with `ios: { backgroundModes: ['central'], restoreIdentifier: '…' }`. In `Info.plist`:
+
+```xml
+<key>UIBackgroundModes</key>
+<array>
+  <string>bluetooth-central</string>
+</array>
+<key>ExpoBleKitRestoreIdentifier</key>
+<string>com.example.ble</string>
+```
+
+- Keep the modes your app already has in the array.
+- The identifier is any string unique to your app. Without `bluetooth-central`, the library ignores it: iOS wouldn't restore anything.
+- iOS doesn't relaunch an app the user closed from the app switcher.
+
 ## iOS: AccessorySetupKit (optional)
 
 `BleManager.ios.showAccessoryPicker` (iOS 18+) needs AccessorySetupKit declared, with every service, name substring and company identifier its picker items use; the plugin writes them from `ios: { accessorySetupKit: { services, names, companyIdentifiers } }`. In `Info.plist`:

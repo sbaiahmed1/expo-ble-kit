@@ -1,6 +1,6 @@
 # Expo BLE (`expo-ble-kit`) — Architecture & Implementation Plan
 
-> **Status:** Draft v0.54 · **Date:** 2026-10-12 · **Scope:** proposition #3, an Expo-first Bluetooth Low Energy module · **Changes:** Appendix D
+> **Status:** Draft v0.55 · **Date:** 2026-10-12 · **Scope:** proposition #3, an Expo-first Bluetooth Low Energy module · **Changes:** Appendix D
 >
 > **Package name:** `expo-ble-kit` (D0a, decided 2026-10-02) · native module `ExpoBleKit` · Android package `expo.modules.blekit`.
 >
@@ -98,7 +98,7 @@
 | ADR-005 | Three layers: native core (no Expo/React imports) → thin binding → TypeScript API | Accepted |
 | ADR-006 | Exactly one in-flight GATT operation per connection on **both** platforms (FIFO queue + timeouts) | Accepted |
 | ADR-007 | One JS event per native event by default; opt-in native batching for notifications and scan results | Accepted |
-| ADR-008 | Background events go through an `expo-task-manager` consumer, backed by a native event buffer | Proposed → spike P0-05. Android's consumer is in place since P3-04 (background scans); iOS waits for the spike |
+| ADR-008 | Background events go through an `expo-task-manager` consumer, backed by a native event buffer | Accepted 2026-10-12 after spike P0-05 (`docs/spikes/P0-05-ios-background.md`): on iOS a background relaunch connects a scene in the background, so JS runs and the task receives the events; the buffer holds them until JS reached the library (expo-task-manager 57 loses an event handed over while JS starts listening). Android's consumer is in place since P3-04 |
 | ADR-009 | License: MIT, personal ownership (github.com/sbaiahmed1), no CLA | Accepted 2026-10-02 (D2) |
 | ADR-010 | Four-layer test pyramid, including a public fake adapter and a Bumble virtual peripheral | Accepted |
 | ADR-011 | **Stable releases only.** Every branch, spikes included, builds against the latest stable Expo SDK (57 today) and stable packages. No beta, alpha, RC, canary or `next`-tagged versions, and no experimental or undocumented features of a stable SDK, unless the maintainer explicitly asks. The repo moves to SDK 58 when it is stable | Accepted 2026-10-02, tightened the same day |
@@ -207,7 +207,7 @@ expo-ble-kit/
 | `GattQueue` | Generic serial operation queue (§4.9) |
 | `Advertiser`, `GattServer` | One `CBPeripheralManager` on queue `expo.blekit.peripheral`. Service publication, read/write requests, `updateValue` with `peripheralManagerIsReady(toUpdateSubscribers:)` flow control. P4-02: `ServerNotifier` keeps one queue for the whole manager (iOS has one transmit queue for all centrals); a `false` from `updateValue` holds the queue until `peripheralManagerIsReady`, at most 10 s per value; the length limit is the central's `maximumUpdateValueLength`. P4-03: the advertiser shares the manager and gets its own delegate (`advertisingDelegate`), so the server keeps `delegate`; one advertisement, confirmed by `peripheralManagerDidStartAdvertising` within 10 s; Bluetooth off ends it. P4-01: the manager is created with the first server or advertisement (`ShowPowerAlert` off, after the authorization check, so it never prompts); iOS answers static values and keeps subscriptions itself; a write request array is one long write, answered through its first request (Apple's `didReceiveWrite` docs). iOS tells a peripheral nothing about central disconnects, so cached long-read values just expire |
 | `L2CAPChannel`, `L2CAPPublisher` | P5-03: a channel wraps `CBL2CAPChannel`'s streams, scheduled on the queue its manager reports on (`CFReadStreamSetDispatchQueue`): the engine's queue for channels the app opens, the peripheral queue for published ones. Reading waits for `receive()`; writes follow `hasSpaceAvailable`, with the 10 s stall rule. A session opens one channel at a time (`didOpen` with an error doesn't name its request); a request that timed out stays first until CoreBluetooth answers, and its channel is closed on arrival. The publisher publishes one PSM at a time for the same reason, within 10 s, and routes `peripheralManager(_:didOpen:)` by PSM |
-| `Restoration` | `willRestoreState` for both managers. Rehydrates sessions and re-arms subscriptions natively. Buffers events until the binding attaches |
+| `Restoration` | P3-01: `willRestoreState` for the central manager (the peripheral manager's is P4-04): restored peripherals are adopted once the manager is on (connected ones ready with what CoreBluetooth kept, notifying characteristics delivering under a `restored` subscriber until JS subscribes, pending connections pending until a JS `connect()` takes them over). `BleKitRuntime` holds the process-wide engine, the restoration journal, and `BackgroundEventQueue`, which buffers background events until JS can take them |
 | `AccessorySetup` (iOS 18+) | P5-04: `AccessoryPicker` shows `ASAccessorySession`'s picker one at a time, behind `AccessorySessionLike` (`ASAccessorySessionAdapter`), and answers with the picked accessory's `bluetoothIdentifier`, the peripheral id, after the picker closes; a picker left open past its timeout is closed by invalidating the session. `AccessoryDeclarations` checks Info.plist first, because iOS stops the app on an undeclared identifier or a malformed list. The engine uses the central manager without the prompt in apps that declare it (§4.13). Opt-in only (see §10) |
 | `CBAbstractions` | Protocols over CoreBluetooth types (`CentralManaging`, `PeripheralLike`, `PeripheralManaging`) so XCTest can inject fakes |
 
@@ -449,10 +449,10 @@ Rules (decided in P1-03):
 **iOS**
 
 1. The plugin adds `UIBackgroundModes` (`bluetooth-central` and/or `bluetooth-peripheral`) only when configured.
-2. With `ios.restoreIdentifier` set, the system may relaunch the app for BLE events. The app-delegate subscriber creates engines at launch, but only if Bluetooth is already authorized → `willRestoreState` → sessions rehydrated, subscriptions re-armed natively, events buffered.
-3. Delivery: buffered events flush to JS through the `restoration` event once the runtime is ready, or to the registered TaskManager task when the app runs headless.
+2. With `ios.restoreIdentifier` set (and `bluetooth-central`), the system may relaunch the app for BLE events. The app-delegate subscriber creates the engine at every launch, but only if Bluetooth is already authorized (the relaunch's launch options don't carry `bluetoothCentrals` under the scene life cycle, P0-05) → `willRestoreState` → sessions adopted once the manager is on.
+3. Delivery (P3-02): a task registered with `registerBackgroundTask` gets `restored`, and `connectionStateChange` and `notification` while the app isn't in the foreground. A background relaunch connects a scene in the background, so React Native starts and the task runs (P0-05). Events wait natively until JS reached the library plus 1 s (15 s after launch at the latest), then go out in order. No module-level `restoration` event: the task's `restored` and `getDiagnostics().ios.restoration.journal` cover it. In the foreground, a restored characteristic delivers to JS once the app subscribes to it again (the CCCD is already on).
 4. Pending connects persist in the background. Use them for "connect when in range" via `connect({ timeoutMs: null })` (the explicit exception to Appendix B rule 4).
-5. **Spike P0-05:** confirm exactly what runs on a background relaunch under SDK 58's scene life cycle, where no scene connects: is the subscriber called, does the JS runtime start, does the TaskManager path work?
+5. **Spike P0-05 (done 2026-10-12, SDK 57 with scene support on iOS 27.0.1):** iOS relaunched the app ~5 s after a SIGKILL, the subscriber ran, a scene connected in the background and JS started (2–8 s, debug build); findings in `docs/spikes/P0-05-ios-background.md`.
 
 **Android**
 
@@ -838,7 +838,8 @@ MTU and RSSI rules (decided in P1-09):
 
 API rules (decided in P1-12):
 
-- Connect options of later tasks reject with `NOT_SUPPORTED` instead of being ignored: `keepAliveInBackground: true` on iOS (P3-01; Android has it since P3-03), a non-empty `android.phy` on Android (P5-02). (`reconnect` and `ios.enableAutoReconnect` landed with P2-01.) `restoreSubscriptionsOnReconnect` is accepted and has no effect without `reconnect`.
+- Connect options of later tasks reject with `NOT_SUPPORTED` instead of being ignored: a non-empty `android.phy` on Android (P5-02). (`reconnect` and `ios.enableAutoReconnect` landed with P2-01.) `restoreSubscriptionsOnReconnect` is accepted and has no effect without `reconnect`.
+- `keepAliveInBackground: true`: Android runs the foreground service (P3-03); iOS needs the `bluetooth-central` background mode (`MISCONFIGURED` without it) and does nothing more, since the mode keeps every connection of the app (P3-01).
 - Every rejection is a `BleError`. Peripheral calls carry `peripheralId`, and attribute calls `serviceUUID` and `characteristicUUID`. Invalid input rejects with `INVALID_ARGUMENT` before any native call; synchronous calls (`startScan`, `getPeripheral`, listeners) throw it.
 - Notifications are fanned out in JS: each subscriber gets every value of its characteristic. A subscriber callback that throws doesn't stop the others; the error is rethrown asynchronously. A disconnect marks every subscription inactive.
 - `getPeripheral(id)` returns the same object for the same id while it is in use. `getKnownPeripherals` and `getSystemConnectedPeripherals` resolve with those objects; both use the manager without showing a prompt, so they reject like `connect()` when it can't be used. Android keeps every valid address in `getKnownPeripherals` (§4.12).
@@ -982,7 +983,7 @@ L2CAP rules (decided in P5-03):
 ### 5.6 Background and onboarding
 
 ```ts
-/** A background task's `data`. Delivered so far: `scanResults` on Android (P3-04). */
+/** A background task's `data`: `scanResults` on Android (P3-04); `restored`, `connectionStateChange` and `notification` on iOS (P3-02). */
 export type BleBackgroundEvent =
   | { type: 'restored'; peripheralIds: string[] }
   | { type: 'scanResults'; results: ScanResult[] }
@@ -994,7 +995,7 @@ export type BleBackgroundEvent =
 export interface ForegroundServiceNotification { title?: string; text?: string; channelName?: string; smallIcon?: string /* drawable name */ }
 
 export interface BackgroundTaskOptions {
-  events: Array<BleBackgroundEvent['type']>; // Android so far: 'scanResults'; other events NOT_SUPPORTED until their task; iOS NOT_SUPPORTED until P3-02
+  events: Array<BleBackgroundEvent['type']>; // Android: 'scanResults' (P3-04); iOS: 'restored', 'connectionStateChange', 'notification' (P3-02); 'devicePresence' NOT_SUPPORTED until P5-05
   /** Android: filters for PendingIntent background scans. `services` or `manufacturerData` required (controller filtering); `namePrefix` checked on delivery. */
   scan?: Pick<ScanOptions, 'services' | 'manufacturerData' | 'namePrefix'>;
 }
@@ -1043,7 +1044,10 @@ export interface Diagnostics {
   recentErrors: BleError[]; // ring buffer, last 100
   /** Android: GATT clients opened and not yet closed (stable across connect cycles when nothing leaks), and whether the keep-alive service runs. */
   android?: { openGattClients: number; foregroundService: boolean };
+  /** iOS: state restoration (P3-01): whether it's declared, and the journal of background relaunches (last 100, kept across launches). */
+  ios?: { restoration: { enabled: boolean; journal: RestorationJournalEntry[] } };
 }
+export interface RestorationJournalEntry { time: number; event: string; count: number }
 ```
 
 Hook rules (decided in P1-12; all built on `useSyncExternalStore` or effects over the API above):
@@ -1241,9 +1245,10 @@ Parallelism: P0-06/P0-07 can run alongside P0-03/P0-04. With two people, P4 can 
   Stable only (ADR-011): SDK 57 and the 1.0 DSL, on both platforms. Expo Modules 2.0 is beta on SDK 58 and experimental on SDK 57, so it is out of scope until SDK 58 is stable. Implement an async `readValue` returning bytes, a `notification` event with a `Uint8Array` payload, and a `PeripheralObject` SharedObject. Measure 10k async calls, a 10k events/s burst, and binary round-trip correctness (no base64).
   **Accept:** `docs/spikes/P0-04-binding.md` with numbers and a recommendation; a human decides D1.
   **Status 2026-10-02:** report written with real-device numbers from a Galaxy A52 (Android 14): binary data is a real `Uint8Array` everywhere (arguments, return values, module and shared-object events), no events lost or reordered, async calls 0.1–0.45 ms, 10k events/s sustained. **D1 decided 2026-10-02: 1.0 DSL, minimum SDK 57** (ADR-002). The iOS real-device run was not done before deciding; it can follow when signing is set up.
-- [ ] **P0-05 iOS background relaunch spike** — deps: P0-03.
+- [x] **P0-05 iOS background relaunch spike** — deps: P0-03.
   Minimal restoration prototype (`restoreIdentifier`, `bluetooth-central` mode) against a physical peripheral (nRF52840 or a second phone acting as peripheral). Simulate system termination (not a user force-quit) ⚠️ VERIFY Apple's recommended method. Answer: does the app-delegate subscriber run under SDK 58's scene life cycle? Does the JS runtime start without a scene? Can a TaskManager consumer deliver events headlessly?
   **Accept:** `docs/spikes/P0-05-ios-background.md` with findings and the chosen delivery strategy; ADR-008 updated.
+  **Done 2026-10-12:** `docs/spikes/P0-05-ios-background.md` and ADR-008. Apple's way to simulate a system termination: SIGKILL (`e2e/ios-restoration/kill.sh`, through `xcrun devicectl`); a force quit from the app switcher stops relaunches (S-B6). On the iPhone 14 Pro Max (iOS 27.0.1) with this Mac as the peripheral (`e2e/macos-peripheral`, which now serves the whole test profile): the subscriber runs at the relaunch, a scene connects in the background and JS starts, so the TaskManager path works; the delivery strategy is ADR-008's.
 - [ ] **P0-06 Android emulator BLE spike** — deps: P0-03, P0-07.
   Start the emulator with netsim enabled (emulator 37.1 starts `netsimd` by itself and writes `$TMPDIR/netsim.ini`, so no extra flag was needed in P0-07 ⚠️ VERIFY on CI runners), attach the Bumble virtual peripheral over the `android-netsim` transport, and run a test that scans, connects and reads. Add a CI job marked allowed-to-fail.
   **Accept:** green locally; the CI job runs and uploads logcat, `dumpsys bluetooth_manager` and the Bumble log.
@@ -1460,12 +1465,23 @@ Parallelism: P0-06/P0-07 can run alongside P0-03/P0-04. With two people, P4 can 
 
 ### 7.5 P3 — Background
 
-- [ ] **P3-01 iOS restoration** — deps: P0-05, P2-01.
+- [x] **P3-01 iOS restoration** — deps: P0-05, P2-01.
   Background modes, central restoration, authorization-aware early creation.
   **Accept:** S-B2 passes.
+  **Done 2026-10-12:** S-B2 passes on the iPhone 14 Pro Max (iOS 27.0.1) with `e2e/ios-restoration/run.sh`: after a SIGKILL iOS relaunched the app, the engine restored the connection with Heart Rate still notifying, and values kept arriving (58 in a minute, every run from a fresh connection).
+  - Plugin: `ios.backgroundModes: ['central']` and `ios.restoreIdentifier` (Info.plist `ExpoBleKitRestoreIdentifier`; needs `'central'`), with the bare-setup section the sync test checks.
+  - iOS: the manager gets `CBCentralManagerOptionRestoreIdentifierKey` when Info.plist has both; `BleKitAppDelegateSubscriber` and `BleKitRuntime` create the engine at launch and keep it for the process (the module uses it); `CentralEngine+Restoration` and `PeripheralSession+Restoration` adopt restored peripherals (§4.3). `RestorationJournal` keeps the last 100 events across launches, in `getDiagnostics().ios.restoration`.
+  - Found on the device: CoreBluetooth asserts at the manager's creation, with a restore identifier, unless the delegate it is given implements `willRestoreState` (the adapter set itself as delegate afterwards: every launch crashed); and a restored pending connection that doesn't complete made a joining `connect()` wait forever (now the first JS connect takes it over with its own options and timeout).
+  - Example: **Checks → State restoration (iOS)**, also armed by the deep link `expo.modules.blekit.example://restoration/arm`.
+  - Tests: 9 Swift (`RestorationTests`), 2 plugin cases, 1 Jest.
 - [ ] **P3-02 Event buffer and delivery** — deps: P3-01.
   Native buffer, `restoration` event, TaskManager consumer on iOS.
   **Accept:** S-B1 and S-B2 deliver events to JS in the foreground and to the task when headless, per the P0-05 strategy.
+  **Progress 2026-10-12 (open: a clean S-B1 run, and S-B2 in a release build):** `registerBackgroundTask` on iOS with `restored`, `connectionStateChange` and `notification` (§4.14 item 3; no module-level `restoration` event, decided with P0-05).
+  - iOS: `BackgroundTaskConsumer` (TaskManager consumer, version 1, Bluetooth-central launches), `BackgroundEventQueue` (in order, held until JS reached the library plus 1 s or 15 s after launch, at most 1,000), `registerBackgroundTask` / `unregisterBackgroundTask` (`MISCONFIGURED` without restoration or without expo-task-manager). JS: per-platform events in `src/internal/backgroundTask.ts`; the fake keeps iOS tasks without preconditions.
+  - S-B2 with the task: it received `connecting`, `connected`, `restored` and every notification in order as `Uint8Array` (70 in a minute, no gap) after the background relaunch. Before the queue held events, one value went missing when JS started listening (expo-task-manager's race, P0-05 finding 5).
+  - S-B1: a 1 Hz stream with the app sent to the background for 2 minutes reached the JS listener without a gap (106 values), but app switches the test didn't make disturbed the run.
+  - Tests: 3 Swift (`BackgroundEventQueueTests`), 2 Jest, 1 example.
 - [ ] **P3-03 Android foreground service** — deps: P2-01.
   `ConnectionService` (`connectedDevice`), notification config, `keepAliveInBackground`, foreground-only start (§4.4).
   **Accept:** S-B3 passes on Pixel, Samsung and Xiaomi; a link loss and reconnect while the app is backgrounded keeps the service running without a restart; a refused start produces a `warning`, not a crash.
@@ -1708,7 +1724,7 @@ How each run works, the scripts (`e2e/soak/`, `e2e/maestro/`) and the results pe
 |---|---|---|---|
 | Moving from the 1.0 DSL to Expo Modules 2.0 after SDK 58 is stable, or 1.0 falling behind | Binding rework | Medium | Thin binding (ADR-005), 1.0/2.0 coexistence in one module, migrate member by member |
 | SDK 57 apps built with Xcode 27 crash on iOS 27 without the UIScene life cycle (confirmed 2026-10-02) | Users' apps (and our example) fail to launch | Mitigated | The example enables `expo-build-properties` `ios.enableSceneSupport`; docs tell SDK 57 users to do the same; P0-05 must test background relaunch with scene support on, since it changes the app life cycle the binding hooks into |
-| iOS background relaunch behaves differently under the scene life cycle | Background features fail on iOS | Medium | Spike P0-05 first; native-first buffering; TaskManager delivery |
+| iOS background relaunch behaves differently under the scene life cycle | Background features fail on iOS | Resolved for SDK 57 (P0-05) | Measured on iOS 27.0.1: the subscriber runs, a scene connects in the background and JS starts; native buffering covers the time before JS and expo-task-manager's start-up race. Re-check on SDK 58 |
 | Android OEM quirks (status 133, scan throttling, battery killers) | Flaky connections, bad reviews for users' apps | High | Bounded retries, throttle guard, OEM matrix, troubleshooting docs |
 | Emulator + Bumble flaky on hosted CI | False alarms | Medium–High | L3 allowed to fail; L4 is the source of truth |
 | AccessorySetupKit changes CoreBluetooth discovery app-wide when declared | Generic scanning breaks for apps that enable it | Confirmed (P5-04, iOS 27.0.1) | Opt-in only, separate example config. Measured: an unfiltered scan saw only the picked accessory (1 device, the normal build 6), and the adapter read `poweredOff` until the first pick. `docs/guides/accessory-setup.md` says so before the setup steps |
@@ -1933,3 +1949,4 @@ An error in `peripheralManagerDidStartAdvertising` (P4-03) is `ADVERTISING_FAILE
 | v0.52 | 2026-10-12 | P5-04 done: AccessorySetupKit. The §4.3 `AccessorySetup` row, the §4.13 outcome and rule for apps that declare it (measured on iOS 27.0.1), the §4.15 option type, the fake's picker in §5.8, the §10 risk confirmed |
 | v0.53 | 2026-10-12 | P6-05 progress: the documentation website (`website/`, Docusaurus) built early at the maintainer's request; hosting open |
 | v0.54 | 2026-10-12 | The repository is public; the documentation website is published on GitHub Pages |
+| v0.55 | 2026-10-12 | P0-05 and P3-01 done, P3-02 in progress: the iOS background spike (findings in `docs/spikes/P0-05-ios-background.md`, ADR-008 accepted), central state restoration, background tasks on iOS; §4.3, §4.14, §5.6, §5.7 (`Diagnostics.ios`) and §10 updated |

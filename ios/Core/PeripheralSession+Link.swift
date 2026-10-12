@@ -84,3 +84,28 @@ extension PeripheralSession {
     _ = queue.complete(result) { $0.kind == .readRSSI }
   }
 }
+
+extension PeripheralSession {
+  /// Starts connecting with `spec`: its options, its timeout, and CoreBluetooth's connect (again,
+  /// for a restored pending connection: the call is idempotent).
+  func start(_ spec: ConnectSpec) {
+    autoDiscover = spec.autoDiscover
+    reconnect = spec.reconnect
+    restoreSubscriptions = spec.restoreSubscriptions
+    connectTimeoutValue = spec.timeout
+    connectOptions = Self.options(for: spec)
+    startConnectTimeout()
+    central.connect(peripheral, options: connectOptions)
+  }
+
+  static func options(for spec: ConnectSpec) -> [String: Any]? {
+    var options: [String: Any] = [:]
+    if spec.notifyOnDisconnection {
+      options[CBConnectPeripheralOptionNotifyOnDisconnectionKey] = true
+    }
+    if spec.reconnect != nil, spec.enableAutoReconnect, #available(iOS 17, macOS 14, *) {
+      options[CBConnectPeripheralOptionEnableAutoReconnect] = true
+    }
+    return options.isEmpty ? nil : options
+  }
+}

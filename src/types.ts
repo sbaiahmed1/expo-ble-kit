@@ -201,7 +201,10 @@ export interface ConnectOptions extends Omit<OpOptions, 'timeoutMs'> {
    * service start while the app is in the foreground: a refused start sends a
    * `FOREGROUND_SERVICE_FAILED` warning, and the connection goes on without it.
    *
-   * iOS: not supported yet (rejects with `NOT_SUPPORTED`); it comes with background modes (P3-01).
+   * iOS: keeps working in the background as long as the app declares the `bluetooth-central`
+   * background mode (config plugin `ios.backgroundModes: ['central']`; `MISCONFIGURED` without it),
+   * which keeps every connection of the app; with state restoration, iOS also relaunches the app
+   * for the connection's events after stopping it.
    */
   keepAliveInBackground?: boolean;
   /** Android-only options; ignored on iOS. */
@@ -304,11 +307,35 @@ export interface Diagnostics {
     /** Whether the foreground service of `keepAliveInBackground` is running. */
     foregroundService: boolean;
   };
+  /** iOS-only data. */
+  ios?: {
+    /** State restoration (config plugin `ios.restoreIdentifier`). */
+    restoration: {
+      /** Whether the app declares it: the restore identifier and the `bluetooth-central` mode. */
+      enabled: boolean;
+      /**
+       * What happened around background relaunches, oldest first, kept across launches (the last
+       * 100): launches and why, scenes, restored peripherals, what arrived in the background.
+       */
+      journal: RestorationJournalEntry[];
+    };
+  };
+}
+
+/** One entry of `Diagnostics.ios.restoration.journal`. */
+export interface RestorationJournalEntry {
+  /** Epoch milliseconds of the latest occurrence. */
+  time: number;
+  /** What happened. */
+  event: string;
+  /** How many times in a row (notifications from one characteristic count into one entry). */
+  count: number;
 }
 
 /**
- * What a background task receives as `data` (`TaskManager.defineTask`). Delivered so far:
- * `scanResults` on Android. The others arrive with later versions.
+ * What a background task receives as `data` (`TaskManager.defineTask`): `scanResults` on Android;
+ * `restored`, `connectionStateChange` and `notification` on iOS. `devicePresence` arrives with a
+ * later version.
  */
 export type BleBackgroundEvent =
   | {
@@ -356,7 +383,10 @@ export type BleBackgroundEvent =
 
 /** What `BleManager.registerBackgroundTask` delivers to the task. */
 export interface BackgroundTaskOptions {
-  /** The events the task receives. Supported so far: `scanResults` (Android). */
+  /**
+   * The events the task receives: `scanResults` on Android; `restored`, `connectionStateChange`
+   * and `notification` on iOS.
+   */
   events: BleBackgroundEvent['type'][];
   /**
    * The filters of the background scan, with `scanResults`. `services` or `manufacturerData` is
@@ -1052,7 +1082,12 @@ export interface BleManagerApi {
    * it). The scan restarts by itself after an app update; after a reboot it restarts when the app
    * next runs, or at boot if the app declares `RECEIVE_BOOT_COMPLETED`.
    *
-   * iOS: not supported yet (rejects with `NOT_SUPPORTED`).
+   * iOS: `restored`, `connectionStateChange` and `notification`, with state restoration (config
+   * plugin `ios.restoreIdentifier`; `MISCONFIGURED` without it) and `expo-task-manager`. The task
+   * gets `restored` when iOS hands back the app's connections, and the other two while the app
+   * isn't in the foreground. A background relaunch runs no JS in a development or production
+   * build, so TaskManager keeps those events until the app's JS starts, the next time it opens.
+   * `scanResults` rejects with `NOT_SUPPORTED`.
    */
   registerBackgroundTask(taskName: string, options: BackgroundTaskOptions): Promise<void>;
   /** Stops delivering to `taskName` and its background scan. Unknown names do nothing. */

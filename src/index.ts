@@ -34,6 +34,7 @@ export type {
   ConnectOptions,
   Descriptor,
   Diagnostics,
+  RestorationJournalEntry,
   ForegroundServiceNotification,
   GattServer,
   L2CAPChannel,

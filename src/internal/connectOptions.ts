@@ -113,20 +113,11 @@ function toNativeReconnectPolicy(
 }
 
 /**
- * Options of later tasks (plan §7): `keepAliveInBackground` on iOS (P3-01), `android.phy` (P5-02).
- * Setting one rejects with NOT_SUPPORTED rather than being ignored; platform options only on their
- * platform.
+ * Options of later tasks (plan §7): `android.phy` (P5-02). Setting one rejects with NOT_SUPPORTED
+ * rather than being ignored; platform options only on their platform.
  */
 function checkImplemented(options: ConnectOptions): void {
-  if (
-    optionalBoolean('keepAliveInBackground', options.keepAliveInBackground) &&
-    Platform.OS === 'ios'
-  ) {
-    throw new BleError(
-      'NOT_SUPPORTED',
-      "Connect option keepAliveInBackground isn't supported on iOS yet: it comes with background modes"
-    );
-  }
+  optionalBoolean('keepAliveInBackground', options.keepAliveInBackground);
   const phy: unknown = options.android?.phy;
   if (phy !== undefined && !Array.isArray(phy)) {
     throw invalid('android.phy', 'expected an array');

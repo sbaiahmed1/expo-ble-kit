@@ -12,7 +12,8 @@ import { toNativeScanOptions } from './scanOptions';
  */
 export interface NativeBackgroundTaskOptions {
   events: BleBackgroundEvent['type'][];
-  scan: {
+  /** With `scanResults` (Android). */
+  scan?: {
     services: UUID[];
     namePrefix?: string;
     manufacturerData: { companyId: number; data?: number[]; mask?: number[] }[];
@@ -26,8 +27,11 @@ const EVENTS: BleBackgroundEvent['type'][] = [
   'notification',
   'devicePresence',
 ];
-/** Events Android delivers so far; the others come with later tasks (plan §7: P3-02, P5-05). */
-const SUPPORTED: BleBackgroundEvent['type'][] = ['scanResults'];
+/** Events each platform delivers (plan §7: P3-04 Android scans, P3-02 iOS restoration; P5-05 adds devicePresence). */
+const SUPPORTED: Partial<Record<typeof Platform.OS, BleBackgroundEvent['type'][]>> = {
+  android: ['scanResults'],
+  ios: ['restored', 'connectionStateChange', 'notification'],
+};
 
 function invalid(option: string, problem: string): BleError {
   return new BleError('INVALID_ARGUMENT', `Invalid background task ${option}: ${problem}`);
@@ -42,7 +46,7 @@ export function checkTaskName(taskName: unknown): string {
 
 /**
  * Validates `registerBackgroundTask` options (plan §5.6). Throws INVALID_ARGUMENT, or
- * NOT_SUPPORTED on iOS and for events a later task delivers.
+ * NOT_SUPPORTED for events the platform doesn't deliver.
  */
 export function toNativeBackgroundTaskOptions(
   options: BackgroundTaskOptions
@@ -59,18 +63,17 @@ export function toNativeBackgroundTaskOptions(
       throw invalid('events', `unknown event ${String(event)}; expected ${EVENTS.join(', ')}`);
     }
   }
-  if (Platform.OS !== 'android') {
+  const supported = SUPPORTED[Platform.OS] ?? [];
+  const unsupported = events.filter((event) => !supported.includes(event));
+  if (unsupported.length > 0) {
     throw new BleError(
       'NOT_SUPPORTED',
-      "registerBackgroundTask isn't supported on iOS yet: it comes with background events"
+      `Background events ${unsupported.join(', ')} aren't supported on ${Platform.OS}; ` +
+        `supported: ${supported.join(', ') || 'none'}`
     );
   }
-  const later = events.filter((event) => !SUPPORTED.includes(event));
-  if (later.length > 0) {
-    throw new BleError(
-      'NOT_SUPPORTED',
-      `Background events ${later.join(', ')} aren't supported yet; supported: ${SUPPORTED.join(', ')}`
-    );
+  if (!events.includes('scanResults')) {
+    return { events: [...new Set(events)] };
   }
   if (scan === undefined) {
     throw invalid('scan', 'required with the scanResults event');

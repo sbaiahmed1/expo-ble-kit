@@ -5,6 +5,7 @@ import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
 import { useBleState } from 'expo-ble-kit';
 
 import { startDemo } from './src/demo/testPeripheral';
+import { useRestorationLink } from './src/lib/restoration';
 import { DevChecksScreen } from './src/screens/DevChecksScreen';
 import { ExplorerScreen } from './src/screens/ExplorerScreen';
 import { HeartRateScreen } from './src/screens/HeartRateScreen';
@@ -41,6 +42,7 @@ export default function App() {
   const [demo, setDemo] = useState(false);
   const stopDemo = useRef<(() => void) | null>(null);
   useEffect(() => () => stopDemo.current?.(), []);
+  useRestorationLink();
 
   const enableDemo = (on: boolean) => {
     if (!on || demo) return; // Leaving demo mode needs a restart: listeners are bound to the fake.

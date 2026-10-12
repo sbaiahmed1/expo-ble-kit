@@ -143,7 +143,11 @@ const EXTRAS: { label: string; link: string }[] = [
   },
   {
     label: 'Keep-alive service (Android)',
-    link: '/docs/getting-started#staying-connected-in-the-background-android',
+    link: '/docs/getting-started#staying-connected-in-the-background',
+  },
+  {
+    label: 'Background relaunch (iOS)',
+    link: '/docs/getting-started#ios-state-restoration-and-background-tasks',
   },
   { label: 'Accessory picker (iOS 18+)', link: '/docs/guides/accessory-setup' },
   { label: 'Logging and diagnostics', link: '/docs/getting-started#logging' },

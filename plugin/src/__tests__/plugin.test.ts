@@ -27,6 +27,7 @@ import {
 import {
   ACCESSORY_SETUP_KEYS,
   BACKGROUND_MODES_KEY,
+  RESTORE_IDENTIFIER_KEY,
   BLUETOOTH_ALWAYS_KEY,
   DEFAULT_BLUETOOTH_ALWAYS_PERMISSION,
   applyInfoPlist,
@@ -66,15 +67,15 @@ describe('validateProps', () => {
   it.each([
     [{ bluetoothPermission: 'typo' }, 'unknown option "bluetoothPermission"'],
     [{ android: { neverForLocations: true } }, 'unknown option "android.neverForLocations"'],
+    [{ ios: { restoreIdentifier: 'x' } }, 'needs "ios.backgroundModes" with "central"'],
     [
-      { ios: { restoreIdentifier: 'x' } },
-      '"ios.restoreIdentifier" is not available in this version yet',
+      { ios: { backgroundModes: ['central'], restoreIdentifier: ' ' } },
+      '"ios.restoreIdentifier" must be a non-empty string',
     ],
     [
-      { ios: { backgroundModes: ['central'] } },
-      'value "central" is not available in this version yet',
+      { ios: { backgroundModes: ['radio'] } },
+      '"ios.backgroundModes" takes "central", "peripheral"',
     ],
-    [{ ios: { backgroundModes: ['radio'] } }, '"ios.backgroundModes" takes "peripheral"'],
     [{ ios: { backgroundModes: 'peripheral' } }, '"ios.backgroundModes" must be an array'],
     [{ ios: true }, '"ios" must be an object'],
     [{ android: { advertise: 'yes' } }, '"android.advertise" must be a boolean'],
@@ -137,6 +138,17 @@ describe('iOS Info.plist', () => {
       'bluetooth-peripheral',
     ]);
     expect(applyInfoPlist({})).not.toHaveProperty(BACKGROUND_MODES_KEY);
+  });
+
+  it('ios.restoreIdentifier writes the key the library reads, with bluetooth-central', () => {
+    const props = {
+      ios: { backgroundModes: ['central' as const], restoreIdentifier: 'com.example.ble' },
+    };
+    expect(validateProps(props)).toEqual(props);
+    const plist = applyInfoPlist({}, props);
+    expect(plist[RESTORE_IDENTIFIER_KEY]).toBe('com.example.ble');
+    expect(plist[BACKGROUND_MODES_KEY]).toEqual(['bluetooth-central']);
+    expect(applyInfoPlist({})).not.toHaveProperty(RESTORE_IDENTIFIER_KEY);
   });
 });
 
@@ -449,6 +461,12 @@ describe('bare setup guide', () => {
     const ios = guide.slice(guide.indexOf('## iOS: advertising in the background'));
     expect(ios).toContain(`<key>${BACKGROUND_MODES_KEY}</key>`);
     expect(ios).toContain('<string>bluetooth-peripheral</string>');
+  });
+
+  it('lists the restoration entries of ios.backgroundModes and ios.restoreIdentifier', () => {
+    const section = guide.slice(guide.indexOf('## iOS: state restoration'));
+    expect(section).toContain('<string>bluetooth-central</string>');
+    expect(section).toContain(`<key>${RESTORE_IDENTIFIER_KEY}</key>`);
   });
 
   it('lists the AccessorySetupKit keys of ios.accessorySetupKit', () => {

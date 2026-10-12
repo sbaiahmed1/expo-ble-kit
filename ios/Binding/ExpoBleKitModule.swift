@@ -35,7 +35,11 @@ public class ExpoBleKitModule: Module {
   var accessoryPicker: AccessoryPicker?
 
   lazy var engine: CentralEngine = {
-    let engine = CentralEngine(queue: DispatchQueue(label: "expo.blekit.central"))
+    // With restoration, one engine for the process, created at launch (P3-01, BleKitRuntime).
+    let runtime = BleKitRuntime.shared
+    let engine = runtime.restorationEnabled
+      ? runtime.sharedEngine()
+      : CentralEngine(queue: DispatchQueue(label: "expo.blekit.central"))
     engine.onStateChange = { [weak self] state in
       self?.sendEvent("stateChange", ["state": state.rawValue])
       // iOS removes the published services with the adapter: the server closes (plan §5.5).
@@ -95,6 +99,7 @@ public class ExpoBleKitModule: Module {
       self?.existingPeripheral(peripheralId)?.emit(event: "mtuChange", payload: event)
     }
     engine.logger.platform = BleLogger.osLog
+    runtime.attached(engine)
     return engine
   }()
 
@@ -135,9 +140,8 @@ public class ExpoBleKitModule: Module {
     }
 
     Function("getState") { () -> String in
-      let engine = self.engine
-      engine.queue.async { engine.activateIfAuthorized() }
-      return engine.state.rawValue
+      self.engine.queue.async { self.engine.activateIfAuthorized() }
+      return self.engine.state.rawValue
     }
 
     AsyncFunction("getPermissionsAsync") { (promise: Promise) in
@@ -171,6 +175,8 @@ public class ExpoBleKitModule: Module {
     l2capServerClass()
     l2capChannelClass()
     AsyncFunction("showAccessoryPicker", showAccessoryPicker)
+    AsyncFunction("registerBackgroundTask", registerBackgroundTask)
+    AsyncFunction("unregisterBackgroundTask", unregisterBackgroundTask)
 
     // Ids only: JS turns them into peripherals with getPeripheral().
     AsyncFunction("getKnownPeripherals") { (ids: [String], promise: Promise) in
@@ -182,7 +188,8 @@ public class ExpoBleKitModule: Module {
     }
 
     AsyncFunction("getDiagnosticsAsync") { (promise: Promise) in
-      self.settle(promise) { engine in engine.diagnostics() }
+      let ios: [String: Any] = ["restoration": BleKitRuntime.shared.diagnostics]
+      self.settle(promise) { engine in engine.diagnostics().merging(["ios": ios]) { $1 } }
     }
 
     // The request flags don't matter on iOS: one authorization covers every capability.

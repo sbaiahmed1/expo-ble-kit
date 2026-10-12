@@ -28,7 +28,7 @@ if (found) {
 
 - **Central:** scanning with filters (several scans share the radio), connections with timeouts, cancellation and reconnection policies, several devices at once, discovery, reads and writes (long ones too), writes without response with flow control, `writeStream` for large payloads, notifications and indications, native batching of fast notifications, MTU and RSSI.
 - **Peripheral:** a GATT server (static and dynamic values, long reads served from one value, long writes), notifications with flow control, advertising.
-- **Android in the background:** a foreground service that keeps connections open, and background scans that wake the app through `expo-task-manager`. iOS background support comes later.
+- **In the background:** on Android, a foreground service that keeps connections open and background scans that wake the app; on iOS, the `bluetooth-central` mode and state restoration, which relaunches the app for its connections' events. Both deliver to `expo-task-manager` tasks.
 - **Around it:** a config plugin for permissions and options, typed errors (`BleError` with a `code`), React hooks, logging and diagnostics, and `expo-ble-kit/testing`, a fake Bluetooth stack for Jest.
 
 ## Compatibility
@@ -44,8 +44,8 @@ New Architecture only. It needs a development build or a bare React Native app w
 Debug builds of the example app on a Samsung Galaxy A52 (Android 14) and an iPhone 14 Pro Max (iOS 27):
 
 - **Android:** permissions, Bluetooth turned off and on 50 times during scans and connects, scanning (several sessions, the scan-start throttle, a 45-minute scan), connection timeouts and cancellation, 100 connect/cancel cycles without a leaked GATT client, the keep-alive foreground service, a background scan waking the app after the system killed it, and every example flow in demo mode.
-- **iOS:** scanning, connecting to a Mac and reading its Device Information service, RSSI, the error paths; the GATT server with a Mac as the central (reads, 512-byte long reads, long writes, writes without response, a 100 Hz stream without gaps, indications).
-- **Not yet on hardware:** transfers against a test peripheral (the nRF52840, or a second phone running the example's Peripheral tab: `e2e/maestro/two-phone.sh`), advertising, and the device matrix of the plan (§8.2).
+- **iOS:** scanning, connecting to a Mac and reading its Device Information service, RSSI, the error paths; the GATT server with a Mac as the central (reads, 512-byte long reads, long writes, writes without response, a 100 Hz stream without gaps, indications); advertising; L2CAP channels both ways; the AccessorySetupKit picker; state restoration after a system termination, with the background task receiving every notification.
+- **Not yet on hardware:** Android against the Mac as the test peripheral, two phones together (`e2e/maestro/two-phone.sh`), and the device matrix of the plan (§8.2).
 
 ## Documentation
 

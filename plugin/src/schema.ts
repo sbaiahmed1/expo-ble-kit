@@ -1,17 +1,24 @@
 /**
- * Config plugin options (plan §4.15): the base declarations, Android's keep-alive foreground
- * service (P3-03), background location for background scans (P3-04), and advertising (P4-03). The
- * other background and onboarding options arrive with P3 and P5.
+ * Config plugin options (plan §4.15): the base declarations, iOS background modes and state
+ * restoration (P3-01), Android's keep-alive foreground service (P3-03), background location for
+ * background scans (P3-04), advertising (P4-03) and AccessorySetupKit (P5-04).
  */
 export type ExpoBleKitPluginProps = {
   /** iOS NSBluetoothAlwaysUsageDescription. `false` skips it (only for apps that set it elsewhere). */
   bluetoothAlwaysPermission?: string | false;
   ios?: {
     /**
-     * `UIBackgroundModes` to add. `'peripheral'` (`bluetooth-peripheral`) keeps advertising and the
-     * GATT server going in the background. `'central'` arrives with P3.
+     * `UIBackgroundModes` to add. `'central'` (`bluetooth-central`) keeps connections, scans and
+     * notifications going in the background; `'peripheral'` (`bluetooth-peripheral`) keeps
+     * advertising and the GATT server going.
      */
-    backgroundModes?: 'peripheral'[];
+    backgroundModes?: ('central' | 'peripheral')[];
+    /**
+     * Turns on CoreBluetooth state restoration (P3-01): iOS keeps the app's connections while the
+     * system has stopped it and relaunches it in the background for their events. Any string
+     * unique to the app; needs `backgroundModes` with `'central'`.
+     */
+    restoreIdentifier?: string;
     /**
      * iOS 18+ AccessorySetupKit (P5-04): declares the accessories `BleManager.ios.showAccessoryPicker`
      * may look for. Each picker item's service, name substring and company id must be listed here,
@@ -48,12 +55,12 @@ export type ExpoBleKitPluginProps = {
 };
 
 const TOP_LEVEL = new Set(['bluetoothAlwaysPermission', 'ios', 'android']);
-const IOS = new Set(['backgroundModes', 'accessorySetupKit']);
+const IOS = new Set(['backgroundModes', 'restoreIdentifier', 'accessorySetupKit']);
 const ACCESSORY_SETUP = new Set(['services', 'names', 'companyIdentifiers']);
 const MAX_ACCESSORY_VALUES = 500;
 const UUID_PATTERN =
   /^([0-9a-f]{4}|[0-9a-f]{8}|[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/i;
-const BACKGROUND_MODES = ['peripheral'];
+const BACKGROUND_MODES = ['central', 'peripheral'];
 const ANDROID = new Set([
   'neverForLocation',
   'requireBleHardware',
@@ -62,7 +69,7 @@ const ANDROID = new Set([
   'advertise',
 ]);
 /** Options from plan §4.15 that later versions add. */
-const NOT_YET = new Set(['ios.restoreIdentifier', 'android.companionDevice']);
+const NOT_YET = new Set(['android.companionDevice']);
 
 function fail(message: string): never {
   throw new Error(`expo-ble-kit config plugin: ${message}`);
@@ -149,12 +156,19 @@ export function validateProps(props: unknown): ExpoBleKitPluginProps {
     if (modes !== undefined) {
       if (!Array.isArray(modes)) fail('"ios.backgroundModes" must be an array.');
       for (const mode of modes) {
-        if (mode === 'central') {
-          fail('the "ios.backgroundModes" value "central" is not available in this version yet.');
-        }
         if (!BACKGROUND_MODES.includes(mode)) {
           fail(`"ios.backgroundModes" takes ${BACKGROUND_MODES.map((m) => `"${m}"`).join(', ')}.`);
         }
+      }
+    }
+    const restore = iosProps.restoreIdentifier;
+    if (restore !== undefined) {
+      if (typeof restore !== 'string' || restore.trim() === '') {
+        fail('"ios.restoreIdentifier" must be a non-empty string.');
+      }
+      if (!Array.isArray(modes) || !modes.includes('central')) {
+        // iOS restores nothing without it.
+        fail('"ios.restoreIdentifier" needs "ios.backgroundModes" with "central".');
       }
     }
   }

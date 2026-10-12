@@ -205,7 +205,7 @@ final class CBPeripheralAdapter: NSObject, PeripheralLike, CBPeripheralDelegate 
 // MARK: - Central manager
 
 final class CBCentralManagerAdapter: NSObject, CentralManaging, CBCentralManagerDelegate {
-  private let manager: CBCentralManager
+  private var manager: CBCentralManager!
   private let queue: DispatchQueue
   /// One adapter per peripheral identifier, so the core always sees the same object.
   private var adapters: [UUID: CBPeripheralAdapter] = [:]
@@ -214,10 +214,10 @@ final class CBCentralManagerAdapter: NSObject, CentralManaging, CBCentralManager
   /// Creates the CBCentralManager, which may show the Bluetooth permission prompt.
   init(queue: DispatchQueue, options: [String: Any]?) {
     self.queue = queue
-    manager = CBCentralManager(delegate: nil, queue: queue, options: options)
     super.init()
-    // Callbacks are delivered on `queue`, so none can arrive before the delegate is set.
-    manager.delegate = self
+    // With a restore identifier, CoreBluetooth asserts that the delegate it gets here implements
+    // willRestoreState, so the adapter is the delegate from the start (P3-01).
+    manager = CBCentralManager(delegate: self, queue: queue, options: options)
   }
 
   static let factory: CentralManagerFactory = { queue, options in

@@ -221,7 +221,15 @@ device.addServicesChangedListener(() => {
 
 Android reports service changes from Android 12. On older versions, or when a device's cached services are wrong, `await device.android.refreshGattCache()` clears Android's cache and discovers again (it uses a hidden Android API and resolves `false` where that isn't available).
 
-## Staying connected in the background (Android)
+## Staying connected in the background
+
+On iOS, declare the `bluetooth-central` background mode: iOS then keeps the app's connections, scans and notifications going while it is in the background.
+
+```json
+{ "expo": { "plugins": [["expo-ble-kit", { "ios": { "backgroundModes": ["central"] } }]] } }
+```
+
+To be relaunched after iOS stops the app, add [state restoration](#ios-state-restoration-and-background-tasks).
 
 Android may stop a backgrounded app at any time. `keepAliveInBackground` keeps it running while the connection is open, with a foreground service and its notification:
 
@@ -239,7 +247,7 @@ await device.connect({ keepAliveInBackground: true, reconnect: { maxAttempts: 10
 - Without the plugin option, `keepAliveInBackground: true` rejects with `MISCONFIGURED`. Google Play asks apps that declare the service type to describe it in Play Console.
 - On Android 13 and later, the notification appears in the drawer once the user allows notifications (`POST_NOTIFICATIONS`, which your app requests); the service runs either way.
 - `getDiagnostics().android.foregroundService` tells whether it runs.
-- iOS: not supported yet (rejects with `NOT_SUPPORTED`); it comes with background modes.
+- On iOS the option needs the `bluetooth-central` mode (`MISCONFIGURED` without it) and does nothing more: the mode keeps every connection.
 
 ## Scanning in the background (Android)
 
@@ -274,7 +282,42 @@ await BleManager.registerBackgroundTask('sensor-nearby', {
 - Android 10 and 11 also need background location: add `android: { backgroundLocation: true }` to the plugin options; `requestPermissionsAsync({ backgroundScan: true })` asks for it. Otherwise registering rejects with `PERMISSION_DENIED` naming the permission. Android 12 and later need only the scan permission.
 - The scan survives Android stopping the app, but not a force stop from Settings. After an app update it restarts by itself; after a reboot, when the app next runs (or at boot, if the app declares `RECEIVE_BOOT_COMPLETED`).
 - `unregisterBackgroundTask('sensor-nearby')` stops it. Registering again changes its filters.
-- iOS: not supported yet (rejects with `NOT_SUPPORTED`).
+- iOS can't scan this way (`scanResults` rejects with `NOT_SUPPORTED`). Its background events come from state restoration, below.
+
+## iOS: state restoration and background tasks
+
+When iOS stops a backgrounded app to free memory, state restoration keeps the app's Bluetooth connections and relaunches the app in the background when one of them has an event, such as a notification. Turn it on with a restore identifier, any string unique to your app:
+
+```json
+{
+  "expo": {
+    "plugins": [
+      ["expo-ble-kit", { "ios": { "backgroundModes": ["central"], "restoreIdentifier": "com.example.sensor" } }]
+    ]
+  }
+}
+```
+
+At each launch, the library hands the connections iOS kept back to your app: connected ones are `connected`, with their notifications still on, and pending ones stay `connecting`. Tell your JS about it with an `expo-task-manager` task, defined at module scope:
+
+```ts
+import * as TaskManager from 'expo-task-manager';
+import { BleManager, type BleBackgroundEvent } from 'expo-ble-kit';
+
+TaskManager.defineTask<BleBackgroundEvent>('sensor-background', async ({ data }) => {
+  if (data?.type === 'restored') console.log('iOS restored', data.peripheralIds);
+  if (data?.type === 'notification') save(data.peripheralId, data.value); // a Uint8Array
+});
+
+await BleManager.registerBackgroundTask('sensor-background', {
+  events: ['restored', 'notification', 'connectionStateChange'],
+});
+```
+
+- The task gets `restored` at every launch that restored connections, and `notification` and `connectionStateChange` while the app is in the background. In the foreground, subscribe as usual; a restored characteristic is already on, so subscribing to it again is immediate.
+- iOS doesn't relaunch an app the user closed from the app switcher.
+- `getDiagnostics().ios.restoration.journal` lists what happened around background relaunches (launches, restored connections, background events), kept across launches: they don't show on screen.
+- The task needs `expo-task-manager`, and restoration: otherwise registering rejects with `MISCONFIGURED`.
 
 ## Acting as a peripheral: a GATT server
 
@@ -470,6 +513,6 @@ The fake answers on later timer ticks, like a radio; Jest fake timers work (`awa
 
 ## Not in this version yet
 
-Background operation on iOS as a central (state restoration, background tasks) and background events other than scan results come in later versions. Options for them reject with `NOT_SUPPORTED` rather than being ignored.
+Restoring the GATT server and advertising after iOS relaunches the app, and Android's companion device presence events, come in later versions. Options for them reject with `NOT_SUPPORTED` rather than being ignored.
 
 Problems? See [troubleshooting](troubleshooting.md).

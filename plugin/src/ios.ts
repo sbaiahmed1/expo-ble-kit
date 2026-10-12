@@ -5,7 +5,12 @@ import { companyId, type ExpoBleKitPluginProps } from './schema';
 export const BLUETOOTH_ALWAYS_KEY = 'NSBluetoothAlwaysUsageDescription';
 export const BACKGROUND_MODES_KEY = 'UIBackgroundModes';
 /** `ios.backgroundModes` values and the `UIBackgroundModes` entries they add (plan §4.14). */
-export const BACKGROUND_MODES = { peripheral: 'bluetooth-peripheral' } as const;
+export const BACKGROUND_MODES = {
+  central: 'bluetooth-central',
+  peripheral: 'bluetooth-peripheral',
+} as const;
+/** Where `ios.restoreIdentifier` goes; the library reads it at launch (P3-01). */
+export const RESTORE_IDENTIFIER_KEY = 'ExpoBleKitRestoreIdentifier';
 /** AccessorySetupKit's Info.plist keys (Apple's AccessorySetupKit reference, P5-04). */
 export const ACCESSORY_SETUP_KEYS = {
   supports: 'NSAccessorySetupKitSupports',
@@ -35,6 +40,10 @@ export function applyInfoPlist(infoPlist: InfoPlist, props: ExpoBleKitPluginProp
       ...existing,
       ...modes.filter((mode) => !existing.includes(mode)),
     ];
+  }
+  const restoreIdentifier = props.ios?.restoreIdentifier;
+  if (restoreIdentifier !== undefined) {
+    infoPlist[RESTORE_IDENTIFIER_KEY] = restoreIdentifier;
   }
   const accessories = props.ios?.accessorySetupKit;
   if (accessories) {

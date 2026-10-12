@@ -1,13 +1,19 @@
-# A Mac as an L2CAP peripheral
+# A Mac as the test peripheral
 
-The other half of [`../macos-central`](../macos-central/README.md): this Mac publishes an L2CAP echo server (P5-03), so a phone running the example app can open a channel to it when no second phone or test peripheral is at hand.
+This Mac serves the test GATT profile (`test-peripherals/profile.json`) with CoreBluetooth, so a phone running the example app has a real peripheral to talk to when no nRF52840, Bumble dongle or second phone is at hand. It is the counterpart of [`../macos-central`](../macos-central/README.md).
 
 ```bash
-e2e/macos-peripheral/run.sh        # runs 10 minutes; e2e/macos-peripheral/run.sh 120 for 2
+e2e/macos-peripheral/run.sh            # runs 10 minutes as BleKit-Test
+e2e/macos-peripheral/run.sh 3600       # an hour
+e2e/macos-peripheral/run.sh 600 BleKit-Mac   # under another name
 ```
 
-It publishes an L2CAP channel without encryption, adds the TEST service with `L2CAP_PSM` (the assigned PSM, uint16 LE), and advertises it as `BleKit-Mac`. Every byte a channel receives goes back on the same channel; the log (`build/peripheral.log`) shows each channel and the bytes in and out.
+It advertises the TEST and Heart Rate services under the profile's name, `BleKit-Test`, and serves:
 
-On the phone: **Checks → L2CAP → Echo 1 MB over L2CAP**. The check finds the Mac by the TEST service, reads `L2CAP_PSM`, sends 1 MB and expects every byte back, in order. Turn the phone's own Peripheral tab off first.
+- every TEST characteristic with the profile's behavior: the static and 512-byte values, the echo, the sink and its counter (notified at most every 100 ms), the stream (`CONTROL SET_STREAM`, sequence numbers that only advance when a frame went out, frames cut to each central's maximum), indications (`SEND_INDICATIONS`), `SECURE` (an encrypted link, so reading it pairs), the toggled SECONDARY service (`TOGGLE_SECONDARY_SERVICE`; macOS sends Service Changed itself) and `RESET_COUNTERS`;
+- Heart Rate Measurement at 1 Hz while subscribed, bpm 60 to 100;
+- an L2CAP echo server, whose PSM (assigned by macOS) `L2CAP_PSM` serves.
 
-The first run asks to allow Bluetooth for **BleKitPeripheral**. macOS and Xcode's command line tools only; the app is built into `build/` (gitignored).
+What macOS can't do: `CONTROL DISCONNECT_AFTER` answers "request not supported" (a CoreBluetooth peripheral can't end a connection), the advertisement has no manufacturer data, service data or TX power, and the L2CAP PSM isn't the profile's fixed one.
+
+The log (`build/peripheral.log`) shows subscriptions, CONTROL commands and L2CAP channels. The first run, and the first after a rebuild, asks to allow Bluetooth for **BleKitPeripheral**. macOS and Xcode's command line tools only; the app is built into `build/` (gitignored).

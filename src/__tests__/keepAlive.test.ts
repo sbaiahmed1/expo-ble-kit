@@ -34,10 +34,12 @@ describe('keepAliveInBackground', () => {
       (error) => error.code
     );
 
-  it('rejects with NOT_SUPPORTED on iOS, until background modes land', async () => {
+  it('is accepted on iOS, where the bluetooth-central mode keeps connections (P3-01)', async () => {
     Platform.OS = 'ios';
-    expect(await code(peripheral.connect({ keepAliveInBackground: true }))).toBe('NOT_SUPPORTED');
-    expect(await code(peripheral.connect({ keepAliveInBackground: false }))).toBe('ok');
+    expect(await code(peripheral.connect({ keepAliveInBackground: true }))).toBe('ok');
+    expect(await code(peripheral.connect({ keepAliveInBackground: 'yes' } as never))).toBe(
+      'INVALID_ARGUMENT'
+    );
   });
 
   it('reaches the native connect on Android', async () => {

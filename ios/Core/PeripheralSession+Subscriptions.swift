@@ -57,6 +57,8 @@ extension PeripheralSession {
     }
     if entry.enabled {
       entry.subscribers.insert(subscriptionId)
+      // JS takes over a characteristic restored as notifying (P3-01): its last unsubscribe disables it.
+      entry.subscribers.remove(Self.restoredSubscriptionId)
       return completion(.success(()))
     }
     entry.waiting[subscriptionId] = completion
@@ -115,7 +117,7 @@ extension PeripheralSession {
 
   /// Active subscriptions (their subscriber ids), for diagnostics.
   var subscriptionCount: Int {
-    subscriptions.values.reduce(0) { $0 + $1.subscribers.count }
+    subscriptions.values.reduce(0) { $0 + $1.subscribers.subtracting([Self.restoredSubscriptionId]).count }
   }
 
   /// Only subscribed characteristics deliver; a stray value after unsubscribing is dropped. Batched

@@ -99,6 +99,9 @@ final class PeripheralSession: PeripheralLikeDelegate {
   var reconnectTimer: CancellableWork?
   /// The state the listener last heard, as JS sees it.
   private var reported = SessionState.disconnected
+  /// A pending connection iOS restored (P3-01): no JS call started it, so the first connect()
+  /// takes it over with its own options and timeout.
+  var restoredPending = false
 
   let central: CentralManaging
   let scheduler: Scheduling
@@ -106,7 +109,7 @@ final class PeripheralSession: PeripheralLikeDelegate {
   private var disconnectTimeout: CancellableWork?
   private var connectWaiters: [Completion] = []
   private var disconnectWaiters: [() -> Void] = []
-  private var autoDiscover = true
+  var autoDiscover = true
   /// The discovery in flight, if any. Only the discovery code uses it.
   var discovery: DiscoveryRun?
   /// A write without response waiting for `canSendWriteWithoutResponse` (flow control, P2-02).
@@ -157,20 +160,18 @@ final class PeripheralSession: PeripheralLikeDelegate {
     switch state {
     case .ready:
       completion(nil)
+    case .connecting where restoredPending:
+      restoredPending = false
+      connectWaiters.append(completion)
+      start(spec)
     case .connecting, .connected, .discovering, .reconnecting:
       connectWaiters.append(completion)
     case .disconnecting:
       disconnectWaiters.append { [weak self] in self?.connect(spec, completion: completion) }
     case .disconnected:
       connectWaiters.append(completion)
-      autoDiscover = spec.autoDiscover
-      reconnect = spec.reconnect
-      restoreSubscriptions = spec.restoreSubscriptions
-      connectTimeoutValue = spec.timeout
-      connectOptions = Self.options(for: spec)
       setState(.connecting, nil)
-      startConnectTimeout()
-      central.connect(peripheral, options: connectOptions)
+      start(spec)
     }
   }
 
@@ -187,17 +188,6 @@ final class PeripheralSession: PeripheralLikeDelegate {
       let milliseconds = Int(timeout * 1000)
       failConnect(CoreError(.connectionTimeout, "Connecting timed out after \(milliseconds) ms"))
     }
-  }
-
-  private static func options(for spec: ConnectSpec) -> [String: Any]? {
-    var options: [String: Any] = [:]
-    if spec.notifyOnDisconnection {
-      options[CBConnectPeripheralOptionNotifyOnDisconnectionKey] = true
-    }
-    if spec.reconnect != nil, spec.enableAutoReconnect, #available(iOS 17, macOS 14, *) {
-      options[CBConnectPeripheralOptionEnableAutoReconnect] = true
-    }
-    return options.isEmpty ? nil : options
   }
 
   /// Completes once disconnected. During a connect, it cancels the attempt, which then fails with
@@ -240,6 +230,7 @@ final class PeripheralSession: PeripheralLikeDelegate {
   func didConnect() {
     switch state {
     case .connecting:
+      restoredPending = false
       // The connect timeout keeps running through setup: connect() covers it all (plan §4.8).
       setState(.connected, nil)
       // Restoring subscriptions needs their characteristics, whatever autoDiscover says.
@@ -301,7 +292,7 @@ final class PeripheralSession: PeripheralLikeDelegate {
 
   // MARK: Private
 
-  private func becomeReady() {
+  func becomeReady() {
     connectTimeout?.cancel()
     connectTimeout = nil
     reconnectAttempt = 0
@@ -328,6 +319,7 @@ final class PeripheralSession: PeripheralLikeDelegate {
   }
 
   func finishDisconnected(_ error: CoreError?, connectError: CoreError? = nil) {
+    restoredPending = false
     connectTimeout?.cancel()
     connectTimeout = nil
     disconnectTimeout?.cancel()

@@ -28,7 +28,11 @@
         "../app.plugin.js",
         {
           "ios": {
-            "backgroundModes": ["peripheral"]
+            "backgroundModes": [
+              "central",
+              "peripheral"
+            ],
+            "restoreIdentifier": "expo.modules.blekit.example"
           },
           "android": {
             "foregroundService": true,

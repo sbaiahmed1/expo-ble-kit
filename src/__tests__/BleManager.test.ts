@@ -1,4 +1,5 @@
 import { BleError, BleManager, type ScanResult } from '../index';
+import { getNativeModule } from '../internal/native';
 import { installFakeBle, type FakeBle } from '../testing';
 
 // P1-12: the manager (plan §5.2) over the fake adapter.
@@ -174,5 +175,22 @@ describe('BleManager', () => {
     expect(diagnostics.state).toBe('poweredOff');
     expect(diagnostics.permissions.scan).toBe('granted');
     expect(diagnostics.recentErrors.at(-1)?.code).toBe('BLUETOOTH_POWERED_OFF');
+  });
+
+  it('diagnostics pass the iOS restoration journal through', async () => {
+    const restoration = {
+      enabled: true,
+      journal: [{ time: 1, event: 'launched in the background', count: 1 }],
+    };
+    const native = jest.spyOn(getNativeModule(), 'getDiagnosticsAsync').mockResolvedValue({
+      state: 'poweredOn',
+      sessions: [],
+      ios: { restoration },
+    });
+    try {
+      expect((await BleManager.getDiagnostics()).ios).toEqual({ restoration });
+    } finally {
+      native.mockRestore();
+    }
   });
 });
