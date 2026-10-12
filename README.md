@@ -49,7 +49,7 @@ Debug builds of the example app on a Samsung Galaxy A52 (Android 14) and an iPho
 
 ## Documentation
 
-The documentation website (`website/`, Docusaurus) puts the guides below, the API reference and the changelog in one place with search: `cd website && yarn install && yarn start`.
+**[sbaiahmed1.github.io/expo-ble-kit](https://sbaiahmed1.github.io/expo-ble-kit/)** has the guides below, the API reference and the changelog in one place, with search. Its source is `website/` (Docusaurus): `cd website && yarn install && yarn start`.
 
 - [Getting started](docs/getting-started.md): requirements, install, scanning, connecting, sending data, notifications, background (Android), the GATT server, advertising, hooks, errors, testing.
 - [Permissions](docs/guides/permissions.md): what each platform asks for.

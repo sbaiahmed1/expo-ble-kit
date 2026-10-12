@@ -7,16 +7,21 @@ import { themes as prismThemes } from 'prism-react-renderer';
 // (gitignored), and the changelog page from CHANGELOG.md and the pending changesets.
 
 const repo = 'https://github.com/sbaiahmed1/expo-ble-kit';
-// Set by the hosting: SITE_URL is the origin, BASE_URL the path the site is served under.
-const baseUrl = process.env.BASE_URL ?? '/';
+// Served by GitHub Pages (.github/workflows/website.yml). SITE_URL and BASE_URL override the
+// origin and the path, for example to serve a fork's build elsewhere.
+const baseUrl = process.env.BASE_URL ?? '/expo-ble-kit/';
 
 const config: Config = {
   title: 'expo-ble-kit',
   tagline: 'Bluetooth Low Energy for Expo and React Native',
   favicon: 'img/favicon.svg',
 
-  url: process.env.SITE_URL ?? 'http://localhost:3000',
+  url: process.env.SITE_URL ?? 'https://sbaiahmed1.github.io',
   baseUrl,
+  organizationName: 'sbaiahmed1',
+  projectName: 'expo-ble-kit',
+  // GitHub Pages serves page.html at /page: links without a trailing slash avoid its redirects.
+  trailingSlash: false,
 
   onBrokenLinks: 'throw',
   onBrokenAnchors: 'throw',

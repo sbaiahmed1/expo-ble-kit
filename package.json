@@ -68,7 +68,7 @@
   },
   "author": "Ahmed Sbai <ahmedclubust@gmail.com> (https://github.com/sbaiahmed1)",
   "license": "MIT",
-  "homepage": "https://github.com/sbaiahmed1/expo-ble-kit#readme",
+  "homepage": "https://sbaiahmed1.github.io/expo-ble-kit/",
   "devDependencies": {
     "@babel/core": "^7.26.0",
     "@changesets/cli": "^3.0.3",

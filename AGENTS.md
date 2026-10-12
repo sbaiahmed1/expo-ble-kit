@@ -30,6 +30,7 @@ cd example && npx expo run:ios            # or run:android
 cd website && yarn install    # documentation website dependencies (separate lockfile)
 cd website && yarn start      # the website with live reload (search works only in a build)
 cd website && yarn build      # the website into website/build; fails on broken links and anchors
+                              # pushes to main publish it: https://sbaiahmed1.github.io/expo-ble-kit/
 
 cd test-peripherals/bumble && uv run pytest              # test peripheral tests (no hardware)
 cd test-peripherals/bumble && uv run blekit-peripheral   # advertise on a running Android emulator
