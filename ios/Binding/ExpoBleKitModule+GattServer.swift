@@ -46,6 +46,14 @@ extension ExpoBleKitModule {
     switch CBManager.authorization {
     case .allowedAlways:
       return
+    case .notDetermined where AccessoryDeclarations(infoDictionary: Bundle.main.infoDictionary).supportsBluetooth:
+      // P5-04: iOS shows no prompt in an app that declares AccessorySetupKit, so this never changes.
+      throw BleKitException(
+        CoreError(
+          .permissionDenied,
+          "\(what) needs Bluetooth permission, which iOS doesn't give apps that use AccessorySetupKit"
+        )
+      )
     case .notDetermined:
       throw BleKitException(
         CoreError(.permissionDenied, "\(what) needs Bluetooth permission. Call requestPermissionsAsync() first.")

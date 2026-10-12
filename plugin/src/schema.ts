@@ -12,6 +12,20 @@ export type ExpoBleKitPluginProps = {
      * GATT server going in the background. `'central'` arrives with P3.
      */
     backgroundModes?: 'peripheral'[];
+    /**
+     * iOS 18+ AccessorySetupKit (P5-04): declares the accessories `BleManager.ios.showAccessoryPicker`
+     * may look for. Each picker item's service, name substring and company id must be listed here,
+     * or iOS crashes the app (the library checks first). Declaring it can change how CoreBluetooth
+     * behaves for the whole app: read docs/guides/accessory-setup.md before enabling it.
+     */
+    accessorySetupKit?: {
+      /** Service UUIDs (16- or 128-bit). */
+      services?: string[];
+      /** Advertised names or parts of them. */
+      names?: string[];
+      /** Bluetooth SIG company identifiers, as numbers or hex strings. */
+      companyIdentifiers?: (number | string)[];
+    };
   };
   android?: {
     /** Declare BLUETOOTH_SCAN with `neverForLocation` (Android 12+). Default true. */
@@ -34,7 +48,11 @@ export type ExpoBleKitPluginProps = {
 };
 
 const TOP_LEVEL = new Set(['bluetoothAlwaysPermission', 'ios', 'android']);
-const IOS = new Set(['backgroundModes']);
+const IOS = new Set(['backgroundModes', 'accessorySetupKit']);
+const ACCESSORY_SETUP = new Set(['services', 'names', 'companyIdentifiers']);
+const MAX_ACCESSORY_VALUES = 500;
+const UUID_PATTERN =
+  /^([0-9a-f]{4}|[0-9a-f]{8}|[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/i;
 const BACKGROUND_MODES = ['peripheral'];
 const ANDROID = new Set([
   'neverForLocation',
@@ -44,11 +62,7 @@ const ANDROID = new Set([
   'advertise',
 ]);
 /** Options from plan §4.15 that later versions add. */
-const NOT_YET = new Set([
-  'ios.restoreIdentifier',
-  'ios.accessorySetupKit',
-  'android.companionDevice',
-]);
+const NOT_YET = new Set(['ios.restoreIdentifier', 'android.companionDevice']);
 
 function fail(message: string): never {
   throw new Error(`expo-ble-kit config plugin: ${message}`);
@@ -63,6 +77,47 @@ function checkKeys(object: Record<string, unknown>, allowed: Set<string>, prefix
     if (!allowed.has(key)) {
       fail(`unknown option "${path}".`);
     }
+  }
+}
+
+/** A 0…0xFFFF company id, from a number or a hex string ("0x004C", "004C"). */
+export function companyId(value: unknown): number | null {
+  if (typeof value === 'number')
+    return Number.isInteger(value) && value >= 0 && value <= 0xffff ? value : null;
+  if (typeof value !== 'string' || !/^(0x)?[0-9a-f]{1,4}$/i.test(value)) return null;
+  return parseInt(value.replace(/^0x/i, ''), 16);
+}
+
+function validateAccessorySetup(option: unknown) {
+  if (option === undefined) return;
+  if (typeof option !== 'object' || option === null || Array.isArray(option)) {
+    fail('"ios.accessorySetupKit" must be an object.');
+  }
+  const props = option as Record<string, unknown>;
+  checkKeys(props, ACCESSORY_SETUP, 'ios.accessorySetupKit.');
+  for (const key of ACCESSORY_SETUP) {
+    const list = props[key];
+    if (list !== undefined && !Array.isArray(list))
+      fail(`"ios.accessorySetupKit.${key}" must be an array.`);
+    // iOS stops the app when a list has more (ASAccessorySession's Info.plist check, iOS 27.0.1).
+    if (Array.isArray(list) && list.length > MAX_ACCESSORY_VALUES)
+      fail(`"ios.accessorySetupKit.${key}" takes at most ${MAX_ACCESSORY_VALUES} values.`);
+  }
+  const services = (props.services ?? []) as unknown[];
+  const names = (props.names ?? []) as unknown[];
+  const companies = (props.companyIdentifiers ?? []) as unknown[];
+  if (services.some((uuid) => typeof uuid !== 'string' || !UUID_PATTERN.test(uuid))) {
+    fail('"ios.accessorySetupKit.services" takes 16- or 128-bit UUID strings.');
+  }
+  if (names.some((name) => typeof name !== 'string' || name.length === 0)) {
+    fail('"ios.accessorySetupKit.names" takes non-empty strings.');
+  }
+  if (companies.some((id) => companyId(id) === null)) {
+    fail('"ios.accessorySetupKit.companyIdentifiers" takes 0…0xFFFF, as numbers or hex strings.');
+  }
+  if (services.length === 0 && companies.length === 0) {
+    // AccessorySetupKit matches accessories by a service or a company id first.
+    fail('"ios.accessorySetupKit" needs at least one service or company identifier.');
   }
 }
 
@@ -89,6 +144,7 @@ export function validateProps(props: unknown): ExpoBleKitPluginProps {
     }
     const iosProps = ios as Record<string, unknown>;
     checkKeys(iosProps, IOS, 'ios.');
+    validateAccessorySetup(iosProps.accessorySetupKit);
     const modes = iosProps.backgroundModes;
     if (modes !== undefined) {
       if (!Array.isArray(modes)) fail('"ios.backgroundModes" must be an array.');

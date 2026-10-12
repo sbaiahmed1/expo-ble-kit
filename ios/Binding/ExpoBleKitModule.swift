@@ -31,6 +31,8 @@ public class ExpoBleKitModule: Module {
   var advertiser: Advertiser?
   /// L2CAP servers on the same manager (P5-03).
   var l2capPublisher: L2CAPPublisher?
+  /// AccessorySetupKit's picker (P5-04), on the main queue.
+  var accessoryPicker: AccessoryPicker?
 
   lazy var engine: CentralEngine = {
     let engine = CentralEngine(queue: DispatchQueue(label: "expo.blekit.central"))
@@ -168,6 +170,7 @@ public class ExpoBleKitModule: Module {
     AsyncFunction("publishL2CAPChannel", publishL2CAPChannel)
     l2capServerClass()
     l2capChannelClass()
+    AsyncFunction("showAccessoryPicker", showAccessoryPicker)
 
     // Ids only: JS turns them into peripherals with getPeripheral().
     AsyncFunction("getKnownPeripherals") { (ids: [String], promise: Promise) in

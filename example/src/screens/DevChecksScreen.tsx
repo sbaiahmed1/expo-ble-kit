@@ -26,6 +26,7 @@ import {
 import { describeMultipleDevices, runMultipleDevices } from '../lib/multipleDevices';
 import { abortStreamToSink, sendToSink, streamToSink, type SinkReport } from '../lib/sink';
 import { BackgroundScanChecks } from './BackgroundScanChecks';
+import { AccessoryChecks } from './AccessoryChecks';
 import { BondingChecks } from './BondingChecks';
 import { L2capChecks } from './L2capChecks';
 import { PlxChecks } from './PlxChecks';
@@ -438,6 +439,7 @@ export function DevChecksScreen() {
       <BondingChecks />
       <L2capChecks />
       <PlxChecks />
+      <AccessoryChecks />
       <Group name="Scanning">
         <Button testID="scan-all" title="Scan all" onPress={() => startSession('all', {})} />
         <Button

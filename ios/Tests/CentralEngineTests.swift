@@ -132,6 +132,36 @@ final class CentralEngineTests: XCTestCase {
     XCTAssertEqual(created.count, 1, "an authorized request starts reporting the adapter state")
   }
 
+  /// P5-04: measured on iOS 27.0.1, an app that declares AccessorySetupKit never sees the prompt
+  /// and stays `.notDetermined`, while its manager reaches the picked accessories.
+  func testAccessorySetupKitAppsUseTheManagerWithoutThePrompt() throws {
+    infoPlist?[AccessoryDeclarations.supportsKey] = ["Bluetooth"]
+    makeEngine()
+    engine.activateIfAuthorized()
+    XCTAssertEqual(created.count, 1, "creating the manager can't show the prompt")
+    XCTAssertNoThrow(try engine.authorizedCentral())
+    XCTAssertEqual(created.count, 1)
+
+    let permissions = try engine.permissions()
+    XCTAssertEqual(permissions.scan, .granted)
+    XCTAssertEqual(permissions.connect, .granted)
+    XCTAssertEqual(permissions.advertise, .undetermined)
+    XCTAssertEqual(permissions.backgroundScan, .undetermined)
+    XCTAssertEqual(permissions.canAskAgain, false, "there is no prompt to show")
+
+    var result: Result<BlePermissions, CoreError>?
+    engine.requestPermissions { result = $0 }
+    XCTAssertEqual(try result?.get(), permissions, "completes at once")
+
+    // A denial from before the app adopted AccessorySetupKit still counts.
+    authorization = .denied
+    makeEngine()
+    XCTAssertThrowsError(try engine.authorizedCentral()) {
+      XCTAssertEqual(($0 as? CoreError)?.code, .bluetoothUnauthorized)
+    }
+    XCTAssertEqual(try engine.permissions().connect, .denied)
+  }
+
   func testMissingUsageDescriptionIsMisconfiguredAndNeverCreatesTheManager() {
     for plist in [nil, [:], [CentralEngine.usageDescriptionKey: ""]] as [[String: Any]?] {
       infoPlist = plist

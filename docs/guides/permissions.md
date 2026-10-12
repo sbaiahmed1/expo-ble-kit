@@ -50,6 +50,7 @@ function BluetoothGate({ children }: { children: React.ReactNode }) {
 - The prompt shows the `bluetoothAlwaysPermission` text from the config plugin (`NSBluetoothAlwaysUsageDescription`). App Review reads it, so say what the app does with Bluetooth.
 - Until the user answers, the adapter state is `unknown`. After a denial it is `unauthorized`.
 - If the text is missing, calls reject with `MISCONFIGURED` instead of crashing, as iOS would.
+- An app that declares AccessorySetupKit (iOS 18+) never sees the prompt: the person picks each accessory instead. See [accessory setup](accessory-setup.md).
 
 ## Android 12 and later (API 31+)
 

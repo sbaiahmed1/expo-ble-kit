@@ -101,3 +101,30 @@ iOS stops advertising and serving the GATT server while the app is in the backgr
 
 - Keep the modes your app already has in the array.
 - In the background, iOS doesn't advertise the local name, and service UUIDs go to the overflow area, which only iOS devices scanning for them see.
+
+## iOS: AccessorySetupKit (optional)
+
+`BleManager.ios.showAccessoryPicker` (iOS 18+) needs AccessorySetupKit declared, with every service, name substring and company identifier its picker items use; the plugin writes them from `ios: { accessorySetupKit: { services, names, companyIdentifiers } }`. In `Info.plist`:
+
+```xml
+<key>NSAccessorySetupKitSupports</key>
+<array>
+  <string>Bluetooth</string>
+</array>
+<key>NSAccessorySetupBluetoothServices</key>
+<array>
+  <string>0C6C1000-B347-4CFA-9827-1C5A13658519</string>
+</array>
+<key>NSAccessorySetupBluetoothNames</key>
+<array>
+  <string>BleKit</string>
+</array>
+<key>NSAccessorySetupBluetoothCompanyIdentifiers</key>
+<array>
+  <string>004C</string>
+</array>
+```
+
+- Leave out a list you don't need: iOS stops the app when a declared list is empty or has more than 500 values.
+- An item using a value these lists lack rejects with `MISCONFIGURED`; iOS itself would crash the app.
+- Declaring AccessorySetupKit changes how Bluetooth behaves for the whole app: read [Accessory setup](accessory-setup.md) first.

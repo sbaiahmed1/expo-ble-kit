@@ -43,7 +43,11 @@ struct BlePermissions: Equatable {
   let backgroundScan: PermissionStatus
   let canAskAgain: Bool
 
-  init(authorization: CBManagerAuthorization) {
+  /// `accessorySetup`: the app declares AccessorySetupKit for Bluetooth (P5-04). iOS then never
+  /// shows the prompt and keeps the authorization `.notDetermined`, while the central manager
+  /// reaches the accessories the person picked (iOS 27.0.1): scanning and connecting count as
+  /// granted, the rest stays undetermined, and asking again shows nothing.
+  init(authorization: CBManagerAuthorization, accessorySetup: Bool = false) {
     let status: PermissionStatus
     switch authorization {
     case .allowedAlways:
@@ -53,12 +57,13 @@ struct BlePermissions: Equatable {
     default:
       status = .undetermined
     }
-    scan = status
-    connect = status
+    let picked = accessorySetup && status == .undetermined
+    scan = picked ? .granted : status
+    connect = picked ? .granted : status
     advertise = status
     backgroundScan = status
     // iOS shows the prompt once; after a denial only Settings can change it.
-    canAskAgain = status != .denied
+    canAskAgain = status != .denied && !picked
   }
 
   var dictionary: [String: Any] {

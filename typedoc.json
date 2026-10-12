@@ -16,6 +16,7 @@
     "docs/getting-started.md",
     "docs/guides/permissions.md",
     "docs/guides/bare-setup.md",
+    "docs/guides/accessory-setup.md",
     "docs/guides/migration-from-plx.md",
     "docs/troubleshooting.md"
   ],

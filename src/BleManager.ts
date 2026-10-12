@@ -6,6 +6,7 @@ import { GattServerImpl } from './GattServer';
 import { L2CAPServerImpl, validateSecure } from './L2CAPChannel';
 import { PeripheralImpl } from './Peripheral';
 import { BleError, BleErrorCode } from './errors';
+import { DEFAULT_PICKER_TIMEOUT_MS, toNativePickerItems } from './internal/accessoryPicker';
 import { toNativeAdvertising } from './internal/advertising';
 import { checkTaskName, toNativeBackgroundTaskOptions } from './internal/backgroundTask';
 import { toNativeServices } from './internal/gattServer';
@@ -383,6 +384,26 @@ export const BleManager: BleManagerApi = {
     });
   },
 
+  ios: {
+    showAccessoryPicker(items, options) {
+      return guard(async () => {
+        const module = getNativeModule();
+        if (Platform.OS !== 'ios' || !module.showAccessoryPicker) {
+          throw new BleError(BleErrorCode.NOT_SUPPORTED, 'The accessory picker is iOS-only');
+        }
+        const native = toNativePickerItems(items);
+        const timeoutMs = options?.timeoutMs ?? DEFAULT_PICKER_TIMEOUT_MS;
+        if (typeof timeoutMs !== 'number' || !Number.isFinite(timeoutMs) || timeoutMs <= 0) {
+          throw new BleError(
+            BleErrorCode.INVALID_ARGUMENT,
+            'Invalid timeoutMs: expected milliseconds above 0'
+          );
+        }
+        const id = await module.showAccessoryPicker(native, timeoutMs);
+        return id === null ? null : BleManager.getPeripheral(id);
+      });
+    },
+  },
   android: {
     setForegroundServiceNotification(notification) {
       const checked = checkNotification(notification);

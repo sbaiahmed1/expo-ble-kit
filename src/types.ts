@@ -581,6 +581,42 @@ export interface L2CAPChannel {
   close(): Promise<void>;
 }
 
+/**
+ * An accessory the picker looks for (`BleManager.ios.showAccessoryPicker`), as AccessorySetupKit
+ * describes one. It needs a `service` or a `companyId`.
+ */
+export interface AccessoryPickerItem {
+  /** The name the picker shows. */
+  name: string;
+  /** The product picture the picker shows: `require('./accessory.png')`, or an image URL. */
+  productImage: number | string;
+  /** An advertised service UUID to match. */
+  service?: UUID;
+  /** The Bluetooth SIG company id of the advertised manufacturer data. */
+  companyId?: number;
+  /** A part of the advertised name; with `service` or `companyId`. */
+  nameSubstring?: string;
+  /** Advertised manufacturer data, compared under `mask` (same length); needs `companyId`. */
+  manufacturerData?: {
+    /** The bytes to match. */
+    data: Uint8Array;
+    /** The bits of `data` that must match (set bits count). */
+    mask: Uint8Array;
+  };
+  /** Advertised service data, compared under `mask` (same length); needs `service`. */
+  serviceData?: {
+    /** The bytes to match. */
+    data: Uint8Array;
+    /** The bits of `data` that must match (set bits count). */
+    mask: Uint8Array;
+  };
+  /**
+   * Only accessories right next to the phone.
+   * @defaultValue false
+   */
+  immediateRange?: boolean;
+}
+
 /** An L2CAP channel server (`BleManager.publishL2CAPChannel`). */
 export interface L2CAPServer {
   /**
@@ -927,7 +963,10 @@ export interface BleManagerApi {
 
   /** Reads the permissions. Never shows a prompt. */
   getPermissionsAsync(): Promise<BlePermissions>;
-  /** Asks for permissions. On iOS, the first call shows the Bluetooth prompt. */
+  /**
+   * Asks for permissions. On iOS, the first call shows the Bluetooth prompt; apps that declare
+   * AccessorySetupKit get none (docs/guides/accessory-setup.md).
+   */
   requestPermissionsAsync(request?: BlePermissionRequest): Promise<BlePermissions>;
 
   /** Sessions may overlap; each gets only its own matches, and stopping one leaves the others. */
@@ -1018,6 +1057,27 @@ export interface BleManagerApi {
   registerBackgroundTask(taskName: string, options: BackgroundTaskOptions): Promise<void>;
   /** Stops delivering to `taskName` and its background scan. Unknown names do nothing. */
   unregisterBackgroundTask(taskName: string): Promise<void>;
+
+  /** iOS-only calls; elsewhere they reject with `NOT_SUPPORTED`. */
+  readonly ios: {
+    /**
+     * iOS 18+: shows AccessorySetupKit's picker with the nearby accessories that match `items`. The
+     * person's pick authorizes that accessory for the app without the Bluetooth permission prompt;
+     * resolves its peripheral, or null when they closed the picker or nothing turned up. Needs the
+     * config plugin's `ios.accessorySetupKit` listing every service, name substring and company id
+     * the items use (`MISCONFIGURED` otherwise: iOS would crash the app). Declaring
+     * AccessorySetupKit changes how Bluetooth behaves for the whole app: see
+     * docs/guides/accessory-setup.md. A picker still open after `timeoutMs` (default 5 minutes)
+     * is closed and rejects with `OPERATION_TIMEOUT`. Rejects with `NOT_SUPPORTED` before iOS 18.
+     */
+    showAccessoryPicker(
+      items: AccessoryPickerItem[],
+      options?: {
+        /** @defaultValue 300000 */
+        timeoutMs?: number;
+      }
+    ): Promise<Peripheral | null>;
+  };
 
   /** Android-only calls; on iOS they do nothing. */
   readonly android: {

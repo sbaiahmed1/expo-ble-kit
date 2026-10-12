@@ -9,14 +9,10 @@ import * as api from '../index';
 const root = resolve(__dirname, '../..');
 const read = (path: string) => readFileSync(resolve(root, path), 'utf8');
 
-const LATER: Record<string, Record<string, string>> = {
-  BleManagerApi: {
-    ios: 'P5-04',
-  },
-};
+const LATER: Record<string, Record<string, string>> = {};
 
 /** Interfaces of the later tasks themselves (P2–P5), not yet in src/types.ts. */
-const LATER_INTERFACES = new Set(['AccessoryPickerItem', 'CompanionDeviceFilter']);
+const LATER_INTERFACES = new Set(['CompanionDeviceFilter']);
 
 /**
  * The top-level member names of each `interface Name … { … }` in `source`. Comments are dropped

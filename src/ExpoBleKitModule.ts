@@ -7,6 +7,7 @@ import type {
   L2CAPServerObjectEvents,
   PeripheralObjectEvents,
 } from './ExpoBleKit.types';
+import type { NativeAccessoryPickerItem } from './internal/accessoryPicker';
 import type { NativeAdvertisingData, NativeAdvertisingOptions } from './internal/advertising';
 import type { NativeAttributeRequest, NativeSubscribeMode } from './internal/attributeRequest';
 import type { NativeConnectOptions } from './internal/connectOptions';
@@ -140,6 +141,7 @@ export declare class ExpoBleKitModule
   startAdvertising(data: NativeAdvertisingData, options: NativeAdvertisingOptions): Promise<number>;
   stopAdvertising(id: number): Promise<void>;
   publishL2CAPChannel(secure: boolean): Promise<NativeL2CAPServer>;
+  showAccessoryPicker?(items: NativeAccessoryPickerItem[], timeoutMs: number): Promise<string | null>;
   setLogLevel(level: LogLevel): void;
   setLogForwarding(enabled: boolean): void;
 }

@@ -14,6 +14,7 @@ export {
   useCharacteristicValue,
 } from './hooks';
 export type {
+  AccessoryPickerItem,
   Advertisement,
   AdvertisingData,
   AdvertisingOptions,

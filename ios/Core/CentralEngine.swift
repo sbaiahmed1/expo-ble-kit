@@ -87,11 +87,24 @@ final class CentralEngine: CentralManagingDelegate {
   }
 
   /// Creates the manager when that can't show the permission prompt (the app is already
-  /// authorized), so `state` reports the adapter. Called when JS first reads or observes the state.
+  /// authorized, or uses AccessorySetupKit), so `state` reports the adapter. Called when JS first
+  /// reads or observes the state.
   func activateIfAuthorized() {
-    if central == nil, environment.authorization() == .allowedAlways, missingDeclaration() == nil {
+    if central == nil, mayCreateCentral(environment.authorization()), missingDeclaration() == nil {
       createCentral()
     }
+  }
+
+  /// The app declares AccessorySetupKit for Bluetooth (P5-04). On iOS 27.0.1, creating the manager
+  /// there shows no prompt and `CBManager.authorization` stays `.notDetermined`; the manager reaches
+  /// the accessories the person picked.
+  var usesAccessorySetup: Bool {
+    AccessoryDeclarations(infoDictionary: environment.infoDictionary()).supportsBluetooth
+  }
+
+  /// Creating the manager can't show the prompt.
+  private func mayCreateCentral(_ authorization: CBManagerAuthorization) -> Bool {
+    authorization == .allowedAlways || (authorization == .notDetermined && usesAccessorySetup)
   }
 
   /// Re-reads the authorization, which the user may have changed in Settings. Called when the app
@@ -107,21 +120,22 @@ final class CentralEngine: CentralManagingDelegate {
     if let error = missingDeclaration() {
       throw error
     }
-    return BlePermissions(authorization: environment.authorization())
+    return BlePermissions(authorization: environment.authorization(), accessorySetup: usesAccessorySetup)
   }
 
   /// On iOS, requesting means creating the manager, which shows the prompt once (plan §4.13).
   /// Completes when the user has answered. The request flags don't matter: one authorization
-  /// covers every capability.
+  /// covers every capability. AccessorySetupKit apps have no prompt: it completes at once.
   func requestPermissions(_ completion: @escaping PermissionsCompletion) {
     if let error = missingDeclaration() {
       completion(.failure(error))
       return
     }
     let authorization = environment.authorization()
-    guard authorization == .notDetermined else {
+    let accessorySetup = usesAccessorySetup
+    guard authorization == .notDetermined, !accessorySetup else {
       activateIfAuthorized()
-      completion(.success(BlePermissions(authorization: authorization)))
+      completion(.success(BlePermissions(authorization: authorization, accessorySetup: accessorySetup)))
       return
     }
     pendingPermissionRequests.append(completion)
@@ -130,10 +144,13 @@ final class CentralEngine: CentralManagingDelegate {
     }
   }
 
-  /// The manager, created if needed, when the app is authorized. Never shows the prompt.
+  /// The manager, created if needed, when the app is authorized or uses AccessorySetupKit. Never
+  /// shows the prompt.
   func authorizedCentral() throws -> CentralManaging {
     switch environment.authorization() {
     case .allowedAlways:
+      break
+    case .notDetermined where usesAccessorySetup:
       break
     case .notDetermined:
       throw CoreError(

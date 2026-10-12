@@ -20,6 +20,7 @@ import type {
   Service,
   Subscription,
 } from '../types';
+import type { NativeAccessoryPickerItem } from './accessoryPicker';
 import type { NativeAdvertisingData, NativeAdvertisingOptions } from './advertising';
 import type { NativeAttributeRequest, NativeSubscribeMode } from './attributeRequest';
 import type { NativeBackgroundTaskOptions } from './backgroundTask';
@@ -59,6 +60,8 @@ export interface NativeBleKitPort {
   startAdvertising(data: NativeAdvertisingData, options: NativeAdvertisingOptions): Promise<number>;
   /** Stops advertisement `id`; does nothing once it ended. */
   stopAdvertising(id: number): Promise<void>;
+  /** iOS 18+ only (P5-04): the picked accessory's peripheral id, or null. */
+  showAccessoryPicker?(items: NativeAccessoryPickerItem[], timeoutMs: number): Promise<string | null>;
   /** P5-03: an L2CAP server; `secure` as validated by the TS layer. */
   publishL2CAPChannel(secure: boolean): Promise<NativeL2CAPServerPort>;
   /** Android only (P3-04): a TaskManager task with a background scan. */

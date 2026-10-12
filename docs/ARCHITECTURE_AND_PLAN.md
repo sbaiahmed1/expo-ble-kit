@@ -1,6 +1,6 @@
 # Expo BLE (`expo-ble-kit`) — Architecture & Implementation Plan
 
-> **Status:** Draft v0.51 · **Date:** 2026-10-12 · **Scope:** proposition #3, an Expo-first Bluetooth Low Energy module · **Changes:** Appendix D
+> **Status:** Draft v0.52 · **Date:** 2026-10-12 · **Scope:** proposition #3, an Expo-first Bluetooth Low Energy module · **Changes:** Appendix D
 >
 > **Package name:** `expo-ble-kit` (D0a, decided 2026-10-02) · native module `ExpoBleKit` · Android package `expo.modules.blekit`.
 >
@@ -208,7 +208,7 @@ expo-ble-kit/
 | `Advertiser`, `GattServer` | One `CBPeripheralManager` on queue `expo.blekit.peripheral`. Service publication, read/write requests, `updateValue` with `peripheralManagerIsReady(toUpdateSubscribers:)` flow control. P4-02: `ServerNotifier` keeps one queue for the whole manager (iOS has one transmit queue for all centrals); a `false` from `updateValue` holds the queue until `peripheralManagerIsReady`, at most 10 s per value; the length limit is the central's `maximumUpdateValueLength`. P4-03: the advertiser shares the manager and gets its own delegate (`advertisingDelegate`), so the server keeps `delegate`; one advertisement, confirmed by `peripheralManagerDidStartAdvertising` within 10 s; Bluetooth off ends it. P4-01: the manager is created with the first server or advertisement (`ShowPowerAlert` off, after the authorization check, so it never prompts); iOS answers static values and keeps subscriptions itself; a write request array is one long write, answered through its first request (Apple's `didReceiveWrite` docs). iOS tells a peripheral nothing about central disconnects, so cached long-read values just expire |
 | `L2CAPChannel`, `L2CAPPublisher` | P5-03: a channel wraps `CBL2CAPChannel`'s streams, scheduled on the queue its manager reports on (`CFReadStreamSetDispatchQueue`): the engine's queue for channels the app opens, the peripheral queue for published ones. Reading waits for `receive()`; writes follow `hasSpaceAvailable`, with the 10 s stall rule. A session opens one channel at a time (`didOpen` with an error doesn't name its request); a request that timed out stays first until CoreBluetooth answers, and its channel is closed on arrival. The publisher publishes one PSM at a time for the same reason, within 10 s, and routes `peripheralManager(_:didOpen:)` by PSM |
 | `Restoration` | `willRestoreState` for both managers. Rehydrates sessions and re-arms subscriptions natively. Buffers events until the binding attaches |
-| `AccessorySetup` (iOS 18+) | `ASAccessorySession` lifecycle, picker presentation, mapping authorized accessories to peripherals. Opt-in only (see §10) |
+| `AccessorySetup` (iOS 18+) | P5-04: `AccessoryPicker` shows `ASAccessorySession`'s picker one at a time, behind `AccessorySessionLike` (`ASAccessorySessionAdapter`), and answers with the picked accessory's `bluetoothIdentifier`, the peripheral id, after the picker closes; a picker left open past its timeout is closed by invalidating the session. `AccessoryDeclarations` checks Info.plist first, because iOS stops the app on an undeclared identifier or a malformed list. The engine uses the central manager without the prompt in apps that declare it (§4.13). Opt-in only (see §10) |
 | `CBAbstractions` | Protocols over CoreBluetooth types (`CentralManaging`, `PeripheralLike`, `PeripheralManaging`) so XCTest can inject fakes |
 
 iOS platform rules:
@@ -421,7 +421,7 @@ Mapping: Appendix A, implemented in `ErrorMapping.swift` / `ErrorMapping.kt` and
 | iOS | Any CoreBluetooth use | `NSBluetoothAlwaysUsageDescription` | Prompt appears when the first manager is created, hence lazy creation |
 | iOS | Central role in background | `UIBackgroundModes: bluetooth-central` | Opt-in via plugin |
 | iOS | Peripheral role in background | `UIBackgroundModes: bluetooth-peripheral` | Opt-in via plugin |
-| iOS 18+ | AccessorySetupKit | `NSAccessorySetupKitSupports` (+ Bluetooth services / names / company identifiers keys) | Opt-in. May change CoreBluetooth discovery behavior app-wide ⚠️ VERIFY |
+| iOS 18+ | AccessorySetupKit | `NSAccessorySetupKitSupports` (+ Bluetooth services / names / company identifiers keys, each 1–500 values) | Opt-in. Changes CoreBluetooth app-wide, measured on iOS 27.0.1 (P5-04): no prompt, the authorization stays `notDetermined`, scans see only the accessories the person picked, and the adapter reads `poweredOff` until the first pick |
 | Android ≤ 11 (API ≤ 30) | Scan | `ACCESS_FINE_LOCATION`, plus `BLUETOOTH` / `BLUETOOTH_ADMIN` with `maxSdkVersion="30"` | Location services often must be on to get results |
 | Android 10–11 (API 29–30) | Scan while the app is in the background (PendingIntent scans, scans under the foreground service) | `ACCESS_BACKGROUND_LOCATION` with `maxSdkVersion="30"`, requested at runtime after fine location | Opt-in via plugin (`android.backgroundLocation`). Google Play requires a background-location declaration ⚠️ VERIFY which background scan paths need it |
 | Android 12+ (API 31+) | Scan | `BLUETOOTH_SCAN` (optionally `usesPermissionFlags="neverForLocation"`) | `neverForLocation` filters some beacon advertisements from results |
@@ -441,6 +441,7 @@ Rules (decided in P1-03):
 - Android reads the declarations from `PackageInfo.requestedPermissions`, which leaves out entries whose `maxSdkVersion` is below the device's API level. When `BLUETOOTH_SCAN` lacks `neverForLocation`, scanning on Android 12+ also needs `ACCESS_FINE_LOCATION` (declared without `maxSdkVersion`), and the request asks for it.
 - On Android 10–11, background location is requested last and alone, only after the foreground permissions are granted.
 - `undetermined`, `denied` and `canAskAgain` on Android come from Expo's permission manager, which remembers what was asked and when a permission became blocked.
+- Apps that declare AccessorySetupKit (P5-04, measured on iOS 27.0.1): iOS shows no prompt and keeps `CBManager.authorization` at `notDetermined`, while the central manager reaches the picked accessories. The engine therefore creates the manager without waiting for an authorization, `requestPermissionsAsync()` completes at once, and the status reads `scan` and `connect` `granted`, `advertise` and `backgroundScan` `undetermined`, `canAskAgain` `false`. The peripheral role still needs `allowedAlways`, which such an app never gets, and rejects with `PERMISSION_DENIED`.
 - Adapter state on Android 12+ is `unauthorized` until `BLUETOOTH_CONNECT` is granted. The engine re-reads the state after each request and whenever the app returns to the foreground, so a grant made in Settings shows up without a restart.
 
 ### 4.14 Background and lifecycle
@@ -472,8 +473,8 @@ export type ExpoBleKitPluginProps = {
     backgroundModes?: Array<'central' | 'peripheral'>;
     /** Enables CoreBluetooth state preservation/restoration. */
     restoreIdentifier?: string;
-    /** iOS 18+ AccessorySetupKit. Opt-in; see §10 before enabling. */
-    accessorySetupKit?: { services?: string[]; names?: string[]; companyIdentifiers?: string[] };
+    /** iOS 18+ AccessorySetupKit. Opt-in; see §10 before enabling. Up to 500 values per list; an empty list isn't written (iOS stops the app on one). */
+    accessorySetupKit?: { services?: string[]; names?: string[]; companyIdentifiers?: Array<number | string> };
   };
   android?: {
     neverForLocation?: boolean;        // default true
@@ -523,7 +524,7 @@ Bare apps follow `docs/guides/bare-setup.md`, which lists exactly the entries th
 
 This section is the contract. Changing it requires updating `src/types.ts`, docs and tests in the same PR (Appendix B, rule 8).
 
-Members owned by later tasks are added to the exported types when those tasks land; until then they are absent, not stubs: the members of `Peripheral.android` other than `refreshGattCache` (P5-01, P5-02), the peripheral role (P4), background tasks (P3), and `BleManager.ios` / `BleManager.android` (P5-04, P5-05). `src/__tests__/publicApi.test.ts` compares every §5 interface with `src/types.ts` and the testing entry, member by member, with this list as the only exception, and checks the exported values.
+Members owned by later tasks are added to the exported types when those tasks land; until then they are absent, not stubs: the members of `Peripheral.android` other than `refreshGattCache` (P5-01, P5-02), the peripheral role (P4), background tasks (P3), and the members of `BleManager.android` P5-05 adds. `src/__tests__/publicApi.test.ts` compares every §5 interface with `src/types.ts` and the testing entry, member by member, with this list as the only exception, and checks the exported values.
 
 ### 5.1 Common types
 
@@ -588,7 +589,8 @@ export interface BleManagerApi {
   unregisterBackgroundTask(taskName: string): Promise<void>;
 
   // Onboarding (P5)
-  readonly ios: { showAccessoryPicker(items: AccessoryPickerItem[]): Promise<Peripheral | null> };
+  /** P5-04: iOS 18+; null when nothing was picked; OPERATION_TIMEOUT closes a picker left open (default 5 min). */
+  readonly ios: { showAccessoryPicker(items: AccessoryPickerItem[], options?: { timeoutMs?: number }): Promise<Peripheral | null> };
   readonly android: {
     /** P3-03. The keep-alive service's notification; updates it while it runs. No-op on iOS. */
     setForegroundServiceNotification(notification: ForegroundServiceNotification): void;
@@ -997,8 +999,21 @@ export interface BackgroundTaskOptions {
   scan?: Pick<ScanOptions, 'services' | 'manufacturerData' | 'namePrefix'>;
 }
 
-/** iOS 18+. productImage is a bundled asset. ⚠️ VERIFY picker item requirements. */
-export interface AccessoryPickerItem { name: string; productImage: string; services?: UUID[]; namePrefix?: string; companyId?: number }
+/**
+ * iOS 18+ (P5-04): one ASPickerDisplayItem and its ASDiscoveryDescriptor (Apple's AccessorySetupKit
+ * reference). A service or a companyId is required; manufacturer data needs the companyId, service
+ * data the service. AccessorySetupKit matches a name substring, not a prefix, and one service per item.
+ */
+export interface AccessoryPickerItem {
+  name: string;
+  productImage: number | string; // require()'d image or a URI
+  service?: UUID;
+  companyId?: number;
+  nameSubstring?: string;
+  manufacturerData?: { data: Uint8Array; mask: Uint8Array };
+  serviceData?: { data: Uint8Array; mask: Uint8Array };
+  immediateRange?: boolean;
+}
 export interface CompanionDeviceFilter { services?: UUID[]; namePattern?: string; singleDevice?: boolean }
 ```
 
@@ -1061,7 +1076,7 @@ export interface VirtualPeripheralConfig {
 export interface FakeBle {
   addPeripheral(config: VirtualPeripheralConfig): VirtualPeripheral;
   setState(state: BleState): void;
-  /** Make the next matching op fail with this code. Ops: requestPermissions, startScan, connect, discover, read, write, readDescriptor, writeDescriptor, subscribe, unsubscribe, requestMtu, readRssi, startAdvertising, createBond, requestConnectionPriority, setPreferredPhy, openL2CAPChannel, publishL2CAPChannel. */
+  /** Make the next matching op fail with this code. Ops: requestPermissions, startScan, connect, discover, read, write, readDescriptor, writeDescriptor, subscribe, unsubscribe, requestMtu, readRssi, startAdvertising, createBond, requestConnectionPriority, setPreferredPhy, openL2CAPChannel, publishL2CAPChannel, showAccessoryPicker. */
   injectError(match: { op: string; peripheralId?: string; characteristic?: UUID }, code: BleErrorCode): void;
   reset(): void;
   /** P4-01: a central connected to the open GATT server, to test the server's handlers. mtu default 23. */
@@ -1115,7 +1130,7 @@ export interface VirtualPeripheral {
 }
 ```
 
-Fake rules (P1-13): Bluetooth is on and every permission granted unless `installFakeBle` says otherwise; a peripheral advertises from `addPeripheral` until `advertise(false)`; a connect to a peripheral that isn't advertising waits (times out, or completes when it advertises), like a real absent device; writes store the value, so a later read returns it; writes without response take at most MTU − 3 bytes (20 at the default MTU); the MTU is negotiated like on Android, during the connect and in `requestMtu()`, as the smaller of the request and the peripheral's `mtu` (23 unless its config says more), and a failed setup exchange (`injectError` op `requestMtu`) is a `warning`; results and operation answers arrive on later timer ticks, so tests advance timers (Jest fake timers work). `notify()` reaches a connected client only while it has the CCCD enabled, as on a real peripheral, and a disconnect resets the CCCDs; `mode: 'indicate'` follows Android (allowed on a characteristic that also notifies). A peripheral's `name` is known once a scan delivered it or a connection reached `connected`. `getKnownPeripherals` drops ids without a virtual peripheral (like iOS); `getSystemConnectedPeripherals` lists the connected ones that have one of the services. Cancelled operations behave like the native queues: a queued one never runs, a running one finishes at the radio after its caller was answered. `writeStream` chunks like the native cores (each chunk a queued write, recorded in `writes`, queuing the next one first) and emits the same progress events. Batched subscriptions batch like the native cores (same interval, overflow and end-of-link rules, `BUFFER_OVERFLOW` warning). `setServices()` replaces a peripheral's database and, when connected, follows the service-change rules (§5.4); `android.refreshGattCache()` discovers again and resolves `true`. The fake logs like the native cores (§4.16). The fake GATT server (P4-01) follows the native cores: one server at a time behind the connect preconditions, closed when the adapter leaves `poweredOn`; static values answered without the handler; the 25 s deadline with its warning; the shared long-read contract; prepared writes delivered as one value per characteristic at execute; subscriptions through the CCCD, ended by `VirtualCentral.disconnect()`; ATT errors reach the virtual central as the matching BleErrorCode (else `GATT_ERROR`). `android.createBond()` (P5-01, with `Platform.OS` android) bonds a connected virtual peripheral on a later tick, through the queue; `bondState` then reads `bonded` until `reset()`, and `injectError` op `createBond` makes it fail. The fake doesn't encrypt: attributes that need encryption read and write without pairing. `android.requestConnectionPriority()` and `android.setPreferredPhy()` (P5-02) are queued on a connected peripheral; the fake takes any priority and gives the first PHY asked for in each direction. `startAdvertising` (P4-03) checks the same preconditions (the `advertise` permission), runs one advertisement at a time, ends it when the adapter leaves `poweredOn`, and records it in `FakeBle.advertisement`; it applies no platform's limits and emits no platform warnings. `GattServer.notify` (P4-02) follows the Android core: one value in flight per central, each delivered on a later tick and recorded in `VirtualCentral.notifications`; the MTU − 3 check uses the `mtu` given to `connectCentral` (23 by default); a central that disconnects drops out, and closing the server fails what is still queued with `DISCONNECTED`. L2CAP (P5-03) follows the rules of §5.5 without encryption or flow-control stalls: a channel to a virtual peripheral's PSM opens on a later tick (`L2CAP_FAILED` for a PSM it didn't publish, `injectError` op `openL2CAPChannel`), the app's servers get PSMs from 0x80 up, bytes reach the other end on later ticks, the app's side reads only once it has a data listener, and disconnects, Bluetooth off and `reset()` close channels as on a device.
+Fake rules (P1-13): Bluetooth is on and every permission granted unless `installFakeBle` says otherwise; a peripheral advertises from `addPeripheral` until `advertise(false)`; a connect to a peripheral that isn't advertising waits (times out, or completes when it advertises), like a real absent device; writes store the value, so a later read returns it; writes without response take at most MTU − 3 bytes (20 at the default MTU); the MTU is negotiated like on Android, during the connect and in `requestMtu()`, as the smaller of the request and the peripheral's `mtu` (23 unless its config says more), and a failed setup exchange (`injectError` op `requestMtu`) is a `warning`; results and operation answers arrive on later timer ticks, so tests advance timers (Jest fake timers work). `notify()` reaches a connected client only while it has the CCCD enabled, as on a real peripheral, and a disconnect resets the CCCDs; `mode: 'indicate'` follows Android (allowed on a characteristic that also notifies). A peripheral's `name` is known once a scan delivered it or a connection reached `connected`. `getKnownPeripherals` drops ids without a virtual peripheral (like iOS); `getSystemConnectedPeripherals` lists the connected ones that have one of the services. Cancelled operations behave like the native queues: a queued one never runs, a running one finishes at the radio after its caller was answered. `writeStream` chunks like the native cores (each chunk a queued write, recorded in `writes`, queuing the next one first) and emits the same progress events. Batched subscriptions batch like the native cores (same interval, overflow and end-of-link rules, `BUFFER_OVERFLOW` warning). `setServices()` replaces a peripheral's database and, when connected, follows the service-change rules (§5.4); `android.refreshGattCache()` discovers again and resolves `true`. The fake logs like the native cores (§4.16). The fake GATT server (P4-01) follows the native cores: one server at a time behind the connect preconditions, closed when the adapter leaves `poweredOn`; static values answered without the handler; the 25 s deadline with its warning; the shared long-read contract; prepared writes delivered as one value per characteristic at execute; subscriptions through the CCCD, ended by `VirtualCentral.disconnect()`; ATT errors reach the virtual central as the matching BleErrorCode (else `GATT_ERROR`). `android.createBond()` (P5-01, with `Platform.OS` android) bonds a connected virtual peripheral on a later tick, through the queue; `bondState` then reads `bonded` until `reset()`, and `injectError` op `createBond` makes it fail. The fake doesn't encrypt: attributes that need encryption read and write without pairing. `android.requestConnectionPriority()` and `android.setPreferredPhy()` (P5-02) are queued on a connected peripheral; the fake takes any priority and gives the first PHY asked for in each direction. `startAdvertising` (P4-03) checks the same preconditions (the `advertise` permission), runs one advertisement at a time, ends it when the adapter leaves `poweredOn`, and records it in `FakeBle.advertisement`; it applies no platform's limits and emits no platform warnings. `GattServer.notify` (P4-02) follows the Android core: one value in flight per central, each delivered on a later tick and recorded in `VirtualCentral.notifications`; the MTU − 3 check uses the `mtu` given to `connectCentral` (23 by default); a central that disconnects drops out, and closing the server fails what is still queued with `DISCONNECTED`. L2CAP (P5-03) follows the rules of §5.5 without encryption or flow-control stalls: a channel to a virtual peripheral's PSM opens on a later tick (`L2CAP_FAILED` for a PSM it didn't publish, `injectError` op `openL2CAPChannel`), the app's servers get PSMs from 0x80 up, bytes reach the other end on later ticks, the app's side reads only once it has a data listener, and disconnects, Bluetooth off and `reset()` close channels as on a device. `ios.showAccessoryPicker` (P5-04) resolves, on a later tick, with the first advertising virtual peripheral that has an item's service and contains its name substring, or null; it doesn't check Info.plist declarations, and `injectError` op `showAccessoryPicker` makes it fail.
 
 ### 5.9 Usage examples
 
@@ -1512,7 +1527,7 @@ Parallelism: P0-06/P0-07 can run alongside P0-03/P0-04. With two people, P4 can 
   - Android core: `Advertising.kt` (spec, the field layout with AOSP's sizes, start statuses, the port), `Advertiser.kt` (one advertisement, ids, the 10 s start deadline, warnings, the end on Bluetooth off or timeout), `AndroidAdvertiser.kt` (`startAdvertisingSet` on the server thread); `CentralEngine.checkAdvertising()` (declared, granted, adapter on).
   - iOS core: `Advertiser.swift` (one advertisement, waits for a new manager to leave `.unknown`, the 10 s deadline, warnings for manufacturer data, service data, TX power and `connectable: false`); `PeripheralManaging` gains `advertisingDelegate`, `startAdvertising` and `stopAdvertising`; the manager is shared with the GATT server.
   - Bindings: `startAdvertising` resolving with an id and `stopAdvertising(id)` on both platforms, on the peripheral role's thread or queue. JS: `BleManager.startAdvertising`, `Advertisement`, validation in `src/internal/advertising.ts`. Testing: `FakeBle.advertisement`, `injectError` op `startAdvertising`.
-  - Plugin: `android.advertise` (`BLUETOOTH_ADVERTISE`), `ios.backgroundModes: ['peripheral']` (`bluetooth-peripheral`, added next to the app's modes; `'central'` still rejected); `ios.restoreIdentifier` and `ios.accessorySetupKit` still rejected as not yet available. Snapshot tests for both, and the bare-setup guide sections the sync test checks. The example sets both.
+  - Plugin: `android.advertise` (`BLUETOOTH_ADVERTISE`), `ios.backgroundModes: ['peripheral']` (`bluetooth-peripheral`, added next to the app's modes; `'central'` still rejected); `ios.restoreIdentifier` and `ios.accessorySetupKit` still rejected as not yet available (P5-04 added the second). Snapshot tests for both, and the bare-setup guide sections the sync test checks. The example sets both.
   - Example: the GATT server group advertises the TEST service under the test peripheral's name (`serverAdvertisement`), so `e2e/macos-central` finds the phone through it and logs the advertisement's fields.
   - Tests: 10 Android (layout, advertiser, constants against android.jar), 4 Swift, 18 Jest, 3 plugin, 1 example.
   - On the iPhone 14 Pro Max (iOS 27), 2026-10-12, seen by `e2e/macos-central`: name `BleKit-T` (the scan response's 10 bytes cut `BleKit-Test`, as §5.5 expects), the TEST service UUID, connectable. Android's fields wait for the A52.
@@ -1556,9 +1571,17 @@ Parallelism: P0-06/P0-07 can run alongside P0-03/P0-04. With two people, P4 can 
   - Example: the Peripheral tab runs the profile's echo server and serves its PSM in L2CAP_PSM; Checks gains an **L2CAP** group (1 MB each way, both rates); the two-phone suite ends with the same echo; the demo's virtual test peripheral echoes at 0x81. `e2e/macos-central` echoes 1 MB with an iPhone or Android server.
   - Tests: 11 Android (`L2capTest`), 9 Swift (`L2CAPTests`), 12 Jest, 2 example.
   - On the iPhone 14 Pro Max (iOS 27), 2026-10-12, with this Mac: as the server (Peripheral tab, PSM 0xC0 assigned), `e2e/macos-central` echoed 1 MB each way, every byte back in order (73 s, 14 KB/s each way); as the client (Checks → L2CAP), the iPhone echoed 1 MB each way with `e2e/macos-peripheral` (71 s, 14 KB/s each way). The rate is this Mac's link: its GATT stream from the same iPhone reaches 20.8 KiB/s one way. Open: Android (the A52) in both roles, and phone-to-phone rates.
-- [ ] **P5-04 AccessorySetupKit (iOS 18+)** — deps: P1-12.
+- [x] **P5-04 AccessorySetupKit (iOS 18+)** — deps: P1-12.
   Plugin keys, picker, mapping to `Peripheral`.
-  **Accept:** a separate example configuration with ASK enabled; the effect on generic scanning documented ⚠️ VERIFY (see §10).
+  **Accept:** a separate example configuration with ASK enabled; the effect on generic scanning documented (see §10).
+  **Done 2026-10-12:** `BleManager.ios.showAccessoryPicker(items, { timeoutMs })` resolves with the picked accessory's `Peripheral`, or null. The whole-app effects are measured and documented in `docs/guides/accessory-setup.md`.
+  - iOS core: `AccessorySetup.swift` (`AccessoryPicker`, `AccessoryDeclarations`, ASError codes grouped into the §6 codes) and `AccessorySessionAdapter.swift` over `ASAccessorySession`. `CentralEngine` uses the manager without the prompt in apps that declare AccessorySetupKit (§4.13). Binding: `showAccessoryPicker`, which loads product images from Metro, files or the asset catalog.
+  - JS: item validation in `src/internal/accessoryPicker.ts` (Apple's `ASDiscoveryDescriptor` rules), `require()`d images resolved to URIs, a 5 min default timeout; `NOT_SUPPORTED` on Android. Testing: the fake's picker (§5.8).
+  - Plugin: `ios.accessorySetupKit` (services, names, company ids as numbers or hex strings) writes the four Info.plist keys, never an empty list, up to 500 values each. The bare-setup guide has the section the sync test checks.
+  - Example: `EXPO_BLE_KIT_ASK=1` builds a separate app ("BLE Kit ASK", its own bundle id) with the test service, the name `BleKit` and the company id 0xFFFF declared; Checks gains **Accessory picker (iOS 18+)** (pick, permission before and after, connect, read).
+  - Tests: 6 Swift, 11 Jest, plugin cases for the option and its Info.plist output, 1 example.
+  - Found on the iPhone 14 Pro Max (iOS 27.0.1), with `e2e/macos-peripheral` as the accessory: the first pick stopped the app in `ASAccessorySession`'s initializer, because the plugin had written an empty company id list. The framework's Info.plist checks (read in its iOS 27.0.1 binary) stop the app when a declared list is empty, has more than 500 values, or holds an unreadable company id. The plugin no longer writes empty lists, and the library rejects such lists with `MISCONFIGURED`. Company ids as four hex digits (`FFFF`) are accepted.
+  - Measured on the same phone: the picker showed the item with its picture, and the pick resolved the Mac's peripheral id; no Bluetooth prompt at any point, and `CBManager.authorization` stayed `notDetermined` with the manager running. With no accessory set up the manager reported `poweredOff` with Bluetooth on, then `poweredOn` as soon as one was (in the same process, and after restarts). An unfiltered scan saw only the picked accessory (the normal build saw 6 devices at the same time). Connect, discovery (4 services) and reads worked (the PSM characteristic read `c0 00`). An accessory already set up isn't offered again ("No Accessory Found", resolving null). The picker also opened while the app's manager was running. Deleting the app forgets its accessories.
 - [ ] **P5-05 CompanionDeviceManager** — deps: P3-04.
   Association and presence events delivered through TaskManager. Plugin option `android.companionDevice`, plus the matching bare-setup entries.
   **Accept:** S-B5 passes on an API 33+ device; plugin snapshot test. Publish `0.5.0`.
@@ -1687,7 +1710,7 @@ How each run works, the scripts (`e2e/soak/`, `e2e/maestro/`) and the results pe
 | iOS background relaunch behaves differently under the scene life cycle | Background features fail on iOS | Medium | Spike P0-05 first; native-first buffering; TaskManager delivery |
 | Android OEM quirks (status 133, scan throttling, battery killers) | Flaky connections, bad reviews for users' apps | High | Bounded retries, throttle guard, OEM matrix, troubleshooting docs |
 | Emulator + Bumble flaky on hosted CI | False alarms | Medium–High | L3 allowed to fail; L4 is the source of truth |
-| AccessorySetupKit changes CoreBluetooth discovery app-wide when declared | Generic scanning breaks for apps that enable it | Medium | Opt-in only, separate example config, document clearly ⚠️ VERIFY (open question on Apple's developer forums) |
+| AccessorySetupKit changes CoreBluetooth discovery app-wide when declared | Generic scanning breaks for apps that enable it | Confirmed (P5-04, iOS 27.0.1) | Opt-in only, separate example config. Measured: an unfiltered scan saw only the picked accessory (1 device, the normal build 6), and the adapter read `poweredOff` until the first pick. `docs/guides/accessory-setup.md` says so before the setup steps |
 | TaskManager consumer interfaces are internal and change between SDKs | Background delivery breaks on an SDK bump | Medium | Isolate behind one adapter class; contract tests per supported SDK |
 | Scope creep (Classic, beacons, DFU) | 1.0 slips | High | Non-goals in §1.3; separate packages later |
 | Maintainer bus factor (the fate of earlier BLE libraries) | Library goes stale | Medium | Co-maintainers, company backing, tests and docs that let others contribute safely |
@@ -1906,3 +1929,4 @@ An error in `peripheralManagerDidStartAdvertising` (P4-03) is `ADVERTISING_FAILE
 | v0.49 | 2026-10-12 | P5-02 in progress: Android connection priority and PHY. §4.4 notes from the android14-release sources (no public priority callback; `onPhyUpdate` not guaranteed, so the session reads the PHYs after 2 s), §5 comments, the fake's rules in §5.8 |
 | v0.50 | 2026-10-12 | P5-03 in progress: L2CAP. The server side added to §5 (`publishL2CAPChannel`, `L2CAPServer`), `L2CAPChannel` gains `peerId`, `isOpen` and `addCloseListener`; L2CAP rules in §5.5 from Apple's and Android's reference docs; §4.3–§4.5 notes; the fake's L2CAP in §5.8 |
 | v0.51 | 2026-10-12 | P6-01 done: `expo-ble-kit/compat/plx` (ble-plx 3.5.1's API), the migration guide, §4.2 exports and layout |
+| v0.52 | 2026-10-12 | P5-04 done: AccessorySetupKit. The §4.3 `AccessorySetup` row, the §4.13 outcome and rule for apps that declare it (measured on iOS 27.0.1), the §4.15 option type, the fake's picker in §5.8, the §10 risk confirmed |

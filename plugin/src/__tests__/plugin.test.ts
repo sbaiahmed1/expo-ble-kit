@@ -25,6 +25,7 @@ import {
   foregroundServicePermissions,
 } from '../android';
 import {
+  ACCESSORY_SETUP_KEYS,
   BACKGROUND_MODES_KEY,
   BLUETOOTH_ALWAYS_KEY,
   DEFAULT_BLUETOOTH_ALWAYS_PERMISSION,
@@ -82,6 +83,18 @@ describe('validateProps', () => {
     [{ android: { foregroundService: 'yes' } }, '"android.foregroundService" must be a boolean'],
     [{ bluetoothAlwaysPermission: 3 }, 'must be a string or false'],
     [{ android: { requireBleHardware: 'yes' } }, '"android.requireBleHardware" must be a boolean'],
+    [{ ios: { accessorySetupKit: true } }, '"ios.accessorySetupKit" must be an object'],
+    [{ ios: { accessorySetupKit: {} } }, 'needs at least one service or company identifier'],
+    [{ ios: { accessorySetupKit: { names: ['x'] } } }, 'needs at least one service'],
+    [{ ios: { accessorySetupKit: { services: ['xyz'] } } }, 'takes 16- or 128-bit UUID strings'],
+    [{ ios: { accessorySetupKit: { services: ['180d'], names: [''] } } }, 'takes non-empty strings'],
+    [{ ios: { accessorySetupKit: { companyIdentifiers: [70000] } } }, 'takes 0…0xFFFF'],
+    [{ ios: { accessorySetupKit: { services: '180d' } } }, 'must be an array'],
+    [
+      { ios: { accessorySetupKit: { companyIdentifiers: Array.from({ length: 501 }, (_, i) => i) } } },
+      'takes at most 500 values',
+    ],
+    [{ ios: { accessorySetupKit: { service: ['180d'] } } }, 'unknown option "ios.accessorySetupKit.service"'],
     ['oops', 'options must be an object'],
   ])('rejects %p', (props, message) => {
     expect(() => validateProps(props)).toThrow(message);
@@ -114,6 +127,36 @@ describe('iOS Info.plist', () => {
       'bluetooth-peripheral',
     ]);
     expect(applyInfoPlist({})).not.toHaveProperty(BACKGROUND_MODES_KEY);
+  });
+});
+
+describe('iOS AccessorySetupKit', () => {
+  const props = {
+    ios: {
+      accessorySetupKit: {
+        services: ['180d', '0c6c1000-b347-4cfa-9827-1c5a13658519'],
+        names: ['BleKit'],
+        companyIdentifiers: [0x4c, '0xFFFF'],
+      },
+    },
+  };
+
+  it('is accepted by the validation', () => {
+    expect(validateProps(props)).toEqual(props);
+  });
+
+  it('declares Bluetooth and every identifier, keeping what the app has', () => {
+    const plist = applyInfoPlist({ [ACCESSORY_SETUP_KEYS.services]: ['180F'] }, props);
+    expect(plist).toMatchSnapshot();
+    expect(applyInfoPlist(plist, props)).toEqual(plist);
+    expect(applyInfoPlist({})).not.toHaveProperty(ACCESSORY_SETUP_KEYS.supports);
+  });
+
+  it('leaves out a list with nothing in it (iOS stops the app on an empty one)', () => {
+    const plist = applyInfoPlist({}, { ios: { accessorySetupKit: { services: ['180d'] } } });
+    expect(plist[ACCESSORY_SETUP_KEYS.services]).toEqual(['180D']);
+    expect(plist).not.toHaveProperty(ACCESSORY_SETUP_KEYS.names);
+    expect(plist).not.toHaveProperty(ACCESSORY_SETUP_KEYS.companyIdentifiers);
   });
 });
 
@@ -396,6 +439,14 @@ describe('bare setup guide', () => {
     const ios = guide.slice(guide.indexOf('## iOS: advertising in the background'));
     expect(ios).toContain(`<key>${BACKGROUND_MODES_KEY}</key>`);
     expect(ios).toContain('<string>bluetooth-peripheral</string>');
+  });
+
+  it('lists the AccessorySetupKit keys of ios.accessorySetupKit', () => {
+    const section = guide.slice(guide.indexOf('## iOS: AccessorySetupKit'));
+    for (const key of Object.values(ACCESSORY_SETUP_KEYS)) {
+      expect(section).toContain(`<key>${key}</key>`);
+    }
+    expect(section).toContain('<string>Bluetooth</string>');
   });
 
   it('lists the feature, the Info.plist key and the minimum SDK', () => {

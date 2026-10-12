@@ -51,6 +51,27 @@ exports[`Android manifest android.foregroundService declares the keep-alive serv
 </manifest>"
 `;
 
+exports[`iOS AccessorySetupKit declares Bluetooth and every identifier, keeping what the app has 1`] = `
+{
+  "NSAccessorySetupBluetoothCompanyIdentifiers": [
+    "004C",
+    "FFFF",
+  ],
+  "NSAccessorySetupBluetoothNames": [
+    "BleKit",
+  ],
+  "NSAccessorySetupBluetoothServices": [
+    "180F",
+    "180D",
+    "0C6C1000-B347-4CFA-9827-1C5A13658519",
+  ],
+  "NSAccessorySetupKitSupports": [
+    "Bluetooth",
+  ],
+  "NSBluetoothAlwaysUsageDescription": "Allow $(PRODUCT_NAME) to use Bluetooth to connect to nearby devices.",
+}
+`;
+
 exports[`iOS Info.plist ios.backgroundModes adds bluetooth-peripheral once, next to the app's own modes 1`] = `
 {
   "NSBluetoothAlwaysUsageDescription": "Allow $(PRODUCT_NAME) to use Bluetooth to connect to nearby devices.",

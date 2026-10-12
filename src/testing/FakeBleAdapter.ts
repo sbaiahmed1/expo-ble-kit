@@ -7,12 +7,13 @@ import { BleError, BleErrorCode } from '../errors';
 import { Emitter } from './Emitter';
 import { FakeGattServer, type VirtualCentral } from './FakeGattServer';
 import { FakeL2CAPLink, FakeL2CAPServer, type VirtualL2CAPChannel } from './FakeL2CAP';
+import type { NativeAccessoryPickerItem } from '../internal/accessoryPicker';
+import type { NativeAdvertisingData, NativeAdvertisingOptions } from '../internal/advertising';
 import type {
   NativeAttributeRequest,
   NativeBatch,
   NativeSubscribeMode,
 } from '../internal/attributeRequest';
-import type { NativeAdvertisingData, NativeAdvertisingOptions } from '../internal/advertising';
 import type { NativeBackgroundTaskOptions } from '../internal/backgroundTask';
 import type { NativeConnectOptions } from '../internal/connectOptions';
 import { DEFAULT_DISCOVERY_TIMEOUT_MS, reconnectDelay } from '../internal/connectOptions';
@@ -106,7 +107,8 @@ export type FakeOperation =
   | 'requestConnectionPriority'
   | 'setPreferredPhy'
   | 'openL2CAPChannel'
-  | 'publishL2CAPChannel';
+  | 'publishL2CAPChannel'
+  | 'showAccessoryPicker';
 
 /** Controls the fake, from `installFakeBle()`. */
 export interface FakeBle {
@@ -1733,6 +1735,32 @@ export class FakeBleAdapter implements NativeBleKitPort {
   connectCentral(options: { id?: string; mtu?: number } = {}): VirtualCentral {
     if (!this.server) throw fail(BleErrorCode.DISCONNECTED, 'No GATT server is open');
     return this.server.connect(options.id ?? `central-${this.nextId++}`, options.mtu ?? MIN_MTU);
+  }
+
+  /**
+   * AccessorySetupKit's picker (P5-04): the person picks the first advertising virtual peripheral
+   * that matches an item (its service, and its name when the item names a part of it), on a later
+   * tick; nothing matching answers null, like a picker closed empty. The fake has no Info.plist
+   * to check.
+   */
+  async showAccessoryPicker(
+    items: NativeAccessoryPickerItem[],
+    _timeoutMs: number
+  ): Promise<string | null> {
+    const injected = this.takeError('showAccessoryPicker');
+    await new Promise<void>((resolve) => this.scheduler.schedule(resolve));
+    if (injected) throw injected;
+    const picked = [...this.devices.values()].find(
+      (device) =>
+        device.advertising &&
+        items.some(
+          (item) =>
+            item.service !== null &&
+            device.services.has(item.service) &&
+            (item.nameSubstring === null || (device.name ?? '').includes(item.nameSubstring))
+        )
+    );
+    return picked?.id ?? null;
   }
 
   /** The app's L2CAP servers by PSM (P5-03); several may run. Bluetooth off closes them. */
