@@ -223,6 +223,8 @@ Android reports service changes from Android 12. On older versions, or when a de
 
 ## Staying connected in the background
 
+Which option fits which need, and what the App Store and Google Play ask of apps that run in the background: the [background guide](guides/background.md).
+
 On iOS, declare the `bluetooth-central` background mode: iOS then keeps the app's connections, scans and notifications going while it is in the background.
 
 ```json

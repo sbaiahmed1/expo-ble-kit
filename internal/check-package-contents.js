@@ -17,7 +17,8 @@ const FORBIDDEN = [
   /^(docs|example|e2e|test-peripherals|test-contracts|internal|benchmarks)\//,
   /(^|\/)__tests__\//,
 ];
-// Every packed file must be one of these: the build, its sources, the native code and the plugin.
+// Every packed file must be one of these: the build, its sources, the native code, the plugin, and
+// the agent skill (skills/<name>/SKILL.md, which `npx @expo/agent-cli skills:sync` links, P6-03).
 // A file anywhere else fails the check, so nothing new reaches the package unnoticed.
 const ALLOWED = [
   /^build\//,
@@ -27,6 +28,7 @@ const ALLOWED = [
   /^ios\/ExpoBleKit\.podspec$/,
   /^android\/src\/main\//,
   /^android\/(build\.gradle|consumer-rules\.pro)$/,
+  /^skills\/[A-Za-z0-9._-]+\/(SKILL\.md|references\/[A-Za-z0-9._-]+\.md)$/,
   /^(app\.plugin\.js|expo-module\.config\.json|package\.json|README\.md|LICENSE|CHANGELOG\.md)$/,
 ];
 // A backstop for a whole folder leaking in under an allowed path.

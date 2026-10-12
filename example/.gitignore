@@ -39,3 +39,7 @@ yarn-error.*
 # generated native folders
 /ios
 /android
+
+# Agent skill links made by `yarn dlx @expo/agent-cli skills:sync` (P6-03)
+/.agents/skills/
+/.claude/skills/

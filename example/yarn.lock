@@ -3777,6 +3777,7 @@ __metadata:
     "@types/react-dom": "npm:^19"
     "@types/react-native-web": "npm:^0"
     expo: "npm:~57.0.27"
+    expo-ble-kit: "link:.."
     expo-build-properties: "npm:~57.0.22"
     expo-keep-awake: "npm:~57.0.2"
     expo-task-manager: "npm:~57.0.21"
@@ -3790,6 +3791,12 @@ __metadata:
     test-renderer: "npm:~1.2.0"
     typescript: "npm:~6.0.3"
   languageName: unknown
+  linkType: soft
+
+"expo-ble-kit@link:..::locator=expo-ble-kit-example%40workspace%3A.":
+  version: 0.0.0-use.local
+  resolution: "expo-ble-kit@link:..::locator=expo-ble-kit-example%40workspace%3A."
+  languageName: node
   linkType: soft
 
 "expo-build-properties@npm:~57.0.22":

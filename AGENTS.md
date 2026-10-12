@@ -24,6 +24,7 @@ yarn changeset               # add a changeset for any user-facing change
 
 cd example && yarn install   # example app dependencies (separate lockfile)
 cd example && yarn test      # example screens against the fake adapter (Jest, library from ../src)
+cd example && yarn dlx @expo/agent-cli skills:sync   # link the package's agent skill (skills/expo-ble-kit) into .claude/skills and .agents/skills
 cd example && npx expo prebuild --clean   # regenerate example/ios and example/android (gitignored)
 cd example && npx expo run:ios            # or run:android
 

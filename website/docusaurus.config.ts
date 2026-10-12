@@ -43,6 +43,7 @@ const config: Config = {
             'getting-started.md',
             'guides/*.md',
             'troubleshooting.md',
+            'compatibility.md',
             'benchmarks.md',
             'soak.md',
           ],

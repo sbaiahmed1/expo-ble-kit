@@ -10,12 +10,14 @@ const sidebars: SidebarsConfig = {
       collapsed: false,
       items: [
         'guides/permissions',
+        'guides/background',
         'guides/bare-setup',
         'guides/accessory-setup',
         'guides/migration-from-plx',
       ],
     },
     'troubleshooting',
+    'compatibility',
     {
       type: 'category',
       label: 'Quality',

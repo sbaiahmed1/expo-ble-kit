@@ -39,6 +39,8 @@ if (found) {
 | --- | --- | --- | --- | --- |
 | 0.1.x | 57 | 0.86 | 16.4+ | 8.0 (API 26)+ |
 
+What each platform supports, the web included, and the devices it has run on: [Compatibility](docs/compatibility.md).
+
 New Architecture only. It needs a development build or a bare React Native app with `expo` installed: Expo Go doesn't include the native code. The iOS Simulator has no Bluetooth.
 
 ## Tested on hardware
@@ -56,12 +58,18 @@ Debug builds of the example app on a Samsung Galaxy A52 (Android 14) and an iPho
 
 - [Getting started](docs/getting-started.md): requirements, install, scanning, connecting, sending data, notifications, background, companion devices, the GATT server, advertising, the web, hooks, errors, testing.
 - [Permissions](docs/guides/permissions.md): what each platform asks for.
+- [Background](docs/guides/background.md): what keeps running in the background on each platform, and what the App Store and Google Play ask of it.
 - [Bare React Native setup](docs/guides/bare-setup.md): for apps without prebuild.
 - [Moving from react-native-ble-plx](docs/guides/migration-from-plx.md): `expo-ble-kit/compat/plx` keeps ble-plx's API, so an app moves by changing its imports.
+- [Compatibility](docs/compatibility.md): versions, what each platform supports, and what has run on which hardware.
 - [Troubleshooting](docs/troubleshooting.md): Android status 133, reconnecting by id, location services, the iOS Simulator.
 - [Soak tests](docs/soak.md) and [benchmarks](docs/benchmarks.md): the long runs and the throughput measurements.
 - API reference: on the website, or `yarn docs` builds it into `docs/api/`.
 - The example app in `example/`: Explorer, Heart Rate, Throughput, the phone as a test peripheral, and the developer checks.
+
+## For coding agents
+
+The package ships an agent skill, `skills/expo-ble-kit/SKILL.md`, with recipes for a heart rate monitor, large transfers, and background work. In an Expo app, `npx @expo/agent-cli skills:sync` links it into `.claude/skills` and `.agents/skills`, where Claude Code, Codex and other agents find it.
 
 ## Why expo-ble-kit
 
