@@ -1475,7 +1475,7 @@ Parallelism: P0-06/P0-07 can run alongside P0-03/P0-04. With two people, P4 can 
   - Plugin: `ios.backgroundModes: ['central']` and `ios.restoreIdentifier` (Info.plist `ExpoBleKitRestoreIdentifier`; needs `'central'`), with the bare-setup section the sync test checks.
   - iOS: the manager gets `CBCentralManagerOptionRestoreIdentifierKey` when Info.plist has both; `BleKitAppDelegateSubscriber` and `BleKitRuntime` create the engine at launch and keep it for the process (the module uses it); `CentralEngine+Restoration` and `PeripheralSession+Restoration` adopt restored peripherals (§4.3). `RestorationJournal` keeps the last 100 events across launches, in `getDiagnostics().ios.restoration`.
   - Found on the device: CoreBluetooth asserts at the manager's creation, with a restore identifier, unless the delegate it is given implements `willRestoreState` (the adapter set itself as delegate afterwards: every launch crashed); and a restored pending connection that doesn't complete made a joining `connect()` wait forever (now the first JS connect takes it over with its own options and timeout).
-  - Example: **Checks → State restoration (iOS)**, also armed by the deep link `expo.modules.blekit.example://restoration/arm`.
+  - Example: **Checks → State restoration (iOS)** (on the Background tab since P3-06), also armed by the deep link `expo.modules.blekit.example://restoration/arm`.
   - Tests: 9 Swift (`RestorationTests`), 2 plugin cases, 1 Jest.
 - [x] **P3-02 Event buffer and delivery** — deps: P3-01.
   Native buffer, `restoration` event, TaskManager consumer on iOS.
