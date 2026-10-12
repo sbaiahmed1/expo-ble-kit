@@ -7,7 +7,7 @@
     "build": "node scripts/changelog.mjs && docusaurus build",
     "serve": "docusaurus serve",
     "clear": "docusaurus clear",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "docusaurus generate-typedoc && tsc --noEmit"
   },
   "dependencies": {
     "@docusaurus/core": "3.10.2",
