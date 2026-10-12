@@ -8,7 +8,7 @@ import { useState, type ReactNode } from 'react';
 
 import styles from './index.module.css';
 
-const INSTALL = 'npx expo install expo-ble-kit@next';
+const INSTALL = 'npx expo install expo-ble-kit';
 
 const SCAN = `import { BleManager, GattCharacteristics, GattServices } from 'expo-ble-kit';
 
@@ -183,7 +183,7 @@ function Hero() {
       <div className={styles.waves} aria-hidden="true" />
       <div className={`container ${styles.heroInner}`}>
         <div className={styles.heroText}>
-          <p className={styles.eyebrow}>Preview · on npm&apos;s next tag</p>
+          <p className={styles.eyebrow}>Version 2.0 · on npm</p>
           <Heading as="h1" className={styles.title}>
             Bluetooth Low Energy for Expo
           </Heading>

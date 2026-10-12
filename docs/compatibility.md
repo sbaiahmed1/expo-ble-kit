@@ -8,7 +8,7 @@ title: Compatibility
 
 | expo-ble-kit | Expo SDK | React Native | iOS | Android | Web |
 | --- | --- | --- | --- | --- | --- |
-| next release | 57 | 0.86 | 16.4+ | 8.0 (API 26)+ | Chrome and Edge with Web Bluetooth (desktop and Android), over HTTPS or `localhost` |
+| 2.0.x | 57 | 0.86 | 16.4+ | 8.0 (API 26)+ | Chrome and Edge with Web Bluetooth (desktop and Android), over HTTPS or `localhost` |
 | 0.1.x | 57 | 0.86 | 16.4+ | 8.0 (API 26)+ | none |
 
 New Architecture only. It needs a development build, or a bare React Native app with `expo` installed: Expo Go doesn't include the native code. The iOS Simulator and the Android emulator's default radio have no usable Bluetooth: test on devices.

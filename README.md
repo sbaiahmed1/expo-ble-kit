@@ -2,10 +2,10 @@
 
 Bluetooth Low Energy for Expo and React Native apps: the phone as a central (scan, connect, read, write, notifications) and as a peripheral (GATT server, advertising).
 
-> **Status: preview.** Versions before 1.0 are published on npm's `next` tag, and the API can still change between minor versions. What has already run on real phones is listed under [Tested on hardware](#tested-on-hardware); the rest is covered by unit tests on both platforms and by the test fake. Design and roadmap: [docs/ARCHITECTURE_AND_PLAN.md](docs/ARCHITECTURE_AND_PLAN.md).
+> **Status: 2.0, stable.** Published on npm's `latest` tag; from here the API follows semantic versioning. What has already run on real phones is listed under [Tested on hardware](#tested-on-hardware), the rest is covered by unit tests on both platforms and by the test fake, and [Compatibility](docs/compatibility.md) lists what hasn't run on hardware yet. Design and roadmap: [docs/ARCHITECTURE_AND_PLAN.md](docs/ARCHITECTURE_AND_PLAN.md).
 
 ```bash
-npx expo install expo-ble-kit@next
+npx expo install expo-ble-kit
 ```
 
 ```ts
@@ -37,6 +37,7 @@ if (found) {
 
 | expo-ble-kit | Expo SDK | React Native | iOS | Android |
 | --- | --- | --- | --- | --- |
+| 2.0.x | 57 | 0.86 | 16.4+ | 8.0 (API 26)+ |
 | 0.1.x | 57 | 0.86 | 16.4+ | 8.0 (API 26)+ |
 
 What each platform supports, the web included, and the devices it has run on: [Compatibility](docs/compatibility.md).
