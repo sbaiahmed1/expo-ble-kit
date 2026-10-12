@@ -284,6 +284,36 @@ await BleManager.registerBackgroundTask('sensor-nearby', {
 - `unregisterBackgroundTask('sensor-nearby')` stops it. Registering again changes its filters.
 - iOS can't scan this way (`scanResults` rejects with `NOT_SUPPORTED`). Its background events come from state restoration, below.
 
+## Android: companion devices
+
+Android's companion device picker lets the person choose your device from a system dialog, without the scan permission, and associates it with your app. An associated device can then wake the app when it comes into range (Android 12+). Turn it on in the plugin options, then rebuild:
+
+```json
+["expo-ble-kit", { "android": { "companionDevice": true } }]
+```
+
+```ts
+import * as TaskManager from 'expo-task-manager';
+import { BleManager, type BleBackgroundEvent } from 'expo-ble-kit';
+
+TaskManager.defineTask<BleBackgroundEvent>('sensor-presence', async ({ data }) => {
+  if (data?.type === 'devicePresence') console.log(data.peripheralId, data.present ? 'nearby' : 'gone');
+});
+
+// From a screen:
+const sensor = await BleManager.android.associateCompanionDevice({ services: [SENSOR_SERVICE] });
+if (sensor) {
+  await BleManager.registerBackgroundTask('sensor-presence', { events: ['devicePresence'] });
+  await sensor.connect();
+}
+```
+
+- `associateCompanionDevice` resolves null when the person closes the picker or no device turns up. `namePattern` (a Java regular expression) narrows the list, and `singleDevice: true` asks to confirm the first match instead.
+- A `devicePresence` task gets every associated device's arrivals and departures, even after Android stopped the app, which it starts without UI. Presence needs Android 12 (API 31); on older versions registering rejects with `NOT_SUPPORTED`.
+- The picker needs Location Services on (`BleManager.android.isLocationServicesEnabled()`), but no Bluetooth or location permission. Connecting still needs the connect permission (`requestPermissionsAsync()`).
+- Android follows an associated device by its address. A device that changes its random address (phones and computers do, every few minutes) must be bonded for Android to recognize it later: `peripheral.createBond()` after associating.
+- Uninstalling the app removes its associations.
+
 ## iOS: state restoration and background tasks
 
 When iOS stops a backgrounded app to free memory, state restoration keeps the app's Bluetooth connections and relaunches the app in the background when one of them has an event, such as a notification. Turn it on with a restore identifier, any string unique to your app:
@@ -513,6 +543,6 @@ The fake answers on later timer ticks, like a radio; Jest fake timers work (`awa
 
 ## Not in this version yet
 
-Restoring the GATT server and advertising after iOS relaunches the app, and Android's companion device presence events, come in later versions. Options for them reject with `NOT_SUPPORTED` rather than being ignored.
+Web Bluetooth comes in a later version: on the web, calls reject with `NOT_SUPPORTED` rather than doing nothing.
 
 Problems? See [troubleshooting](troubleshooting.md).

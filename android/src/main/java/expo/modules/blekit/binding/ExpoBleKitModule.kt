@@ -4,6 +4,7 @@ import android.os.SystemClock
 import expo.modules.blekit.core.Advertiser
 import expo.modules.blekit.core.AndroidAdvertiser
 import expo.modules.blekit.core.AndroidBluetoothAdapterPort
+import expo.modules.blekit.core.AndroidCompanion
 import expo.modules.blekit.core.AndroidGattServerOpener
 import expo.modules.blekit.core.AndroidKeepAlive
 import expo.modules.blekit.core.AndroidPermissionSystem
@@ -13,6 +14,8 @@ import expo.modules.blekit.core.BlePermissionPolicy
 import expo.modules.blekit.core.BlePermissions
 import expo.modules.blekit.core.BleState
 import expo.modules.blekit.core.CentralEngine
+import expo.modules.blekit.core.CompanionAssociation
+import expo.modules.blekit.core.CompanionDevices
 import expo.modules.blekit.core.CoreError
 import expo.modules.blekit.core.EpochClock
 import expo.modules.blekit.core.GattServer
@@ -31,6 +34,7 @@ import expo.modules.interfaces.taskManager.TaskManagerInterface
 import expo.modules.kotlin.Promise
 import expo.modules.kotlin.exception.CodedException
 import expo.modules.kotlin.exception.Exceptions
+import expo.modules.kotlin.functions.Queues
 import expo.modules.kotlin.modules.Module
 import expo.modules.kotlin.modules.ModuleDefinition
 import java.lang.ref.WeakReference
@@ -50,11 +54,19 @@ class ExpoBleKitModule : Module() {
   /** The advertiser (P4-03), on the server thread too: both are the peripheral role. */
   private lateinit var advertiser: Advertiser
 
+  /** The companion device picker showing (P5-05), if any. Main thread. */
+  private var association: CompanionAssociation? = null
+
   /** One JS object per peripheral id while JS holds it (plan §4.5). Guarded by itself. */
   private val peripherals = HashMap<String, WeakReference<PeripheralObject>>()
 
   private val permissionManager: Permissions
     get() = appContext.permissions ?: throw Exceptions.PermissionsModuleNotFound()
+
+  companion object {
+    /** The companion device picker's activity request code (16 bits, for FragmentActivity). */
+    const val ASSOCIATION_REQUEST = 0x0B1E
+  }
 
   override fun definition() = ModuleDefinition {
     Name("ExpoBleKit")
@@ -92,6 +104,13 @@ class ExpoBleKitModule : Module() {
 
     OnActivityEntersForeground {
       executor.execute { engine.refresh() }
+    }
+
+    OnActivityResult { _, payload ->
+      val association = association ?: return@OnActivityResult
+      if (payload.requestCode == ASSOCIATION_REQUEST) {
+        companion().onActivityResult(payload.resultCode, payload.data, association)
+      }
     }
 
     Function("getState") {
@@ -559,7 +578,9 @@ class ExpoBleKitModule : Module() {
     AsyncFunction("registerBackgroundTask") { taskName: String, options: Map<String, Any?>, promise: Promise ->
       executor.execute {
         settle(promise) {
-          engine.checkBackgroundScan()
+          val events = CompanionDevices.events(options)
+          if (CompanionDevices.SCAN_EVENT in events) engine.checkBackgroundScan()
+          if (CompanionDevices.PRESENCE_EVENT in events) companion().checkPresence(CompanionPresenceService::class.java)
           val taskManager = taskManager()
           try {
             taskManager.registerTask(taskName, BackgroundScanTaskConsumer::class.java, options)
@@ -586,6 +607,47 @@ class ExpoBleKitModule : Module() {
           promise.resolve(null)
         }
       }
+    }
+
+    // CompanionDeviceManager (P5-05): the system picker; presence goes to tasks (above).
+    AsyncFunction("associateCompanionDevice") {
+        services: List<String>,
+        namePattern: String?,
+        singleDevice: Boolean,
+        promise: Promise,
+      ->
+      settle(promise) {
+        val spec = CompanionDevices.spec(services, namePattern, singleDevice)
+        val companion = companion()
+        companion.checkAssociation()
+        if (association != null) {
+          throw CoreError(CoreError.Code.INVALID_ARGUMENT, "The companion device picker is already showing")
+        }
+        val activity = appContext.currentActivity
+          ?: throw CoreError(
+            CoreError.Code.INVALID_ARGUMENT,
+            "The companion device picker needs the app in the foreground",
+          )
+        val pending = CompanionAssociation { result ->
+          association = null
+          result.onSuccess { id ->
+            if (id != null) observeNewAssociation(companion, id)
+            promise.resolve(id)
+          }
+          result.onFailure { error -> promise.reject(BleKitException(error as CoreError)) }
+        }
+        association = pending
+        try {
+          companion.associate(activity, spec, ASSOCIATION_REQUEST, pending)
+        } catch (error: CoreError) {
+          pending.fail(error)
+        }
+      }
+    }.runOnQueue(Queues.MAIN)
+
+    AsyncFunction("isLocationServicesEnabled") {
+      val context = appContext.reactContext ?: throw Exceptions.ReactContextLost()
+      AndroidPermissionSystem(context).isLocationEnabled()
     }
 
     Function("setForegroundServiceNotification") { notification: ForegroundServiceNotificationRecord ->
@@ -738,6 +800,15 @@ class ExpoBleKitModule : Module() {
   }
 
   /** expo-task-manager's native side, which the app installs for background tasks. */
+  private fun companion() = AndroidCompanion(appContext.reactContext ?: throw Exceptions.ReactContextLost())
+
+  /** A device associated while a task wants presence is observed at once (the task observed the others). */
+  private fun observeNewAssociation(companion: AndroidCompanion, id: String) {
+    val context = appContext.reactContext ?: return
+    if (!PresenceTasks.any(context)) return
+    companion.associations().find { normalizeAddress(it.address) == id }?.let { companion.observe(it, observe = true) }
+  }
+
   private fun taskManager(): TaskManagerInterface = appContext.legacyModule<TaskManagerInterface>()
     ?: throw CoreError(
       CoreError.Code.MISCONFIGURED,

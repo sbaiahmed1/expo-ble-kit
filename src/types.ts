@@ -333,9 +333,8 @@ export interface RestorationJournalEntry {
 }
 
 /**
- * What a background task receives as `data` (`TaskManager.defineTask`): `scanResults` on Android;
- * `restored`, `connectionStateChange` and `notification` on iOS. `devicePresence` arrives with a
- * later version.
+ * What a background task receives as `data` (`TaskManager.defineTask`): `scanResults` and
+ * `devicePresence` on Android; `restored`, `connectionStateChange` and `notification` on iOS.
  */
 export type BleBackgroundEvent =
   | {
@@ -373,7 +372,10 @@ export type BleBackgroundEvent =
       timestamp: number;
     }
   | {
-      /** A companion device came into range or left it. */
+      /**
+       * Android 12+: a device associated with `BleManager.android.associateCompanionDevice` came
+       * into range or left it.
+       */
       type: 'devicePresence';
       /** The peripheral. */
       peripheralId: string;
@@ -384,8 +386,8 @@ export type BleBackgroundEvent =
 /** What `BleManager.registerBackgroundTask` delivers to the task. */
 export interface BackgroundTaskOptions {
   /**
-   * The events the task receives: `scanResults` on Android; `restored`, `connectionStateChange`
-   * and `notification` on iOS.
+   * The events the task receives: `scanResults` and `devicePresence` on Android; `restored`,
+   * `connectionStateChange` and `notification` on iOS.
    */
   events: BleBackgroundEvent['type'][];
   /**
@@ -609,6 +611,25 @@ export interface L2CAPChannel {
   addCloseListener(listener: (error?: BleError) => void): Subscription;
   /** Closes the channel; pending writes reject with `L2CAP_FAILED`. Does nothing once closed. */
   close(): Promise<void>;
+}
+
+/**
+ * The devices Android's companion device picker offers (`BleManager.android.associateCompanionDevice`).
+ * An empty filter offers every nearby Bluetooth LE device.
+ */
+export interface CompanionDeviceFilter {
+  /** Devices advertising any of these services. */
+  services?: UUID[];
+  /**
+   * A Java regular expression the advertised name must match, such as `^BleKit`. Devices without
+   * a name don't match.
+   */
+  namePattern?: string;
+  /**
+   * Ask the person to confirm the first matching device instead of picking from a list.
+   * @defaultValue false
+   */
+  singleDevice?: boolean;
 }
 
 /**
@@ -1114,12 +1135,31 @@ export interface BleManagerApi {
     ): Promise<Peripheral | null>;
   };
 
-  /** Android-only calls; on iOS they do nothing. */
+  /**
+   * Android-only calls. Elsewhere `setForegroundServiceNotification` does nothing and the others
+   * reject with `NOT_SUPPORTED`.
+   */
   readonly android: {
     /**
      * What the notification of the `keepAliveInBackground` foreground service shows. Updates it
      * when the service runs; later services use it too. Fields left out get their defaults.
      */
     setForegroundServiceNotification(notification: ForegroundServiceNotification): void;
+    /**
+     * Shows Android's companion device picker with the nearby devices that match `filter`, and
+     * associates the app with the one the person picks: resolves its peripheral, or null when they
+     * closed the picker or nothing turned up. Android needs no Bluetooth permission for it, but
+     * Location Services on.
+     * Associated devices can wake the app when they come into range: register a task with the
+     * `devicePresence` event (Android 12+). Needs the config plugin's `android.companionDevice`
+     * (`MISCONFIGURED` otherwise) and the app in the foreground; rejects with `INVALID_ARGUMENT`
+     * while a picker is showing, and `NOT_SUPPORTED` on devices without companion device support.
+     */
+    associateCompanionDevice(filter: CompanionDeviceFilter): Promise<Peripheral | null>;
+    /**
+     * Whether location services are on. Android 11 (API 30) and older find no devices in a scan
+     * while they are off, even with the permission granted.
+     */
+    isLocationServicesEnabled(): Promise<boolean>;
   };
 }

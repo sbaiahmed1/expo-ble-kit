@@ -30,6 +30,7 @@ export type {
   CharacteristicDefinition,
   CharacteristicProperty,
   CharacteristicSubscription,
+  CompanionDeviceFilter,
   ConnectionState,
   ConnectOptions,
   Descriptor,

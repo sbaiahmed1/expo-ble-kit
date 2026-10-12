@@ -37,7 +37,8 @@
           "android": {
             "foregroundService": true,
             "backgroundLocation": true,
-            "advertise": true
+            "advertise": true,
+            "companionDevice": true
           }
         }
       ],

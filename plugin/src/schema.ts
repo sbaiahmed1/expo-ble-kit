@@ -51,6 +51,13 @@ export type ExpoBleKitPluginProps = {
     backgroundLocation?: boolean;
     /** Declare BLUETOOTH_ADVERTISE (Android 12+), which `startAdvertising` needs. Default false. */
     advertise?: boolean;
+    /**
+     * Declare CompanionDeviceManager: the `android.software.companion_device_setup` feature (not
+     * required on Google Play), REQUEST_OBSERVE_COMPANION_DEVICE_PRESENCE and the presence service,
+     * which `BleManager.android.associateCompanionDevice` and `devicePresence` tasks need. Default
+     * false.
+     */
+    companionDevice?: boolean;
   };
 };
 
@@ -67,9 +74,8 @@ const ANDROID = new Set([
   'foregroundService',
   'backgroundLocation',
   'advertise',
+  'companionDevice',
 ]);
-/** Options from plan §4.15 that later versions add. */
-const NOT_YET = new Set(['android.companionDevice']);
 
 function fail(message: string): never {
   throw new Error(`expo-ble-kit config plugin: ${message}`);
@@ -77,12 +83,8 @@ function fail(message: string): never {
 
 function checkKeys(object: Record<string, unknown>, allowed: Set<string>, prefix: string) {
   for (const key of Object.keys(object)) {
-    const path = prefix + key;
-    if (NOT_YET.has(path)) {
-      fail(`the option "${path}" is not available in this version yet.`);
-    }
     if (!allowed.has(key)) {
-      fail(`unknown option "${path}".`);
+      fail(`unknown option "${prefix + key}".`);
     }
   }
 }

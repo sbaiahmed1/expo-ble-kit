@@ -65,9 +65,17 @@ export interface NativeBleKitPort {
     items: NativeAccessoryPickerItem[],
     timeoutMs: number
   ): Promise<string | null>;
+  /** Android only (P5-05): the associated device's peripheral id, or null. */
+  associateCompanionDevice?(
+    services: string[],
+    namePattern: string | null,
+    singleDevice: boolean
+  ): Promise<string | null>;
+  /** Android only (P5-05). */
+  isLocationServicesEnabled?(): Promise<boolean>;
   /** P5-03: an L2CAP server; `secure` as validated by the TS layer. */
   publishL2CAPChannel(secure: boolean): Promise<NativeL2CAPServerPort>;
-  /** Android only (P3-04): a TaskManager task with a background scan. */
+  /** A TaskManager task: background scans and companion presence on Android, restoration on iOS. */
   registerBackgroundTask?(taskName: string, options: NativeBackgroundTaskOptions): Promise<void>;
   unregisterBackgroundTask?(taskName: string): Promise<void>;
   /** Android only (P3-03): the keep-alive notification, validated. */

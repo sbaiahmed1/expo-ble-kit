@@ -21,6 +21,9 @@ import {
   ADVERTISE,
   BACKGROUND_LOCATION,
   blePermissions,
+  COMPANION_FEATURE,
+  COMPANION_PRESENCE,
+  COMPANION_SERVICE,
   CONNECTION_SERVICE,
   foregroundServicePermissions,
 } from '../android';
@@ -59,6 +62,7 @@ describe('validateProps', () => {
         requireBleHardware: true,
         foregroundService: true,
         advertise: true,
+        companionDevice: true,
       },
     };
     expect(validateProps(props)).toEqual(props);
@@ -79,7 +83,7 @@ describe('validateProps', () => {
     [{ ios: { backgroundModes: 'peripheral' } }, '"ios.backgroundModes" must be an array'],
     [{ ios: true }, '"ios" must be an object'],
     [{ android: { advertise: 'yes' } }, '"android.advertise" must be a boolean'],
-    [{ android: { companionDevice: true } }, '"android.companionDevice" is not available'],
+    [{ android: { companionDevice: 'yes' } }, '"android.companionDevice" must be a boolean'],
     [{ android: { backgroundLocation: 1 } }, '"android.backgroundLocation" must be a boolean'],
     [{ android: { foregroundService: 'yes' } }, '"android.foregroundService" must be a boolean'],
     [{ bluetoothAlwaysPermission: 3 }, 'must be a string or false'],
@@ -265,6 +269,44 @@ describe('Android manifest', () => {
     expect(permissionsOf(manifest)).toContainEqual({ 'android:name': ADVERTISE.name });
     const without = applyAndroidManifest(await parseManifest(TEMPLATE_MANIFEST));
     expect(permissionsOf(without).map((p) => p['android:name'])).not.toContain(ADVERTISE.name);
+  });
+
+  describe('android.companionDevice', () => {
+    const props = { android: { companionDevice: true } };
+
+    it('declares the feature, the presence permission and the presence service', async () => {
+      const manifest = applyAndroidManifest(await parseManifest(TEMPLATE_MANIFEST), props);
+      const xml = XML.format(manifest);
+      expect(xml).toMatchSnapshot();
+      expect(permissionsOf(manifest)).toContainEqual({ 'android:name': COMPANION_PRESENCE.name });
+      expect(xml).toContain(
+        `<uses-feature android:name="${COMPANION_FEATURE}" android:required="false"/>`
+      );
+      expect(xml).toContain(
+        'android:permission="android.permission.BIND_COMPANION_DEVICE_SERVICE"'
+      );
+      expect(xml).toContain('<action android:name="android.companion.CompanionDeviceService"/>');
+      expect(XML.format(applyAndroidManifest(manifest, props))).toBe(xml);
+    });
+
+    it('adds nothing without the option', async () => {
+      const xml = XML.format(applyAndroidManifest(await parseManifest(TEMPLATE_MANIFEST)));
+      for (const entry of [COMPANION_FEATURE, COMPANION_PRESENCE.name, COMPANION_SERVICE]) {
+        expect(xml).not.toContain(entry);
+      }
+    });
+
+    it('keeps the feature when the app requires it', async () => {
+      const manifest = await parseManifest(
+        TEMPLATE_MANIFEST.replace(
+          '<uses-permission android:name="android.permission.INTERNET"/>',
+          `<uses-feature android:name="${COMPANION_FEATURE}" android:required="true"/>`
+        )
+      );
+      const xml = XML.format(applyAndroidManifest(manifest, props));
+      expect(xml.match(/companion_device_setup/g)).toHaveLength(1);
+      expect(xml).toContain('android:required="true"');
+    });
   });
 
   describe('android.foregroundService', () => {
@@ -455,12 +497,28 @@ describe('bare setup guide', () => {
   it('lists the advertising entries of android.advertise and ios.backgroundModes', () => {
     const section = guide.slice(
       guide.indexOf('## Android: advertising'),
-      guide.indexOf('## Android: minimum SDK')
+      guide.indexOf('## Android: companion devices')
     );
     expect(permissionsIn(section)).toEqual([{ 'android:name': ADVERTISE.name }]);
     const ios = guide.slice(guide.indexOf('## iOS: advertising in the background'));
     expect(ios).toContain(`<key>${BACKGROUND_MODES_KEY}</key>`);
     expect(ios).toContain('<string>bluetooth-peripheral</string>');
+  });
+
+  it('lists the companion device entries of android.companionDevice', () => {
+    const section = guide.slice(
+      guide.indexOf('## Android: companion devices'),
+      guide.indexOf('## Android: minimum SDK')
+    );
+    expect(permissionsIn(section)).toEqual([{ 'android:name': COMPANION_PRESENCE.name }]);
+    expect(section).toContain(
+      `<uses-feature android:name="${COMPANION_FEATURE}" android:required="false" />`
+    );
+    expect(section).toContain(`android:name="${COMPANION_SERVICE}"`);
+    expect(section).toContain(
+      'android:permission="android.permission.BIND_COMPANION_DEVICE_SERVICE"'
+    );
+    expect(section).toContain('<action android:name="android.companion.CompanionDeviceService" />');
   });
 
   it('lists the restoration entries of ios.backgroundModes and ios.restoreIdentifier', () => {

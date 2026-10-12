@@ -58,6 +58,17 @@ export const ADVERTISE: PermissionDeclaration = { name: 'android.permission.BLUE
 /** The keep-alive service class (plan §4.4), declared only with `android.foregroundService`. */
 export const CONNECTION_SERVICE = 'expo.modules.blekit.core.ConnectionService';
 
+/**
+ * `android.companionDevice` (P5-05): CompanionDeviceManager refuses apps that don't declare its
+ * feature, presence observation needs the permission, and Android binds the presence service while
+ * an observed device is in range.
+ */
+export const COMPANION_FEATURE = 'android.software.companion_device_setup';
+export const COMPANION_PRESENCE: PermissionDeclaration = {
+  name: 'android.permission.REQUEST_OBSERVE_COMPANION_DEVICE_PRESENCE',
+};
+export const COMPANION_SERVICE = 'expo.modules.blekit.binding.CompanionPresenceService';
+
 export const BLE_FEATURE = 'android.hardware.bluetooth_le';
 /**
  * Declared explicitly because the legacy BLUETOOTH permission implies it as *required*, which would
@@ -69,6 +80,16 @@ export const LOCATION_FEATURE = 'android.hardware.location';
 const FINE_LOCATION = 'android.permission.ACCESS_FINE_LOCATION';
 
 type ManifestItem = { $: Record<string, string> };
+type ApplicationItem = ManifestItem & { service?: ManifestItem[] };
+
+function addService(root: Record<string, ManifestItem[] | undefined>, service: ManifestItem) {
+  root.application ??= [{ $: {} }];
+  const application = root.application[0] as ApplicationItem;
+  application.service ??= [];
+  if (!application.service.some((item) => item.$['android:name'] === service.$['android:name'])) {
+    application.service.push(service);
+  }
+}
 
 /**
  * Adds the base declarations to a parsed AndroidManifest. Entries another plugin or the app already
@@ -88,11 +109,13 @@ export function applyAndroidManifest(
 
   const addsLocation = !declared.has(FINE_LOCATION);
   const foregroundService = props.android?.foregroundService ?? false;
+  const companionDevice = props.android?.companionDevice ?? false;
   for (const permission of [
     ...blePermissions(props),
     ...(foregroundService ? foregroundServicePermissions() : []),
     ...(props.android?.backgroundLocation ? [BACKGROUND_LOCATION] : []),
     ...(props.android?.advertise ? [ADVERTISE] : []),
+    ...(companionDevice ? [COMPANION_PRESENCE] : []),
   ]) {
     if (declared.has(permission.name)) {
       continue;
@@ -123,19 +146,32 @@ export function applyAndroidManifest(
     features.push({ $: { 'android:name': LOCATION_FEATURE, 'android:required': 'false' } });
   }
 
+  if (companionDevice && !features.some((item) => item.$['android:name'] === COMPANION_FEATURE)) {
+    // Not required: the app stays on Google Play for devices without it (NOT_SUPPORTED there).
+    features.push({ $: { 'android:name': COMPANION_FEATURE, 'android:required': 'false' } });
+  }
+
   if (foregroundService) {
-    root.application ??= [{ $: {} }];
-    const application = root.application[0] as ManifestItem & { service?: ManifestItem[] };
-    application.service ??= [];
-    if (!application.service.some((item) => item.$['android:name'] === CONNECTION_SERVICE)) {
-      application.service.push({
-        $: {
-          'android:name': CONNECTION_SERVICE,
-          'android:exported': 'false',
-          'android:foregroundServiceType': 'connectedDevice',
-        },
-      });
-    }
+    addService(root, {
+      $: {
+        'android:name': CONNECTION_SERVICE,
+        'android:exported': 'false',
+        'android:foregroundServiceType': 'connectedDevice',
+      },
+    });
+  }
+  if (companionDevice) {
+    // Exported for the system, which alone holds BIND_COMPANION_DEVICE_SERVICE.
+    addService(root, {
+      $: {
+        'android:name': COMPANION_SERVICE,
+        'android:exported': 'true',
+        'android:permission': 'android.permission.BIND_COMPANION_DEVICE_SERVICE',
+      },
+      'intent-filter': [
+        { action: [{ $: { 'android:name': 'android.companion.CompanionDeviceService' } }] },
+      ],
+    } as ManifestItem);
   }
   return manifest;
 }

@@ -27,9 +27,9 @@ const EVENTS: BleBackgroundEvent['type'][] = [
   'notification',
   'devicePresence',
 ];
-/** Events each platform delivers (plan §7: P3-04 Android scans, P3-02 iOS restoration; P5-05 adds devicePresence). */
+/** Events each platform delivers (plan §7: P3-04 Android scans, P5-05 presence, P3-02 iOS restoration). */
 const SUPPORTED: Partial<Record<typeof Platform.OS, BleBackgroundEvent['type'][]>> = {
-  android: ['scanResults'],
+  android: ['scanResults', 'devicePresence'],
   ios: ['restored', 'connectionStateChange', 'notification'],
 };
 

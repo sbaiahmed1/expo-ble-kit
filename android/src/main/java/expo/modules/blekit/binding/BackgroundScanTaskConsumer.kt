@@ -5,26 +5,34 @@ import android.content.Intent
 import android.os.Bundle
 import android.os.SystemClock
 import expo.modules.blekit.core.AndroidBackgroundScanner
+import expo.modules.blekit.core.AndroidCompanion
 import expo.modules.blekit.core.BackgroundScanning
 import expo.modules.blekit.core.BleLogger
+import expo.modules.blekit.core.CompanionDevices
 import expo.modules.blekit.core.LogLevel
 import expo.modules.interfaces.taskManager.TaskConsumer
 import expo.modules.interfaces.taskManager.TaskInterface
 import expo.modules.interfaces.taskManager.TaskManagerUtilsInterface
 
 /**
- * The TaskManager consumer of `registerBackgroundTask` with `scanResults` (plan §4.14, P3-04).
+ * The TaskManager consumer of `registerBackgroundTask` on Android (plan §4.14): `scanResults`
+ * (P3-04) and `devicePresence` (P5-05). TaskManager creates this class by reflection from its
+ * persisted name, so it keeps the name it had when it only scanned (and the consumer ProGuard rules).
  *
  * The scan's PendingIntent comes from TaskManager ([TaskManagerUtilsInterface.createTaskIntent]):
  * its `TaskBroadcastReceiver` wakes the app, restores the task and calls [didReceiveBroadcast],
- * which runs the JS task (headless when the app isn't open). TaskManager creates this class by
- * reflection from its persisted name, so it must keep its name (consumer ProGuard rules).
+ * which runs the JS task (headless when the app isn't open). Presence arrives the same way, as the
+ * custom broadcast [CompanionPresenceService] sends to that receiver.
  */
 class BackgroundScanTaskConsumer(context: Context, taskManagerUtils: TaskManagerUtilsInterface) :
   TaskConsumer(context, taskManagerUtils) {
   private var task: TaskInterface? = null
 
   override fun taskType() = "expo-ble-kit.scan"
+
+  @Suppress("UNCHECKED_CAST")
+  private val events: Set<String>
+    get() = task?.let { CompanionDevices.events(it.options as Map<String, Any?>) }.orEmpty()
 
   /**
    * Called when JS registers the task, and when TaskManager restores it in a new process (each
@@ -33,7 +41,8 @@ class BackgroundScanTaskConsumer(context: Context, taskManagerUtils: TaskManager
    */
   override fun didRegister(task: TaskInterface) {
     this.task = task
-    start(force = false)
+    if (CompanionDevices.SCAN_EVENT in events) start(force = false)
+    if (CompanionDevices.PRESENCE_EVENT in events) observePresence(force = false)
   }
 
   override fun didUnregister() {
@@ -42,24 +51,41 @@ class BackgroundScanTaskConsumer(context: Context, taskManagerUtils: TaskManager
     AndroidBackgroundScanner(context).stop(taskManagerUtils.createTaskIntent(context, task))
     taskManagerUtils.cancelTaskIntent(context, task.appScopeKey, task.name)
     preferences(context)?.edit()?.remove(task.name)?.apply()
+    stopObservingPresence(task.name)
     this.task = null
   }
 
   /** Registering again with other options. */
   override fun setOptions(options: Map<String, Any>) {
-    start(force = true)
+    val task = task ?: return
+    val context = context ?: return
+    if (CompanionDevices.SCAN_EVENT in events) {
+      start(force = true)
+    } else {
+      AndroidBackgroundScanner(context).stop(taskManagerUtils.createTaskIntent(context, task))
+      preferences(context)?.edit()?.remove(task.name)?.apply()
+    }
+    if (CompanionDevices.PRESENCE_EVENT in events) observePresence(force = true) else stopObservingPresence(task.name)
   }
 
-  /** After a reboot (with RECEIVE_BOOT_COMPLETED) or an app update, the scan has to start again. */
-  override fun canReceiveCustomBroadcast(action: String) =
-    action == Intent.ACTION_BOOT_COMPLETED || action == Intent.ACTION_MY_PACKAGE_REPLACED
+  /**
+   * After a reboot (with RECEIVE_BOOT_COMPLETED) or an app update, the scan has to start again.
+   * Presence comes from [CompanionPresenceService].
+   */
+  override fun canReceiveCustomBroadcast(action: String) = action == Intent.ACTION_BOOT_COMPLETED ||
+    action == Intent.ACTION_MY_PACKAGE_REPLACED ||
+    action == CompanionPresenceService.ACTION
 
   override fun didReceiveBroadcast(intent: Intent) {
     val task = task ?: return
     val context = context ?: return
-    if (intent.action != null && canReceiveCustomBroadcast(intent.action!!)) {
-      start(force = true)
-      return
+    when (intent.action) {
+      CompanionPresenceService.ACTION -> return deliverPresence(task, intent)
+
+      Intent.ACTION_BOOT_COMPLETED, Intent.ACTION_MY_PACKAGE_REPLACED -> {
+        if (CompanionDevices.SCAN_EVENT in events) start(force = true)
+        return
+      }
     }
     val scanner = AndroidBackgroundScanner(context)
     scanner.error(intent)?.let { code ->
@@ -100,6 +126,37 @@ class BackgroundScanTaskConsumer(context: Context, taskManagerUtils: TaskManager
     } catch (error: SecurityException) {
       BleLogger.logcat(LogLevel.WARN, "background scan of task ${task.name} needs a permission: ${error.message}")
     }
+  }
+
+  private fun deliverPresence(task: TaskInterface, intent: Intent) {
+    if (CompanionDevices.PRESENCE_EVENT !in events) return
+    val address = intent.getStringExtra(CompanionPresenceService.EXTRA_ADDRESS) ?: return
+    val data = Bundle().apply {
+      putString("type", CompanionDevices.PRESENCE_EVENT)
+      putString("peripheralId", address)
+      putBoolean("present", intent.getBooleanExtra(CompanionPresenceService.EXTRA_PRESENT, false))
+    }
+    task.execute(data, null)
+  }
+
+  /**
+   * Observes the presence of every association. Android keeps observing across restarts, so a
+   * restore ([force] false) of a task already recorded leaves it alone.
+   */
+  private fun observePresence(force: Boolean) {
+    val task = task ?: return
+    val context = context ?: return
+    if (!PresenceTasks.add(context, task.name) && !force) return
+    val companion = AndroidCompanion(context)
+    companion.associations().forEach { companion.observe(it, observe = true) }
+  }
+
+  /** Stops observing once no task wants presence. */
+  private fun stopObservingPresence(taskName: String) {
+    val context = context ?: return
+    if (!PresenceTasks.remove(context, taskName) || PresenceTasks.any(context)) return
+    val companion = AndroidCompanion(context)
+    companion.associations().forEach { companion.observe(it, observe = false) }
   }
 
   private fun preferences(context: Context) = context.getSharedPreferences(PREFERENCES, Context.MODE_PRIVATE)

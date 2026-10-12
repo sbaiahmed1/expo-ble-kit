@@ -1,6 +1,6 @@
 # Expo BLE (`expo-ble-kit`) — Architecture & Implementation Plan
 
-> **Status:** Draft v0.56 · **Date:** 2026-10-12 · **Scope:** proposition #3, an Expo-first Bluetooth Low Energy module · **Changes:** Appendix D
+> **Status:** Draft v0.57 · **Date:** 2026-10-12 · **Scope:** proposition #3, an Expo-first Bluetooth Low Energy module · **Changes:** Appendix D
 >
 > **Package name:** `expo-ble-kit` (D0a, decided 2026-10-02) · native module `ExpoBleKit` · Android package `expo.modules.blekit`.
 >
@@ -238,7 +238,7 @@ iOS platform rules:
 | `L2capChannel`, `L2capServer` | P5-03: `BluetoothSocket`s block, so connect, accept, read and write each run on a thread of their own (`BlockingRunner`), never on `blekit-gatt`; state and callbacks stay there. Reading starts with `receive()`; one writer thread per channel while writes are pending, in pieces of `getMaxTransmitPacketSize()` (AOSP's `BluetoothSocket.write` logs a warning and splits larger writes). A timeout, a cancel or the 10 s write stall closes the socket, which aborts the blocked call (`BluetoothSocket.connect` docs). A server's channels close with it: closing `BluetoothServerSocket` leaves accepted sockets open (its docs) |
 | `ConnectionService` | Foreground service of type `connectedDevice` (Android 14+ also needs `FOREGROUND_SERVICE_CONNECTED_DEVICE`). Runs while at least one session has `keepAliveInBackground`. Android 12+ refuses foreground-service starts from the background (`ForegroundServiceStartNotAllowedException`; exemptions include CompanionDeviceManager apps holding `REQUEST_COMPANION_START_FOREGROUND_SERVICES_FROM_BACKGROUND` or `REQUEST_COMPANION_RUN_IN_BACKGROUND`, verified in [Restrictions on starting a foreground service from the background](https://developer.android.com/develop/background-work/services/fgs/restrictions-bg-start)), so the service starts when a `keepAliveInBackground` connect is issued while the app is in the foreground. It then stays up through link loss and reconnects until the last such session ends, and never needs a restart from the background. If a start is refused, emit a `warning` (`FOREGROUND_SERVICE_FAILED`) and continue without keep-alive. Implementation (P3-03): `AndroidKeepAlive` starts it with `startService` (refused at once from the background) and the service calls `startForeground(id, notification, FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE)` in `onStartCommand`. Unlike `startForegroundService`, a refused promotion can't crash the app with `ForegroundServiceDidNotStartInTimeException` ([troubleshooting](https://developer.android.com/develop/background-work/services/fgs/troubleshooting)). Android 14+ throws `SecurityException` there unless a Bluetooth runtime permission is granted ([service types](https://developer.android.com/develop/background-work/services/fgs/service-types)); connecting already needs `BLUETOOTH_CONNECT`. `START_NOT_STICKY`: after the process dies there's no connection to keep. Observed on Android 14 (A52): Android allows a background start for 10 s after the adapter's `ACTION_STATE_CHANGED` broadcast (`code:BLUETOOTH_BROADCAST` in ActivityManager's log), so reconnecting with keep-alive when Bluetooth comes back on works. Without `POST_NOTIFICATIONS` (Android 13+) the service still runs and its notice only shows in the Task Manager ([notification permission](https://developer.android.com/develop/ui/views/notifications/notification-permission)) |
 | `BackgroundScans` | `startScan(filters, settings, PendingIntent)` (API 26+) → TaskManager → the JS task. Works even when the process is dead. The PendingIntent comes from TaskManager (`TaskManagerUtilsInterface.createTaskIntent`: a mutable broadcast to expo-task-manager's own `TaskBroadcastReceiver`, which restores the task and calls the consumer's `didReceiveBroadcast`, the path expo-location takes for geofencing), so the library declares no receiver (P3-04 replaced the planned `ScanResultReceiver`). Low power, first match where the controller filters, else 10 s batches. `AndroidBackgroundScanner` (core) starts, stops and reads the scan; `BackgroundScanTaskConsumer` (binding) is the TaskManager glue |
-| `Companion` | `CompanionDeviceManager` association (system picker) and device presence observation ⚠️ VERIFY API levels (31 / 33 / 36 differ) |
+| `Companion` | `CompanionDeviceManager` association (system picker) and device presence observation (P5-05). API levels, read in the platform jars 26–37 and the API 34 sources: association since 26 (`onDeviceFound`, the picked LE device as a `ScanResult` in `EXTRA_DEVICE`), `onAssociationPending`/`onAssociationCreated` and `AssociationInfo` since 33; presence by address since 31 (`startObservingDevicePresence(String)`, `CompanionDeviceService.onDeviceAppeared(String)`), `onDeviceAppeared(AssociationInfo)` since 33 (its default forwards to the address overload), and by association id since 36 (`ObservingDevicePresenceRequest`, `onDevicePresenceEvent`). `AndroidCompanion` (core) shows the picker and observes; `CompanionPresenceService` (binding) sends each change to TaskManager's receiver as a custom broadcast, which TaskManager hands to the task's consumer. Presence follows the device's address: a device with a rotating random address must be bonded for Android to resolve it |
 | `BtAbstractions` | Interfaces over adapter, scanner, GATT client and GATT server for JVM unit tests |
 
 GATT cache (P2-06):
@@ -429,7 +429,7 @@ Mapping: Appendix A, implemented in `ErrorMapping.swift` / `ErrorMapping.kt` and
 | Android 12+ | Advertise | `BLUETOOTH_ADVERTISE` | Opt-in via plugin |
 | Android 13+ | Foreground service notification | `POST_NOTIFICATIONS` | Only if the foreground service is enabled |
 | Android 14+ | Foreground service | `FOREGROUND_SERVICE`, `FOREGROUND_SERVICE_CONNECTED_DEVICE`, service type `connectedDevice` | Opt-in via plugin |
-| Android | CompanionDeviceManager | Feature/permission declarations per API level ⚠️ VERIFY | Opt-in via plugin |
+| Android | CompanionDeviceManager | `uses-feature android.software.companion_device_setup` (association checks the declaration; not required on Play), `REQUEST_OBSERVE_COMPANION_DEVICE_PRESENCE` (API 31+, install-time), the presence service with `BIND_COMPANION_DEVICE_SERVICE`. No Bluetooth permission for the picker; Location Services must be on | Opt-in via plugin (`android.companionDevice`) |
 
 Runtime API: `getPermissionsAsync()` and `requestPermissionsAsync({ scan, connect, advertise, backgroundScan })`. On iOS, "request" means creating the manager (prompts once); the status comes from `CBManager.authorization`. `backgroundScan` only differs from `scan` on Android 10–11. Elsewhere it mirrors `scan`; iOS background scanning needs the background mode, not a permission.
 
@@ -524,7 +524,7 @@ Bare apps follow `docs/guides/bare-setup.md`, which lists exactly the entries th
 
 This section is the contract. Changing it requires updating `src/types.ts`, docs and tests in the same PR (Appendix B, rule 8).
 
-Members owned by later tasks are added to the exported types when those tasks land; until then they are absent, not stubs: the members of `Peripheral.android` other than `refreshGattCache` (P5-01, P5-02), the peripheral role (P4), background tasks (P3), and the members of `BleManager.android` P5-05 adds. `src/__tests__/publicApi.test.ts` compares every §5 interface with `src/types.ts` and the testing entry, member by member, with this list as the only exception, and checks the exported values.
+Members owned by later tasks are added to the exported types when those tasks land; until then they are absent, not stubs: the members of `Peripheral.android` other than `refreshGattCache` (P5-01, P5-02), the peripheral role (P4) and background tasks (P3). `src/__tests__/publicApi.test.ts` compares every §5 interface with `src/types.ts` and the testing entry, member by member, with this list as the only exception, and checks the exported values.
 
 ### 5.1 Common types
 
@@ -594,8 +594,9 @@ export interface BleManagerApi {
   readonly android: {
     /** P3-03. The keep-alive service's notification; updates it while it runs. No-op on iOS. */
     setForegroundServiceNotification(notification: ForegroundServiceNotification): void;
-    associateCompanionDevice(filter: CompanionDeviceFilter): Promise<Peripheral | null>; // P5
-    isLocationServicesEnabled(): Promise<boolean>; // matters on API <= 30 (P5)
+    /** P5-05: null when the picker was closed or nothing turned up; NOT_SUPPORTED off Android. */
+    associateCompanionDevice(filter: CompanionDeviceFilter): Promise<Peripheral | null>;
+    isLocationServicesEnabled(): Promise<boolean>; // matters on API <= 30 and for the companion picker (P5-05)
   };
 
   setLogLevel(level: LogLevel): void;
@@ -995,7 +996,7 @@ export type BleBackgroundEvent =
 export interface ForegroundServiceNotification { title?: string; text?: string; channelName?: string; smallIcon?: string /* drawable name */ }
 
 export interface BackgroundTaskOptions {
-  events: Array<BleBackgroundEvent['type']>; // Android: 'scanResults' (P3-04); iOS: 'restored', 'connectionStateChange', 'notification' (P3-02); 'devicePresence' NOT_SUPPORTED until P5-05
+  events: Array<BleBackgroundEvent['type']>; // Android: 'scanResults' (P3-04), 'devicePresence' (P5-05, API 31+); iOS: 'restored', 'connectionStateChange', 'notification' (P3-02)
   /** Android: filters for PendingIntent background scans. `services` or `manufacturerData` required (controller filtering); `namePrefix` checked on delivery. */
   scan?: Pick<ScanOptions, 'services' | 'manufacturerData' | 'namePrefix'>;
 }
@@ -1080,7 +1081,7 @@ export interface VirtualPeripheralConfig {
 export interface FakeBle {
   addPeripheral(config: VirtualPeripheralConfig): VirtualPeripheral;
   setState(state: BleState): void;
-  /** Make the next matching op fail with this code. Ops: requestPermissions, startScan, connect, discover, read, write, readDescriptor, writeDescriptor, subscribe, unsubscribe, requestMtu, readRssi, startAdvertising, createBond, requestConnectionPriority, setPreferredPhy, openL2CAPChannel, publishL2CAPChannel, showAccessoryPicker. */
+  /** Make the next matching op fail with this code. Ops: requestPermissions, startScan, connect, discover, read, write, readDescriptor, writeDescriptor, subscribe, unsubscribe, requestMtu, readRssi, startAdvertising, createBond, requestConnectionPriority, setPreferredPhy, openL2CAPChannel, publishL2CAPChannel, showAccessoryPicker, associateCompanionDevice. */
   injectError(match: { op: string; peripheralId?: string; characteristic?: UUID }, code: BleErrorCode): void;
   reset(): void;
   /** P4-01: a central connected to the open GATT server, to test the server's handlers. mtu default 23. */
@@ -1605,6 +1606,12 @@ Parallelism: P0-06/P0-07 can run alongside P0-03/P0-04. With two people, P4 can 
 - [ ] **P5-05 CompanionDeviceManager** — deps: P3-04.
   Association and presence events delivered through TaskManager. Plugin option `android.companionDevice`, plus the matching bare-setup entries.
   **Accept:** S-B5 passes on an API 33+ device; plugin snapshot test. Publish `0.5.0`.
+  **Progress 2026-10-12:** implemented; S-B5 waits for an Android 13+ phone (the A52).
+  - Android core: `CompanionDevices.kt` (filter checks, failure codes, presence preconditions, `PresenceTracker`, `CompanionAssociation`) and `AndroidCompanion.kt` (picker, activity result, associations, presence observation per API level, §4.4). Binding: `associateCompanionDevice` (main queue, one picker at a time, `OnActivityResult`), `isLocationServicesEnabled`, `CompanionPresenceService`, and `BackgroundScanTaskConsumer` (the name 0.1.1 persisted) handling `devicePresence` beside `scanResults`; tasks that want presence are kept in preferences, so a device associated later is observed at once and observation stops with the last such task.
+  - JS: `BleManager.android.associateCompanionDevice(filter)` and `isLocationServicesEnabled()` (`NOT_SUPPORTED` elsewhere), filter checks in `src/internal/companionFilter.ts`, `devicePresence` accepted on Android. Testing: the fake's picker and the `associateCompanionDevice` op.
+  - Plugin: `android.companionDevice` writes the feature (`required="false"`), the permission and the service; the bare-setup guide has the section the sync test checks.
+  - Example: Checks gains **Companion device (Android)** (associate the test peripheral, register the presence task, location services), and the `blekit-presence` task logs each change to Logcat.
+  - Tests: 6 Android (`CompanionDevicesTest`), 5 Jest, 4 plugin (snapshot, sync), 2 example.
 
 ### 7.8 P6 — Ecosystem and 1.0
 
@@ -1955,3 +1962,4 @@ An error in `peripheralManagerDidStartAdvertising` (P4-03) is `ADVERTISING_FAILE
 | v0.54 | 2026-10-12 | The repository is public; the documentation website is published on GitHub Pages |
 | v0.55 | 2026-10-12 | P0-05 and P3-01 done, P3-02 in progress: the iOS background spike (findings in `docs/spikes/P0-05-ios-background.md`, ADR-008 accepted), central state restoration, background tasks on iOS; §4.3, §4.14, §5.6, §5.7 (`Diagnostics.ios`) and §10 updated |
 | v0.56 | 2026-10-12 | P3-02 done (S-B1 and S-B2 on the iPhone), P4-04 done: the GATT server and advertisement survive a system termination; §4.3 `Restoration` covers the peripheral manager |
+| v0.57 | 2026-10-12 | P5-05 implemented (S-B5 open): CompanionDeviceManager API levels verified in the platform jars and sources (§4.4 `Companion`, §4.13), `associateCompanionDevice` documented in §5.2, `devicePresence` on Android, the fake's `associateCompanionDevice` op (§5.8) |

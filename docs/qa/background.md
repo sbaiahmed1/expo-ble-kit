@@ -21,4 +21,4 @@ Still to run on iOS: S-B2 in a release build, where JS loads from the app instea
 |---|---|---|
 | S-B3: screen off for 60 minutes with the foreground service and a 10 Hz stream | Galaxy A52 (Android 14) | Not run yet |
 | S-B4: process killed, then the peripheral advertises; the task gets `scanResults` | Galaxy A52; an Android 10 or 11 device | Background scan wake-up seen on the A52 (P3-04); against the test peripheral, and on Android 10 or 11, not run yet |
-| S-B5: a companion device comes into range | an Android 13+ device | Waits for P5-05 |
+| S-B5: a companion device comes into range | Galaxy A52 (Android 14) | Implemented (P5-05); not run yet. Checks → Companion device: associate the test peripheral, register the presence task, kill the app, stop and restart `e2e/macos-peripheral` |

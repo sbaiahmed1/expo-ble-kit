@@ -9,6 +9,7 @@ import { BleError, BleErrorCode } from './errors';
 import { DEFAULT_PICKER_TIMEOUT_MS, toNativePickerItems } from './internal/accessoryPicker';
 import { toNativeAdvertising } from './internal/advertising';
 import { checkTaskName, toNativeBackgroundTaskOptions } from './internal/backgroundTask';
+import { toNativeCompanionFilter } from './internal/companionFilter';
 import { toNativeServices } from './internal/gattServer';
 import { checkLogLevel, deliver, setHandler, setLevel } from './internal/log';
 import { getNativeModule } from './internal/native';
@@ -409,6 +410,28 @@ export const BleManager: BleManagerApi = {
     setForegroundServiceNotification(notification) {
       const checked = checkNotification(notification);
       if (Platform.OS === 'android') getNativeModule().setForegroundServiceNotification?.(checked);
+    },
+    associateCompanionDevice(filter) {
+      return guard(async () => {
+        const module = getNativeModule();
+        if (Platform.OS !== 'android' || !module.associateCompanionDevice) {
+          throw new BleError(BleErrorCode.NOT_SUPPORTED, 'Companion devices are Android-only');
+        }
+        const id = await module.associateCompanionDevice(...toNativeCompanionFilter(filter));
+        return id === null ? null : BleManager.getPeripheral(id);
+      });
+    },
+    isLocationServicesEnabled() {
+      return guard(async () => {
+        const module = getNativeModule();
+        if (Platform.OS !== 'android' || !module.isLocationServicesEnabled) {
+          throw new BleError(
+            BleErrorCode.NOT_SUPPORTED,
+            'Location services matter on Android only'
+          );
+        }
+        return module.isLocationServicesEnabled();
+      });
     },
   },
 };

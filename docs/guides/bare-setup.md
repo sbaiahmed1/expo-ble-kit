@@ -84,6 +84,28 @@ Only for `BleManager.startAdvertising`; the plugin writes this with `android: { 
 
 - Without it, `startAdvertising` rejects with `MISCONFIGURED`; declared but not granted, with `PERMISSION_DENIED`. `requestPermissionsAsync({ advertise: true })` asks for it. Android 11 and older need no runtime permission.
 
+## Android: companion devices (optional)
+
+For `BleManager.android.associateCompanionDevice` and background tasks with `devicePresence`; the plugin writes these with `android: { companionDevice: true }`. Inside `<manifest>`:
+
+```xml
+<uses-permission android:name="android.permission.REQUEST_OBSERVE_COMPANION_DEVICE_PRESENCE" />
+<uses-feature android:name="android.software.companion_device_setup" android:required="false" />
+```
+
+Inside `<application>`:
+
+```xml
+<service android:name="expo.modules.blekit.binding.CompanionPresenceService" android:exported="true" android:permission="android.permission.BIND_COMPANION_DEVICE_SERVICE">
+  <intent-filter>
+    <action android:name="android.companion.CompanionDeviceService" />
+  </intent-filter>
+</service>
+```
+
+- Android refuses to show the companion device picker to apps that don't declare the feature; without it, `associateCompanionDevice` rejects with `MISCONFIGURED`. `android:required="false"` keeps the app on Google Play for devices without companion device support, where it rejects with `NOT_SUPPORTED`.
+- `devicePresence` tasks need Android 12 (API 31), `expo-task-manager`, the permission and the service. Android binds the service while an associated device is in range; it hands each change to TaskManager.
+
 ## Android: minimum SDK 26
 
 The library needs Android 8.0 (API 26). In `android/build.gradle`, set `minSdkVersion = 26` in `ext` (or `android.minSdkVersion=26` in `android/gradle.properties` for Expo autolinking projects).

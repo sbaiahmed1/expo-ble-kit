@@ -7,3 +7,5 @@
 }
 # The foreground service is named in the app's manifest.
 -keep class expo.modules.blekit.core.ConnectionService
+# The companion presence service is named in the app's manifest.
+-keep class expo.modules.blekit.binding.CompanionPresenceService

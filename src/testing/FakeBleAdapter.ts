@@ -108,7 +108,8 @@ export type FakeOperation =
   | 'setPreferredPhy'
   | 'openL2CAPChannel'
   | 'publishL2CAPChannel'
-  | 'showAccessoryPicker';
+  | 'showAccessoryPicker'
+  | 'associateCompanionDevice';
 
 /** Controls the fake, from `installFakeBle()`. */
 export interface FakeBle {
@@ -1629,8 +1630,8 @@ export class FakeBleAdapter implements NativeBleKitPort {
 
   /**
    * Background tasks: as Android registers background scans (P3-04), with the `backgroundScan`
-   * permission and an adapter that is on; iOS's restoration events (P3-02) need neither. The fake
-   * has no TaskManager to deliver to, so it only keeps them.
+   * permission and an adapter that is on; companion presence (P5-05) and iOS's restoration events
+   * (P3-02) need neither. The fake has no TaskManager to deliver to, so it only keeps them.
    */
   readonly backgroundTasks = new Map<string, NativeBackgroundTaskOptions>();
 
@@ -1764,6 +1765,33 @@ export class FakeBleAdapter implements NativeBleKitPort {
         )
     );
     return picked?.id ?? null;
+  }
+
+  /**
+   * Android's companion device picker (P5-05): the person picks the first advertising virtual
+   * peripheral with any of the services and a name the pattern matches, on a later tick; nothing
+   * matching answers null. The fake has no manifest to check and no presence to report.
+   */
+  async associateCompanionDevice(
+    services: string[],
+    namePattern: string | null,
+    _singleDevice: boolean
+  ): Promise<string | null> {
+    const injected = this.takeError('associateCompanionDevice');
+    await new Promise<void>((resolve) => this.scheduler.schedule(resolve));
+    if (injected) throw injected;
+    const pattern = namePattern === null ? null : new RegExp(namePattern);
+    const picked = [...this.devices.values()].find(
+      (device) =>
+        device.advertising &&
+        (services.length === 0 || services.some((service) => device.services.has(service))) &&
+        (pattern === null || (device.name !== null && pattern.test(device.name)))
+    );
+    return picked?.id ?? null;
+  }
+
+  async isLocationServicesEnabled(): Promise<boolean> {
+    return true;
   }
 
   /** The app's L2CAP servers by PSM (P5-03); several may run. Bluetooth off closes them. */
