@@ -12,8 +12,9 @@ config.resolver.blockList = [
   // On windows the path will resolve with `\`. We need to escape it with `\\` for the RegExp.
   new RegExp(path.resolve('..', 'node_modules', 'react').replace(/\\/g, '\\\\')),
   new RegExp(path.resolve('..', 'node_modules', 'react-native').replace(/\\/g, '\\\\')),
-  // The documentation website has its own dependencies.
+  // The documentation website and the promo video have their own dependencies.
   new RegExp(path.resolve('..', 'website').replace(/\\/g, '\\\\')),
+  new RegExp(path.resolve('..', 'promo').replace(/\\/g, '\\\\')),
 ];
 
 config.resolver.nodeModulesPaths = [

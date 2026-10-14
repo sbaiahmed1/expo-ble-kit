@@ -1,4 +1,4 @@
-import { fromUtf8, parseHex, toHex, toUtf8 } from '../lib/bytes';
+import { fromUtf8, isText, parseHex, toHex, toUtf8 } from '../lib/bytes';
 
 describe('bytes', () => {
   it('formats and parses hex', () => {
@@ -22,5 +22,12 @@ describe('bytes', () => {
     expect(toUtf8(Uint8Array.of(0x41, 0xff, 0x42))).toBe('A�B');
     expect(toUtf8(Uint8Array.of(0xe2, 0x82))).toBe('��');
     expect(toUtf8(Uint8Array.of(0x00, 0x41, 0x0a))).toBe('·A·');
+  });
+
+  it('tells text from binary values', () => {
+    expect(isText(fromUtf8('hello web'))).toBe(true);
+    expect(isText(fromUtf8('line 1\nline 2 ✓'))).toBe(true);
+    expect(isText(Uint8Array.of(0x00, 0x3e))).toBe(false); // a heart rate measurement
+    expect(isText(Uint8Array.of(0x41, 0xff, 0x42))).toBe(false);
   });
 });

@@ -66,3 +66,11 @@ export function toUtf8(bytes: Uint8Array): string {
   }
   return text;
 }
+
+/** Whether `bytes` read as text: valid UTF-8 without control characters (tabs and newlines aside). */
+export function isText(bytes: Uint8Array): boolean {
+  if (bytes.some((byte) => (byte < 0x20 && byte !== 0x09 && byte !== 0x0a && byte !== 0x0d) || byte === 0x7f)) {
+    return false;
+  }
+  return !toUtf8(bytes).includes('�');
+}

@@ -1,0 +1,22 @@
+{
+  "name": "expo-ble-kit-promo",
+  "private": true,
+  "description": "The promotional video of expo-ble-kit, rendered with Remotion",
+  "scripts": {
+    "studio": "remotion studio",
+    "render": "remotion render Promo out/expo-ble-kit.mp4",
+    "still": "remotion still Promo out/frame.png",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@remotion/cli": "4.0.535",
+    "@remotion/google-fonts": "4.0.535",
+    "react": "19.2.3",
+    "react-dom": "19.2.3",
+    "remotion": "4.0.535"
+  },
+  "devDependencies": {
+    "@types/react": "^19.2.0",
+    "typescript": "~6.0.3"
+  }
+}

@@ -9,7 +9,7 @@ import {
   type Peripheral,
 } from 'expo-ble-kit';
 
-import { fromUtf8, parseHex, toHex, toUtf8 } from '../../lib/bytes';
+import { fromUtf8, isText, parseHex, toHex, toUtf8 } from '../../lib/bytes';
 import { gattName, shortUUID } from '../../lib/gattNames';
 import { ActionButton, Chip, colors, text } from '../../ui';
 
@@ -18,7 +18,7 @@ function describe(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
-/** A value as its length, hex and UTF-8. */
+/** A value as its length and hex, and as UTF-8 when it is text. */
 export function ValueView(props: { value: Uint8Array; testID: string }) {
   return (
     <View style={styles.value}>
@@ -26,7 +26,7 @@ export function ValueView(props: { value: Uint8Array; testID: string }) {
       <Text testID={`${props.testID}-hex`} style={text.mono} selectable>
         {props.value.length ? toHex(props.value) : '(empty)'}
       </Text>
-      {props.value.length > 0 && (
+      {props.value.length > 0 && isText(props.value) && (
         <Text testID={`${props.testID}-text`} style={text.mono} selectable>
           {`"${toUtf8(props.value)}"`}
         </Text>

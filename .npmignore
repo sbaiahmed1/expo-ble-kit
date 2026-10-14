@@ -40,6 +40,7 @@ __tests__
 /test-contracts/
 /e2e/
 /website/
+/promo/
 /eslint.config.cjs
 /CONTRIBUTING.md
 /SECURITY.md

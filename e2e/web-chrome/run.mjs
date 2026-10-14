@@ -8,12 +8,15 @@
 //   url     the example's web build; default http://localhost:8092
 //           (cd example && BROWSER=none yarn expo start --web --port 8092)
 //   prefix  the test peripheral's name; default BleKit
+// RECORD=<dir> saves the page as screencast frames and an ffmpeg concat list (the promo video's
+// footage: ffmpeg -f concat -i <dir>/frames.ffconcat ...); PACE=<ms> pauses after each step so a
+// viewer can follow; WINDOW=<width,height> sizes the window (default 1100,900).
 // The test peripheral must be another device: the example on a phone serving the test profile
 // (Peripheral tab, or the expo.modules.blekit.example://server/serve link), or the Bumble one.
 // Chrome runs with a throwaway profile; macOS may ask once to let Chrome use Bluetooth.
 
 import { spawn } from 'node:child_process';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -43,7 +46,7 @@ spawn(
     `--remote-debugging-port=${port}`,
     '--no-first-run',
     '--no-default-browser-check',
-    '--window-size=1100,900',
+    `--window-size=${process.env.WINDOW ?? '1100,900'}`,
     url,
   ],
   { stdio: 'ignore' }
@@ -175,7 +178,43 @@ async function main() {
       });
     }
   }
-  const step = (line) => console.log(`- ${line}`);
+  const pace = Number(process.env.PACE ?? 0);
+  const step = async (line) => {
+    console.log(`- ${line}`);
+    if (pace) await sleep(pace);
+  };
+  const frames = [];
+  if (process.env.RECORD) {
+    mkdirSync(process.env.RECORD, { recursive: true });
+    page.on('Page.screencastFrame', ({ data, metadata, sessionId }) => {
+      const file = `frame-${String(frames.length).padStart(5, '0')}.jpg`;
+      writeFileSync(join(process.env.RECORD, file), Buffer.from(data, 'base64'));
+      frames.push({ file, time: metadata.timestamp });
+      page.send('Page.screencastFrameAck', { sessionId }).catch(() => {});
+    });
+    await page.send('Page.enable');
+    await page.send('Page.startScreencast', { format: 'jpeg', quality: 90, maxWidth: 1600, maxHeight: 1200 });
+    await sleep(1500);
+  }
+  const finishRecording = async () => {
+    if (!process.env.RECORD || frames.length === 0) return;
+    await sleep(1500);
+    await page.send('Page.stopScreencast').catch(() => {});
+    // Frames arrive when the page changes, not always in order: sorted by time, each lasts until
+    // the next one, and a frame with the time of the one before replaces it.
+    const ordered = [...frames]
+      .sort((a, b) => a.time - b.time)
+      .filter((frame, index, all) => index === all.length - 1 || all[index + 1].time > frame.time);
+    const lines = ['ffconcat version 1.0'];
+    ordered.forEach((frame, index) => {
+      const next = ordered[index + 1]?.time ?? frame.time + 1;
+      lines.push(`file ${frame.file}`, `duration ${(next - frame.time).toFixed(3)}`);
+    });
+    lines.push(`file ${ordered[ordered.length - 1].file}`);
+    writeFileSync(join(process.env.RECORD, 'frames.ffconcat'), lines.join('\n') + '\n');
+    writeFileSync(join(process.env.RECORD, 'frames.json'), JSON.stringify(frames));
+    console.log(`- recorded ${frames.length} frames into ${process.env.RECORD}`);
+  };
 
   // 1–3. Scan (the chooser opens), pick a device named like the test peripheral, open it from
   // the list and connect, with discovery. Chrome may show a phone under its system name, and
@@ -204,7 +243,7 @@ async function main() {
       );
     });
     tried.add(picked.device.id);
-    step(`chooser listed ${prompt.devices.length} devices; picking ${picked.device.name}`);
+    await step(`chooser listed ${prompt.devices.length} devices; picking ${picked.device.name}`);
     await page.send('DeviceAccess.selectPrompt', {
       id: picked.promptId,
       deviceId: picked.device.id,
@@ -226,7 +265,7 @@ async function main() {
       const text = await textOf('device-state');
       return text?.startsWith('Connected') && text;
     }, 'the connection');
-    step(`${rowId}: ${state}`);
+    await step(`${rowId}: ${state}`);
     const found = state.startsWith('Connected')
       ? await waitFor(
           () =>
@@ -241,13 +280,13 @@ async function main() {
     if (found.includes(TEST)) {
       services = found;
     } else {
-      step(`no TEST service there (${found.join(', ') || 'none'}); trying the next one`);
+      await step(`no TEST service there (${found.join(', ') || 'none'}); trying the next one`);
       if (state.startsWith('Connected')) await tap('disconnect');
       await tap('explorer-back');
       if (round >= 6) throw new Error('none of the devices had the TEST service');
     }
   }
-  step(`services: ${services.join(', ')}`);
+  await step(`services: ${services.join(', ')}`);
 
   // 4. Reads: one packet, then 512 bytes (a long read).
   const valueAfter = async (button, uuid) => {
@@ -259,9 +298,9 @@ async function main() {
     }, `the value of ${uuid}`);
   };
   const staticValue = await valueAfter(`read-${STATIC_READ}`, STATIC_READ);
-  step(`STATIC_READ: ${staticValue}`);
+  await step(`STATIC_READ: ${staticValue}`);
   const longValue = await valueAfter(`read-${LONG_READ}`, LONG_READ);
-  step(
+  await step(
     `LONG_READ: ${longValue.split(/\s+/).length} bytes shown, starting ${longValue.slice(0, 23)}`
   );
 
@@ -271,7 +310,7 @@ async function main() {
   await tap(`write-${ECHO_WRITE}`);
   await sleep(500);
   const echoed = await valueAfter(`read-${ECHO_READ}`, ECHO_READ);
-  step(`ECHO_READ after writing "hello web": ${echoed}`);
+  await step(`ECHO_READ after writing "hello web": ${echoed}`);
 
   // 6. Notifications.
   await tap(`subscribe-${HEART_RATE_MEASUREMENT}`);
@@ -280,7 +319,7 @@ async function main() {
     const count = Number(/\((\d+)\)/.exec(title ?? '')?.[1] ?? 0);
     return count >= 3 && title;
   }, 'three heart rate notifications');
-  step(`heart rate: ${subscribed}, last ${await textOf(`value-${HEART_RATE_MEASUREMENT}-hex`)}`);
+  await step(`heart rate: ${subscribed}, last ${await textOf(`value-${HEART_RATE_MEASUREMENT}-hex`)}`);
 
   // 7. Disconnect.
   await tap('disconnect');
@@ -288,7 +327,8 @@ async function main() {
     const text = await textOf('device-state');
     return text === 'disconnected' && text;
   }, 'the disconnection');
-  step(`state: ${after}`);
+  await step(`state: ${after}`);
+  await finishRecording();
   page.close();
 }
 

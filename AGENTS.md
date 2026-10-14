@@ -33,6 +33,8 @@ cd website && yarn start      # the website with live reload (search works only 
 cd website && yarn build      # the website into website/build; fails on broken links and anchors
                               # pushes to main publish it: https://sbaiahmed1.github.io/expo-ble-kit/
 
+cd promo && yarn install && yarn render   # the promo video into promo/out (Remotion; promo/README.md)
+
 cd test-peripherals/bumble && uv run pytest              # test peripheral tests (no hardware)
 cd test-peripherals/bumble && uv run blekit-peripheral   # advertise on a running Android emulator
 e2e/android-netsim/run.sh    # L3: peripheral + instrumented tests on a running emulator (needs ANDROID_HOME and example/android)
