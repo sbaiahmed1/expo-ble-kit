@@ -23,6 +23,7 @@ final class TestPeripheral: NSObject, CBPeripheralManagerDelegate, @unchecked Se
   let queue = DispatchQueue(label: "blekit.peripheral")
   let profile: Profile
   let name: String
+  let advertised: [CBUUID]
   var manager: CBPeripheralManager?
 
   var services: [String: CBMutableService] = [:]
@@ -50,9 +51,10 @@ final class TestPeripheral: NSObject, CBPeripheralManagerDelegate, @unchecked Se
   var streamTimer: DispatchSourceTimer?
   var heartRateTimer: DispatchSourceTimer?
 
-  init(profile: Profile, name: String) {
+  init(profile: Profile, name: String, advertised: [CBUUID]) {
     self.profile = profile
     self.name = name
+    self.advertised = advertised
     let heartRate = profile.characteristic("HEART_RATE_MEASUREMENT")?.spec ?? [:]
     minBpm = UInt8(heartRate["minBpm"] as? Int ?? 60)
     maxBpm = UInt8(heartRate["maxBpm"] as? Int ?? 100)
@@ -98,7 +100,7 @@ final class TestPeripheral: NSObject, CBPeripheralManagerDelegate, @unchecked Se
     }
     peripheral.startAdvertising([
       CBAdvertisementDataLocalNameKey: name,
-      CBAdvertisementDataServiceUUIDsKey: profile.advertisedServices
+      CBAdvertisementDataServiceUUIDsKey: advertised
     ])
     startHeartRate()
   }
@@ -141,7 +143,9 @@ final class TestPeripheral: NSObject, CBPeripheralManagerDelegate, @unchecked Se
       Log.write("FAILED: advertising: \(error.localizedDescription)")
       exit(1)
     }
-    Log.write("advertising as \(name): TEST, HEART_RATE and the L2CAP echo server")
+    let listed = advertised.map { uuid in profile.services.first { $0.uuid == uuid }?.key ?? uuid.uuidString }
+      .joined(separator: ", ")
+    Log.write("advertising \(listed) as \(name); serving every service and the L2CAP echo server")
   }
 
   // MARK: Reads

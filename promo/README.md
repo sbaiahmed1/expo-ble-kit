@@ -26,4 +26,10 @@ Rendering uses the Chrome installed on this Mac (`REMOTION_CHROME` overrides it)
   ```
 
   then cut the part from connecting to the subscribed heart rate into `public/footage/web.mp4` (about 11 s, sped up to fit).
-- `phone.mp4` (optional, portrait): a recording of the example app on a phone, for example `adb shell screenrecord` on Android. When it exists, the footage scene shows the phone next to the browser.
+- `phone.mp4`: the example's Heart Rate tab on the iPhone 14 Pro Max, live from this Mac as the test peripheral (`e2e/macos-peripheral/run.sh 3600 "" heart-rate`, so a scan filtered on Heart Rate finds it). Recorded with `e2e/ios-screen-record/run.sh promo/out/phone.mov 90` while Argent drove the app, then cut, sped up 1.7× and with the Mac's hostname (shown once connected) blurred:
+
+  ```bash
+  ffmpeg -ss 4 -to 26 -i promo/out/phone.mov -vf "delogo=x=880:y=690:w=385:h=80,setpts=PTS/1.7,fps=30,scale=860:-2,format=yuv420p" -an -c:v libx264 -crf 17 promo/public/footage/phone.mp4
+  ```
+
+  Without it, the footage scene shows the browser alone.

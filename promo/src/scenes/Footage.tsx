@@ -40,11 +40,11 @@ export function Footage({ length }: { length: number }) {
         The example app, on <span style={{ color: colors.accent }}>real Bluetooth</span>
       </div>
       {withPhone && (
-        <div style={{ position: 'absolute', left: 170, top: 160, transform: `scale(${phone})` }}>
+        <div style={{ position: 'absolute', left: 170, top: 140, transform: `scale(${phone})` }}>
           <Phone scale={0.98}>
             <OffthreadVideo src={staticFile(PHONE_CLIP)} muted style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
           </Phone>
-          <Label>On a phone</Label>
+          <Label>iPhone · live heart rate</Label>
         </div>
       )}
       <div
@@ -60,7 +60,7 @@ export function Footage({ length }: { length: number }) {
             <WebMock frame={frame} />
           )}
         </BrowserWindow>
-        <Label>Chrome on a Mac, talking to an iPhone over Web Bluetooth</Label>
+        <Label>{withPhone ? 'Chrome · Web Bluetooth' : 'Chrome on a Mac, talking to an iPhone over Web Bluetooth'}</Label>
       </div>
     </AbsoluteFill>
   );

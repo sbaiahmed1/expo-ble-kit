@@ -14,8 +14,8 @@ export const SCENES = [
   { name: 'Hook', length: 165, Scene: Hook },
   { name: 'Title', length: 120, Scene: Title },
   { name: 'Code', length: 450, Scene: CodeDemo },
-  { name: 'Footage', length: 330, Scene: Footage },
-  { name: 'Features', length: 330, Scene: Features },
+  { name: 'Footage', length: 390, Scene: Footage },
+  { name: 'Features', length: 270, Scene: Features },
   { name: 'Platforms', length: 165, Scene: Platforms },
   { name: 'Call to action', length: 240, Scene: CallToAction },
 ];
